@@ -98,7 +98,7 @@ export function ScriptPreview({ traceHook }: Props) {
                         {el.character_name as string}
                         {el.character_extension ? ` ${el.character_extension}` : ""}
                       </div>
-                      {el.parenthetical && (
+                      {(el.parenthetical as string | undefined) && (
                         <div style={{ color: "var(--color-text-secondary)", marginBottom: 4 }}>
                           {el.parenthetical as string}
                         </div>

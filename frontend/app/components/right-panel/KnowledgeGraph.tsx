@@ -4,7 +4,6 @@ import {
   Background,
   Controls,
   type Node,
-  type Edge,
   useNodesState,
   useEdgesState,
 } from "@xyflow/react";
