@@ -1,11 +1,11 @@
 # NovelScript (析幕) 软件需求规格说明书
 
 - **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-- **文档版本**：v2.0.0 (Release)
+- **文档版本**：v2.1.0 (Release)
 - **日期**：2026-06-05
 - **作者**：Dinosaur_MC
 - **开发约束**：单人 72 小时极限开发，预算 ￥500~2000
-- **目标模型**：DeepSeek-v4-flash（轻量/对话） / DeepSeek-v4-pro（高质量转换/推理）
+- **目标模型**：DeepSeek-v4-flash（场景生成/对话/轻量任务） / DeepSeek-v4-pro（知识图谱抽取/一致性检查/复杂推理）
 - **核心数据底座**：PostgreSQL 18+ (集成 pgvector 与 JSONB)
 
 ---
@@ -60,7 +60,7 @@ NovelScript 是一个一体化的 Web 剧本工作台。用户输入小说文本
 
 1.  **时间与人力**：单人 72 小时闭环开发。
 2.  **技术栈锁定**：前端 React+TS，后端 FastAPI，数据库 PostgreSQL (All-in-One 架构)。
-3.  **模型路由**：严格区分 DeepSeek-v4-pro（核心转换）与 DeepSeek-v4-flash（对话/摘要），以控制成本与延迟。
+3.  **模型路由**：严格区分 DeepSeek-v4-pro（知识图谱抽取/一致性检查）与 DeepSeek-v4-flash（场景生成/对话/摘要），以控制成本与延迟。
 4.  **容错机制**：必须具备 LLM 结构化输出（JSON/YAML）的自动校验与重试修复机制。
 
 ### 2.5 资金使用计划 (预算 ￥2000)
@@ -91,9 +91,11 @@ NovelScript 是一个一体化的 Web 剧本工作台。用户输入小说文本
 ### 3.3 剧本转换引擎 (核心 Pipeline)
 
 - **3.3.1 场景切分与重构**：以章为单位，结合全局知识图谱与 RAG 检索的前文记忆，调用 LLM 将叙事文本转换为场景序列（Scene）。
-- **3.3.2 并发分块处理**：使用 `asyncio.Semaphore` 控制并发，单章超过 8000 字时自动滑动窗口分片。通过 SSE (Server-Sent Events) 向前端推送实时进度。
-- **3.3.3 强校验与自动修复**：使用 Pydantic V2 校验 LLM 输出的 JSON。若抛出 `ValidationError`，系统自动捕获错误信息，构造“修复 Prompt”要求 LLM 重新输出，最大重试 2 次。
+- **3.3.2 并发分块处理**：系统支持多章节并发转换，长章节自动分片处理，通过 SSE 向前端推送实时进度。
+- **3.3.3 强校验与自动修复**：所有 LLM 输出必须通过 Pydantic V2 严格校验。校验失败时系统自动捕获错误并触发修复闭环，最大重试 2 次；2 次均失败后降级返回已解析部分并警告用户，系统绝不崩溃。
 - **3.3.4 溯源锚点注入**：为每个剧本 Element 强制注入 `source_ref`（包含 `chapter_id` 与 `offset`），确保 100% 可追溯。
+
+> 管道三阶段设计、Auto-Fix 闭环流程、并发策略等技术细节详见 **[SDS §3 核心管道设计](./SDS%20软件设计说明书.md#3-核心管道设计-pipeline)** 。
 
 ### 3.4 输出与导出
 
@@ -150,95 +152,17 @@ NovelScript 是一个一体化的 Web 剧本工作台。用户输入小说文本
 
 ### 5.1 总体架构 (All-in-One PostgreSQL)
 
-系统摒弃了传统的“MySQL + FAISS + Neo4j”多组件堆砌方案，采用 **PostgreSQL 作为唯一数据底座**，极大降低了 72 小时内的运维心智负担与网络通信开销。
+系统摒弃了传统的”MySQL + FAISS + Neo4j”多组件堆砌方案，采用 **PostgreSQL 作为唯一数据底座**：pgvector 替代 FAISS 做向量检索，JSONB 替代 Neo4j 做图数据存储，极大降低了 72 小时内的运维心智负担与网络通信开销。总体采用 Browser → Nginx → FastAPI → PostgreSQL 四层架构。
 
-```text
-[Browser: React 19 + TS + Ant Design + TipTap/Monaco]
-      | (HTTP/REST & SSE)
-      v
-[Nginx Reverse Proxy & Static Server]
-      |
-      v
-[FastAPI Application Server (Python 3.13)]
-      ├─ /api/novel/*      (任务调度与状态机)
-      ├─ /api/editor/*     (AI 对话与 Patch 应用)
-      ├─ LLM Router        (DeepSeek Pro/Flash 智能路由)
-      └─ Data Access Layer (Asyncpg + SQLModel)
-             |
-             v
-[PostgreSQL 18 (All-in-One Data Hub)]
-      ├─ 关系数据 (tasks, operations, dialogues)
-      ├─ 向量数据 (chapters.embedding via pgvector) -> 替代 FAISS
-      └─ 图/文档数据 (JSONB via GIN Index)          -> 替代 Neo4j/MongoDB
-```
-
-### 5.2 前端架构
-
-- **框架**：React 19 + TypeScript + Vite。
-- **路由**：React Router v7
-- **状态管理**：Zustand (轻量级) 或 React Context + useReducer。
-- **UI 组件**：Ant Design 6 (基础组件), Monaco Editor (代码编辑), TipTap (富文本), ReactFlow (知识图谱)。
-
-### 5.3 后端架构
-
-- **Web 框架**：FastAPI (异步非阻塞)。
-- **ORM/DB Driver**：SQLModel + `asyncpg` (高性能异步 PgSQL 驱动)。
-- **AI 编排**：LangChain (Prompt 管理), `pgvector` (相似度检索)。
-- **并发控制**：`asyncio.gather` + `Semaphore`。
+> 完整架构图、前端/后端分层目录结构、组件树、数据流设计详见 **[SDS §2 系统架构设计](./SDS%20软件设计说明书.md#2-系统架构设计)** 。
 
 ## 6. 数据设计
 
-### 6.1 核心数据结构：YAML Schema (完整版)
+### 6.1 核心数据结构：YAML Schema
 
-```yaml
-script:
-  meta:
-    title: "星辰低语"
-    author: "原著: XXX / 改编: NovelScript AI"
-    model: "deepseek-v4-pro"
-    timestamp: "2026-06-05T12:00:00Z"
-    version: "1.0.0"
-  summary: "在废弃的星际飞船上，颓废的领航员林明与冷酷的仿生人艾娃展开了一场关于宇宙边缘与人类情感的对话。"
-  characters:
-    - id: "char_01"
-      name: "林明"
-      description: "30岁，颓废的星际领航员，右眼有机械义眼。"
-    - id: "char_02"
-      name: "艾娃"
-      description: "AI 仿生人，冷静，缺乏人类情感。"
-  scenes:
-    - scene_id: "S001"
-      heading: "内景. 废弃飞船驾驶舱 - 夜晚"
-      location: "飞船驾驶舱"
-      time_of_day: "夜晚"
-      characters_present: ["char_01", "char_02"]
-      elements:
-        - type: "action"
-          content: "控制台上闪烁着微弱的红光。林明疲惫地靠在座椅上，手里把玩着一个旧式怀表。艾娃静静地站在他身后。"
-          source_ref:
-            chapter_id: "ch_02"
-            offset: [1450, 1520]
-        - type: "dialogue"
-          character_id: "char_01"
-          parenthetical: "(自嘲地笑)"
-          line: "你说，宇宙的边缘到底有什么？"
-          source_ref:
-            chapter_id: "ch_02"
-            offset: [1521, 1545]
-        - type: "dialogue"
-          character_id: "char_02"
-          parenthetical: "(机械音，毫无波澜)"
-          line: "根据目前的物理模型，只有无尽的真空和辐射。"
-          source_ref:
-            chapter_id: "ch_02"
-            offset: [1546, 1580]
-  knowledge_graph:
-    nodes:
-      - id: "char_01", label: "林明", type: "character"
-      - id: "char_02", label: "艾娃", type: "character"
-    edges:
-      - source: "char_01", target: "char_02", relation: "主仆/同伴", weight: 0.8
-```
+剧本数据以 YAML 为源格式，采用四层架构：Fountain 同构层（Layer 0）、结构增强层（Layer 1）、叙事扩展层（Layer 2）、渲染与交付层（Layer 3）。顶层结构包含 `meta`（元数据）、`summary`（全局梗概）、`characters`（角色列表）、`scenes`（场景序列 + `source_ref` 溯源锚点）、`knowledge_graph`（知识图谱节点与边）。
+
+> 完整 YAML Schema 示例、四层架构详解、Pydantic 校验模型详见 **[YAML Schema 设计说明](./YAML_Schema_设计说明.md)** 及 **[SDS §5.1 YAML Schema 四层架构](./SDS%20软件设计说明书.md#51-yaml-schema-四层架构)** 。
 
 ### 6.2 战略输出格式：Fountain 示例
 
@@ -260,131 +184,25 @@ INT. 废弃飞船驾驶舱 - 夜晚
 根据目前的物理模型，只有无尽的真空和辐射。
 ```
 
-### 6.3 任务状态模型 (Pydantic V2)
+### 6.3 任务状态模型
 
-```python
-from pydantic import BaseModel, Field
-from enum import Enum
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+任务状态定义为 5 态枚举：`pending → preprocessing → converting → completed` (或 `failed`)，通过 Pydantic V2 模型 `TaskResponse` 承载任务 ID、状态、进度（0-100）、摘要、剧本数据等字段。
 
-class TaskStatus(str, Enum):
-    PENDING = "pending"
-    PREPROCESSING = "preprocessing"
-    CONVERTING = "converting"
-    COMPLETED = "completed"
-    FAILED = "failed"
+> Pydantic 模型代码、状态流转图详见 **[SDS §6 任务状态机与生命周期](./SDS%20软件设计说明书.md#6-任务状态机与生命周期)** 。
 
-class TaskResponse(BaseModel):
-    id: str
-    status: TaskStatus
-    progress: int = Field(ge=0, le=100)
-    summary: Optional[str] = None
-    characters: Optional[List[Dict[str, Any]]] = None
-    script_yaml: Optional[str] = None
-    script_fountain: Optional[str] = None
-    error_message: Optional[str] = None
-    created_at: datetime
-```
+### 6.4 持久化存储结构
 
-### 6.4 持久化存储结构 (PostgreSQL DDL 完整版)
+存储层以 PostgreSQL 18 作为唯一数据底座，包含 4 张核心表：`tasks`（任务主表，JSONB 存储图谱与剧本）、`chapters`（章节 + pgvector 向量，HNSW 索引加速 KNN）、`operations`（操作日志，JSON Patch + YAML 快照混合）、`dialogues`（AI 对话记录）。
 
-利用 `pgvector` 和 `JSONB` 实现 All-in-One 架构。
-
-```sql
--- 启用必要插件
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- 1. 任务主表 (利用 JSONB 存储复杂图谱与剧本结构)
-CREATE TABLE tasks (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    source_text TEXT NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    progress INT DEFAULT 0,
-    summary TEXT,
-    characters_json JSONB,
-    knowledge_graph JSONB,
-    script_yaml TEXT,
-    script_json JSONB,
-    script_fountain TEXT,
-    error_message TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_tasks_status ON tasks(status);
-
--- 2. 章节与向量块表 (完美替代 FAISS，支持 RAG 检索)
-CREATE TABLE chapters (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    chapter_index INT NOT NULL,
-    title VARCHAR(255),
-    content TEXT NOT NULL,
-    -- 核心：存储文本的向量表示，用于长文本记忆网络
-    embedding vector(1536),
-    metadata JSONB,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
--- 创建 HNSW 索引加速余弦相似度检索 (KNN)
-CREATE INDEX ON chapters USING hnsw (embedding vector_cosine_ops);
-CREATE INDEX idx_chapters_task ON chapters(task_id, chapter_index);
-
--- 3. 操作日志表 (支持 JSONB 差异对比与 Undo 链)
-CREATE TABLE operations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    type VARCHAR(50) NOT NULL, -- 'manual_edit', 'ai_patch', 'rollback'
-    target_path TEXT,          -- 例如 'scenes[0].elements[1].line'
-    diff_json JSONB,           -- 记录补丁
-    previous_snapshot JSONB,   -- 修改前的 JSONB 快照
-    applied BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_ops_task_time ON operations(task_id, created_at DESC);
-
--- 4. AI 对话记录表
-CREATE TABLE dialogues (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL, -- 'user', 'assistant'
-    content TEXT NOT NULL,
-    patch_json JSONB,          -- 若消息包含补丁则记录
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX idx_dialog_task_time ON dialogues(task_id, created_at);
-```
+> 完整 DDL、表关系、HNSW 索引配置详见 **[SDS §5.5 持久化存储 DDL](./SDS%20软件设计说明书.md#55-持久化存储-ddl)** 。
 
 ## 7. 接口需求
 
 ### 7.1 RESTful API 核心端点
 
-- `POST /api/novel/upload`
-    - **Body**: `multipart/form-data` (file) 或 `application/json` (content)
-    - **Response**: `{ "task_id": "uuid", "chapters": [{"index": 1, "title": "第一章"}] }`
-- `POST /api/novel/preprocess/{task_id}`
-    - **Body**: `{ "chapter_boundaries": [...] }` (可选)
-    - **Response**: `{ "status": "preprocessing" }`
-- `GET /api/novel/status/{task_id}` (支持 SSE 流式返回进度)
-    - **Response**: `TaskResponse` 模型
-- `POST /api/novel/convert/{task_id}`
-    - **Response**: `{ "status": "converting" }`
-- `POST /api/novel/resume/{task_id}`
-    - **Description**: 断点续传。转换过程中若遇网络波动或 LLM 调用失败，从上次成功的 Chunk 处恢复，避免全盘重跑。
-    - **Response**: `{ "status": "converting", "resumed_from_chunk": 3 }`
-- `GET /api/novel/export/{task_id}?format=fountain`
-    - **Response**: 文件流 (`.fountain` 或 `.yaml`)
+系统提供两组 RESTful API：**任务管理**（`/api/novel/*`）负责小说上传、预处理、剧本转换、状态查询（SSE 流式进度）、断点续传、多格式导出；**AI 编辑**（`/api/editor/*`）负责上下文感知对话、结构化 Patch 应用、撤销操作。所有响应统一使用 `BaseResponse` / `ErrorResponse` 模型包裹，错误码涵盖 400/404/422/500/503。
 
-### 7.2 AI 编辑与对话接口
-
-- `POST /api/editor/chat/{task_id}`
-    - **Body**: `{ "message": "把第2场的地点改为图书馆", "scene_id": "S002" }`
-    - **Response**: `{ "reply": "好的...", "patch": { "op": "replace", "path": "/scenes/1/location", "value": "图书馆" } }`
-- `POST /api/editor/apply_patch/{task_id}`
-    - **Body**: `{ "patch": {...} }`
-    - **Response**: `{ "success": true, "updated_yaml": "..." }`
-- `POST /api/editor/undo/{task_id}`
-    - **Response**: 回滚后的完整剧本数据。
+> 完整端点签名、Request/Response 示例、SSE 事件格式、错误码规范详见 **[SDS §8 API 接口设计](./SDS%20软件设计说明书.md#8-api-接口设计)** 。
 
 ## 8. 项目计划（72 小时极限排期）
 
@@ -411,7 +229,7 @@ CREATE INDEX idx_dialog_task_time ON dialogues(task_id, created_at);
 
 | 编号      | 场景          | 操作步骤                                                  | 预期结果                                                                                  |
 | :-------- | :------------ | :-------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| **TC-01** | 标准转换链路  | 上传《永恒至尊》前 4 章（约 1.5 万字），点击转换。       | 90秒内完成，生成合法 YAML，包含完整 Scene 与 Element，`source_ref` 准确。                 |
+| **TC-01** | 标准转换链路  | 上传《永恒至尊》前 4 章（约 1.5 万字），点击转换。        | 90秒内完成，生成合法 YAML，包含完整 Scene 与 Element，`source_ref` 准确。                 |
 | **TC-02** | 格式强校验    | 模拟 LLM 返回缺少引号的非法 JSON。                        | 后端捕获 `ValidationError`，自动触发重试修复，最终返回合法数据，日志记录修复过程。        |
 | **TC-03** | RAG 记忆检索  | 在第 4 章转换时，查询 `pgvector` 日志。                   | 系统成功检索到第 1 章的角色设定作为 Context 注入，角色性格未发生 OOC（崩塌）。            |
 | **TC-04** | 双向溯源      | 在右栏点击某句对白，观察左栏。                            | 左栏原文自动平滑滚动至对应段落，并添加黄色高亮背景。                                      |
@@ -429,8 +247,11 @@ CREATE INDEX idx_dialog_task_time ON dialogues(task_id, created_at);
 
 ### 10.1 模型路由与成本控制策略
 
-- **DeepSeek-v4-pro**：仅用于“全局知识图谱抽取”与“核心场景转换”。预估单次完整转换消耗约 20K Tokens，成本约 ￥0.08。
-- **DeepSeek-v4-flash**：用于“章节切分”、“AI 对话”、“轻量补丁生成”。预估单次对话消耗约 2K Tokens，成本极低。
+- **DeepSeek-v4-pro**：仅用于”全局知识图谱抽取”（Stage 1）与”全量 Scene 一致性检查”（Stage 3），利用其强推理能力处理需要深度理解与全局视野的任务。预估单次完整转换 Pro 消耗约 20K Tokens，成本约 ￥0.08。
+- **DeepSeek-v4-flash**：用于”场景转换与生成”（Stage 2）、”章节切分”、”AI 对话”、”轻量补丁生成”等模式化、高吞吐任务。预估单次对话消耗约 2K Tokens，成本极低。
+
+> 模型路由策略的详细分工逻辑与 ADR 记录详见 **[SDS §4 模型路由策略](./SDS%20软件设计说明书.md#4-模型路由策略)** 。
+
 - **预算评估**：￥1400 预算足以支撑约 10,000 次完整转换与海量对话测试，完全满足 72 小时开发、调试与路演需求。
 
 ### 10.2 用户界面原型 (文字描述)
