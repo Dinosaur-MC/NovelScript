@@ -43,7 +43,7 @@ backend/cli/
 ```
 1. Read .txt → chunker.split() → List[Chapter]
 2. Pro model: chapters → summary + characters + graph (in-memory dict)
-3. Embedding: chapters → in-memory FAISS index
+3. Embedding (OpenRouter): chapters → in-memory FAISS index
 4. Per chapter: Flash model(knowledge_graph + top-K RAG context) → Scene[]
 5. Pro model: Scene[] → consistency check + optimization
 6. exporter.to_yaml(script) → stdout / file
@@ -52,6 +52,8 @@ backend/cli/
 ### Key Design Decisions
 - **No DB** — everything in-memory. Knowledge graph is a dict. RAG is FAISS in memory.
 - **Model router** — static routing table (Pro for Stage 1+3, Flash for Stage 2)
+- **Embedding via OpenRouter** — `https://openrouter.ai/api/v1/embeddings` (OpenAI-compatible API), env: `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL`
+- **LLM via DeepSeek** — Chat Completions endpoint, env: `DEEPSEEK_API_KEY`
 - **Auto-Fix** — Pydantic V2 validation failure → retry with error context (max 2x)
 - **CLI-only** — `uv run python -m cli.pipeline sample.txt` outputs YAML to stdout
 
@@ -70,7 +72,7 @@ backend/cli/
 | A-TC-01 | 正则章节切分   | `chunker.split("第一章\n...第二章\n...")`  | 返回 2 个 Chapter，索引正确，标题提取正确                                |
 | A-TC-02 | LLM 兜底切分   | 输入无"第X章"标志的英文小说                | Flash 模型被调用做语义分章，返回 ≥1 个 Chapter                           |
 | A-TC-03 | Stage 1 规划   | Pro 模型输入 3 章文本                      | 返回合法 `KnowledgeGraph`（≥3 个角色节点、≥2 条关系边）、`summary` 非空 |
-| A-TC-04 | RAG 索引构建   | 3 章文本 → FAISS 索引                      | 索引包含 3 个向量，相似度查询返回正确的 top-1 章节                       |
+| A-TC-04 | RAG 索引构建   | 3 章文本 → OpenRouter embedding → FAISS 索引 | 索引包含 3 个 vector(1536)，相似度查询返回正确的 top-1 章节             |
 | A-TC-05 | Stage 2 转换   | Flash 模型 + KG context + RAG top-2        | 返回 Scene 列表，每个 Scene 含 heading + ≥1 Element，Pydantic 校验通过   |
 | A-TC-06 | Auto-Fix 修复  | 注入非法 Element（缺少 type 字段）          | ≤2 次重试后修复成功；第 3 次仍非法时降级返回已解析部分 + 警告标记       |
 | A-TC-07 | source_ref 注入 | Stage 2 输出后检查 Element                 | 每个 Element 的 `source_ref` 非空，`chapter_id` + `offset` 可追溯        |
