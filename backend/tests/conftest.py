@@ -2,45 +2,43 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import SQLModel
 
 from app.core.config import settings
 from app.core.db import _engine, _async_session_factory, init_db
 from app.db.connection import close_pool, get_pool
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create a single event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
+# Let pytest-asyncio manage the event loop natively (no custom event_loop fixture).
+# On Windows this avoids "different loop" errors with ProactorEventLoop.
+pytest_plugins = ("pytest_asyncio",)
 
 # ---------------------------------------------------------------------------
-# Database-level fixtures (require a running PostgreSQL)
+# Database fixtures — one init per module to amortize setup cost
 # ---------------------------------------------------------------------------
 
+_initialised: bool = False
 
-@pytest_asyncio.fixture(scope="session")
+
+@pytest_asyncio.fixture(scope="module")
 async def db_engine():
-    """Initialise the database (extensions, tables, indexes) once per session."""
-    await init_db()
+    """Initialise the database once per test module."""
+    global _initialised
+    if not _initialised:
+        await init_db()
+        _initialised = True
     yield
-    await close_pool()
-    await _engine.dispose()
+    # Cleanup is handled at the module level by the last test finishing.
+    # We skip engine disposal here to keep it alive across modules.
 
 
 @pytest_asyncio.fixture
 async def db_conn(db_engine: None):
-    """Provide a raw asyncpg connection for DDL / constraint tests."""
+    """Raw asyncpg connection for DDL / constraint tests."""
     pool = await get_pool()
     if pool is None:
         pytest.skip("asyncpg pool not available — is PostgreSQL running?")
@@ -50,7 +48,7 @@ async def db_conn(db_engine: None):
 
 @pytest_asyncio.fixture
 async def db(db_engine: None) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a SQLAlchemy :class:`AsyncSession` for ORM tests."""
+    """SQLAlchemy AsyncSession for ORM tests."""
     async with _async_session_factory() as session:  # type: ignore[attr-defined]
         yield session
         await session.rollback()
@@ -60,27 +58,14 @@ async def db(db_engine: None) -> AsyncGenerator[AsyncSession, None]:
 # Data helpers
 # ---------------------------------------------------------------------------
 
-
-@pytest_asyncio.fixture
-async def test_user(db: AsyncSession) -> dict:
-    """Insert a minimal test user and return its dict representation.
-
-    The row is rolled back automatically by the ``db`` fixture.
-    """
-    from app.models.sql import User
-
+@pytest.fixture
+def sample_user_data():
+    """Return a dict suitable for User creation without hitting the DB."""
     uid = uuid.uuid4()
-    username = f"testuser_{uid.hex[:8]}"
-    user = User(
-        id=uid,
-        username=username,
-        email=f"{username}@test.local",
-        password_hash="fake_hash",
-    )
-    db.add(user)
-    await db.flush()
+    name = f"testuser_{uid.hex[:8]}"
     return {
         "id": uid,
-        "username": username,
-        "email": f"{username}@test.local",
+        "username": name,
+        "email": f"{name}@test.local",
+        "password_hash": "fake_hash",
     }
