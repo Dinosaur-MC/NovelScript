@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # -- PostgreSQL -----------------------------------------------------------
     DATABASE_URL: str = (
-        "postgresql+asyncpg://novelscript:novelscript@localhost:5432/novelscript"
+        "postgresql://novelscript:novelscript@localhost:5432/novelscript"
     )
 
     # -- LLM / AI -------------------------------------------------------------

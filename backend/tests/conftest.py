@@ -1,45 +1,37 @@
-"""Shared pytest fixtures for the NovelScript backend test suite."""
+"""Shared pytest fixtures — all synchronous, no event-loop issues."""
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+import pytest
+from sqlalchemy.orm import Session
 
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.db import _engine, _async_session_factory, init_db
-from app.db.connection import get_pool
-
-# ---------------------------------------------------------------------------
-# Database fixtures
-# ---------------------------------------------------------------------------
+from app.core.db import _engine, _session_factory, init_db
 
 _DB_INITIALISED: bool = False
 
 
-@pytest_asyncio.fixture(loop_scope="module")
-async def db_engine():
-    """Initialise DB per module.  loop_scope="module" ensures all tests in
-    the module share one event loop.  init_db() closes any stale pool
-    from a previous module before creating a fresh one."""
-    await init_db()
+@pytest.fixture(scope="session")
+def db_engine():
+    """Initialise the database once per test session."""
+    global _DB_INITIALISED
+    if not _DB_INITIALISED:
+        init_db()
+        _DB_INITIALISED = True
     yield
+    # Engine is disposed by pytest's built-in cleanup
 
 
-@pytest_asyncio.fixture(loop_scope="module")
-async def db_conn(db_engine: None):
-    """Raw asyncpg connection for DDL / constraint tests."""
-    pool = await get_pool()
-    if pool is None:
-        import pytest
-        pytest.skip("asyncpg pool not available — is PostgreSQL running?")
-    async with pool.acquire() as conn:
-        yield conn
+@pytest.fixture
+def db_conn(db_engine: None):
+    """Raw DB-API connection for DDL / constraint tests."""
+    conn = _engine.connect()
+    yield conn
+    conn.close()
 
 
-@pytest_asyncio.fixture(loop_scope="module")
-async def db(db_engine: None) -> AsyncGenerator[AsyncSession, None]:
-    """SQLAlchemy AsyncSession for ORM tests."""
-    async with _async_session_factory() as session:  # type: ignore[attr-defined]
+@pytest.fixture
+def db(db_engine: None):
+    """SQLAlchemy Session for ORM tests — auto-rollback on teardown."""
+    with _session_factory() as session:
         yield session
-        await session.rollback()
+        session.rollback()

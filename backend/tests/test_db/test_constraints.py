@@ -1,81 +1,60 @@
-"""Verify that PK / FK / CHECK / UNIQUE constraints are enforced."""
+"""Verify PK / FK / CHECK / UNIQUE constraint enforcement."""
 
 from __future__ import annotations
 
 import uuid
 
 import pytest
+from sqlalchemy import text
 
 
-# ---------------------------------------------------------------------------
-# 1. Foreign-key violation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_fk_violation_rejected(db_conn):
-    """Insert into chapters with a non-existent novel_id must fail."""
+def test_fk_violation_rejected(db_conn):
+    """Insert into chapters with non-existent novel_id must fail."""
     fake_novel_id = uuid.uuid4()
-    with pytest.raises(Exception):  # asyncpg raises ForeignKeyViolationError
-        await db_conn.execute(
-            """
-            INSERT INTO chapters (novel_id, chapter_index, title)
-            VALUES ($1, 1, 'Ghost Chapter')
-            """,
-            fake_novel_id,
-        )
+    with pytest.raises(Exception):
+        db_conn.execute(text(
+            "INSERT INTO chapters (novel_id, chapter_index, title) "
+            "VALUES (:id, 1, 'Ghost Chapter')"
+        ), {"id": fake_novel_id})
 
 
-# ---------------------------------------------------------------------------
-# 2. CHECK constraint violation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_check_violation_rejected(db_conn):
-    """A task status outside the allowed set must be rejected."""
-    # Use a real novel id (create one inline)
+def test_check_violation_rejected(db_conn):
+    """Task status outside allowed set must be rejected."""
     novel_id = uuid.uuid4()
     try:
-        await db_conn.execute(
-            "INSERT INTO novels (id, title) VALUES ($1, 'CK Novel')",
-            novel_id,
-        )
+        db_conn.execute(text(
+            "INSERT INTO novels (id, title) VALUES (:id, 'CK Novel')"
+        ), {"id": novel_id})
+        db_conn.commit()
         with pytest.raises(Exception):
-            await db_conn.execute(
-                """
-                INSERT INTO tasks (novel_id, status)
-                VALUES ($1, 'invalid_status')
-                """,
-                novel_id,
-            )
+            db_conn.execute(text(
+                "INSERT INTO tasks (novel_id, status) "
+                "VALUES (:nid, 'invalid_status')"
+            ), {"nid": novel_id})
     finally:
-        await db_conn.execute("DELETE FROM novels WHERE id = $1", novel_id)
+        db_conn.rollback()  # reset aborted transaction after constraint violation
+        db_conn.execute(text("DELETE FROM tasks WHERE novel_id = :id"), {"id": novel_id})
+        db_conn.execute(text("DELETE FROM novels WHERE id = :id"), {"id": novel_id})
+        db_conn.commit()
 
 
-# ---------------------------------------------------------------------------
-# 3. Unique email constraint
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_unique_email_violation(db_conn):
-    """Two users with the same email must be rejected."""
-    email = f"dup_{uuid.uuid4().hex[:8]}@test.local"
-    user1_id = uuid.uuid4()
+def test_unique_email_violation(db_conn):
+    """Two users with same email must be rejected."""
+    tag = uuid.uuid4().hex[:8]
+    email = f"dup_{tag}@test.local"
+    u1 = uuid.uuid4()
     try:
-        await db_conn.execute(
+        db_conn.execute(text(
             "INSERT INTO users (id, username, email, password_hash) "
-            "VALUES ($1, 'u1', $2, 'h')",
-            user1_id,
-            email,
-        )
+            "VALUES (:id, :uname, :email, 'h')"
+        ), {"id": u1, "uname": f"u1_{tag}", "email": email})
+        db_conn.commit()
         with pytest.raises(Exception):
-            await db_conn.execute(
+            db_conn.execute(text(
                 "INSERT INTO users (id, username, email, password_hash) "
-                "VALUES ($1, 'u2', $2, 'h')",
-                uuid.uuid4(),
-                email,
-            )
+                "VALUES (:id, :uname, :email, 'h')"
+            ), {"id": uuid.uuid4(), "uname": f"u2_{tag}", "email": email})
     finally:
-        await db_conn.execute("DELETE FROM users WHERE id = $1", user1_id)
+        db_conn.rollback()  # reset aborted transaction after constraint violation
+        db_conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": u1})
+        db_conn.commit()

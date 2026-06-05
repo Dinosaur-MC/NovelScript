@@ -1,42 +1,32 @@
-"""Database lifecycle — session dependency and initialisation.
-
-Provides the FastAPI ``get_db`` async generator and ``init_db`` which
-creates all tables declared by SQLModel *and* executes ``init.sql``
-via asyncpg for extensions, indexes, and any raw-DDL objects that
-SQLModel cannot express (HNSW, GIN trigram, CHECK constraints on
-non-enum columns, etc.).
-"""
+"""Database lifecycle — sync session dependency and initialisation."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import Generator
 from pathlib import Path
-from typing import Optional
 
-import asyncpg
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
 from sqlmodel import SQLModel
 
 from app.core.config import settings
-from app.db.connection import close_pool, create_pool
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# SQLAlchemy async engine (for SQLModel / ORM)
+# SQLAlchemy engine (sync — no event-loop issues on Windows)
 # ---------------------------------------------------------------------------
-_engine = create_async_engine(
-    settings.DATABASE_URL,
+_engine = create_engine(
+    settings.DATABASE_URL.replace("+asyncpg", "").replace("+psycopg", ""),
     echo=settings.DEBUG,
     pool_size=5,
     max_overflow=10,
 )
 
-_async_session_factory = sessionmaker(
+_session_factory = sessionmaker(
     _engine,
-    class_=AsyncSession,
+    class_=Session,
     expire_on_commit=False,
 )
 
@@ -45,103 +35,73 @@ _async_session_factory = sessionmaker(
 # FastAPI dependency
 # ---------------------------------------------------------------------------
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an :class:`AsyncSession` per request; auto-close on teardown."""
-    async with _async_session_factory() as session:  # type: ignore[attr-defined]
+def get_db() -> Generator[Session, None, None]:
+    """Yield a :class:`Session` per request."""
+    with _session_factory() as session:
         try:
             yield session
-            await session.commit()
+            session.commit()
         except Exception:
-            await session.rollback()
+            session.rollback()
             raise
         finally:
-            await session.close()
+            session.close()
 
 
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
 
-async def init_db() -> None:
+def init_db() -> None:
     """Full database initialisation.
 
-    1. Create the asyncpg connection pool (used by services for raw SQL).
-    2. Execute ``init.sql`` via asyncpg to ensure extensions, indexes,
-       CHECK constraints, and other PG-native objects exist.
-    3. Create all SQLModel-managed tables (idempotent via
-       ``create_all`` which uses ``IF NOT EXISTS`` internally with
-       the asyncpg dialect).
+    1. Create extensions (privilege-guarded).
+    2. Execute init.sql for tables, indexes, CHECK constraints.
+    3. Create all SQLModel-managed tables (idempotent).
     """
     logger.info("Initialising database …")
 
-    # -- 1. asyncpg pool ------------------------------------------------ #
-    await create_pool(settings.DATABASE_URL)
-
-    # -- 2. Raw DDL (extensions first, then tables/indexes) -------------- #
-    pool = await _get_asyncpg_pool()
-    if pool is None:
-        raise RuntimeError("asyncpg pool was not created — check DATABASE_URL.")
-
-    async with pool.acquire() as conn:
-        # Extensions — CREATE EXTENSION requires superuser; if already
-        # installed by a superuser, the error is harmless.
+    # -- 1. Extensions — privilege-guarded --------------------------------- #
+    with _engine.connect() as conn:
         for ext in ("uuid-ossp", "vector", "pg_trgm"):
             try:
-                await conn.execute(
-                    f'CREATE EXTENSION IF NOT EXISTS "{ext}"'
-                )
-            except asyncpg.exceptions.InsufficientPrivilegeError:
+                conn.execute(text(f'CREATE EXTENSION IF NOT EXISTS "{ext}"'))
+            except Exception as exc:
                 logger.warning(
-                    "Cannot create extension %s (insufficient privileges). "
-                    "If it is already installed by a superuser, this is safe.",
-                    ext,
+                    "Cannot create extension %s: %s. "
+                    "If pre-installed by superuser, this is safe.",
+                    ext, exc,
                 )
+        conn.commit()
 
-        # Tables, indexes, CHECK constraints (the bulk of init.sql).
-        # Lines starting with CREATE EXTENSION are skipped — those are
-        # handled above with a privilege guard.
-        sql_path = Path(__file__).resolve().parent.parent / "db" / "init.sql"
-        raw_sql = sql_path.read_text(encoding="utf-8")
-        skip_extensions_sql = "\n".join(
-            line
-            for line in raw_sql.splitlines()
-            if not line.strip().startswith("CREATE EXTENSION")
-        )
-        await conn.execute(skip_extensions_sql)
+    # -- 2. Raw DDL (init.sql minus extensions) --------------------------- #
+    sql_path = Path(__file__).resolve().parent.parent / "db" / "init.sql"
+    raw_sql = sql_path.read_text(encoding="utf-8")
+    skip_extensions_sql = "\n".join(
+        line
+        for line in raw_sql.splitlines()
+        if not line.strip().startswith("CREATE EXTENSION")
+    )
+
+    with _engine.connect() as conn:
+        for statement in _split_statements(skip_extensions_sql):
+            stmt = statement.strip()
+            if stmt:
+                conn.execute(text(stmt))
+        conn.commit()
 
     logger.info("DDL executed.")
 
-    # -- 3. SQLModel tables --------------------------------------------- #
-    global _engine, _async_session_factory
-
-    # When running across multiple test modules on Windows, the event loop
-    # changes.  Dispose the old engine pool and recreate it with fresh
-    # connections bound to the current event loop.
-    await _engine.dispose()
-    _engine = create_async_engine(
-        settings.DATABASE_URL,
-        echo=settings.DEBUG,
-        pool_size=5,
-        max_overflow=10,
-    )
-    _async_session_factory = sessionmaker(
-        _engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-
-    # IMPORTANT: import all sql.py models so SQLModel.metadata knows about
-    # them before create_all is called.
+    # -- 3. SQLModel tables ----------------------------------------------- #
     import app.models.sql as _sql_models  # noqa: F401
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-
+    SQLModel.metadata.create_all(_engine)
     logger.info("SQLModel tables created (if not exists).")
 
 
-async def _get_asyncpg_pool() -> Optional[asyncpg.Pool]:
-    """Lazy import helper — avoids circular import with connection.py."""
-    from app.db.connection import get_pool
-
-    return await get_pool()
+def _split_statements(sql: str):
+    """Split SQL on semicolons, yielding non-empty statements."""
+    for stmt in sql.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            yield stmt
