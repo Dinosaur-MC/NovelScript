@@ -1,13 +1,14 @@
 """Scene converter — transforms a novel chapter into script scenes.
 
-Uses LangChain-native ChatPromptTemplate + with_structured_output()
-for schema-validated scene generation.
+Uses LangChain-native ChatPromptTemplate + JsonOutputParser with
+DeepSeek native JSON mode (``response_format: {type: json_object}``).
 """
 
 from __future__ import annotations
 
 import logging
 
+from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,8 @@ class SceneList(BaseModel):
     scenes: list[Scene] = Field(default_factory=list, description="剧本场景列表")
 
 
+_parser = JsonOutputParser(pydantic_object=SceneList)
+
 _PROMPT = ChatPromptTemplate.from_messages([
     ("system", """\
 你是一个专业的影视剧本改编专家。将小说章节转换为结构化的剧本场景。
@@ -29,9 +32,11 @@ _PROMPT = ChatPromptTemplate.from_messages([
 elements (元素: action/dialogue/heading/transition/parenthetical/character/note,
 每元素含 type + content), characters_present (角色ID列表)。
 
-规则: 对白使用 dialogue 类型，去除小说化描写，心理活动转换为 action 或 dialogue。"""),
+规则: 对白使用 dialogue 类型，去除小说化描写，心理活动转换为 action 或 dialogue。
+
+{format_instructions}"""),
     ("human", """\
-请将以下小说章节转换为剧本场景。
+请将以下小说章节转换为 JSON 格式的剧本场景。
 
 章节: {chapter_title}
 {kg_summary}
@@ -46,22 +51,22 @@ def convert_chapter(
     kg: KnowledgeGraph,
     rag_context: list[str],
 ) -> list[Scene]:
-    llm = get_llm("scene_conversion", temperature=0.5)
+    llm = get_llm("scene_conversion", temperature=0.5, json_mode=True)
 
     kg_summary = _summarize_kg(kg)
     rag_text = "\n---\n".join(rag_context[:3]) if rag_context else "（无额外上下文）"
 
-    structured_llm = llm.with_structured_output(SceneList)
+    chain = _PROMPT | llm | _parser
 
     try:
-        result: SceneList = structured_llm.invoke(
-            _PROMPT.invoke({
-                "chapter_title": chapter.title,
-                "chapter_text": chapter.text[:8000],
-                "kg_summary": kg_summary,
-                "rag_context": rag_text,
-            })
-        )
+        raw = chain.invoke({
+            "chapter_title": chapter.title,
+            "chapter_text": chapter.text[:8000],
+            "kg_summary": kg_summary,
+            "rag_context": rag_text,
+            "format_instructions": _parser.get_format_instructions(),
+        })
+        result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
         scenes = _inject_source_refs(result.scenes, chapter)
         logger.info("Chapter %d converted to %d scene(s).", chapter.index, len(scenes))
         return scenes

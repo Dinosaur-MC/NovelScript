@@ -152,7 +152,7 @@ def _llm_split(text: str) -> list[Chapter]:
 
         import json
 
-        parsed = json.loads(json_str)
+        parsed = json.loads(json_str, strict=False)
         if not isinstance(parsed, list):
             parsed = [parsed]
 

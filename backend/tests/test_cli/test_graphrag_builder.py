@@ -1,10 +1,12 @@
-"""Tests for cli.graphrag_builder — KG extraction with with_structured_output()."""
+"""Tests for cli.graphrag_builder — KG extraction with JsonOutputParser + JSON mode."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
 from cli.graphrag_builder import extract_graph
@@ -23,6 +25,8 @@ _VALID_KG = KnowledgeGraph(
     ],
 )
 
+_VALID_KG_JSON = _VALID_KG.model_dump_json()
+
 
 class TestExtractGraph:
     def test_empty_chapters_returns_empty_kg(self) -> None:
@@ -34,36 +38,31 @@ class TestExtractGraph:
     def test_single_chapter_extracts_kg(self) -> None:
         chapter = Chapter(text="张三住在京城。", title="第一章", index=0)
         with patch("cli.graphrag_builder.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.return_value = _VALID_KG
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_VALID_KG_JSON))
+            mock_get.return_value = fake_llm
             kg = extract_graph([chapter])
         assert len(kg.nodes) == 2
         assert kg.nodes[0].name == "张三"
         assert len(kg.edges) == 1
         assert kg.edges[0].relation == "located_in"
 
-    def test_with_structured_output_called(self) -> None:
+    def test_json_mode_enabled_on_llm(self) -> None:
         chapter = Chapter(text="test", title="T", index=0)
         with patch("cli.graphrag_builder.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.return_value = _VALID_KG
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_VALID_KG_JSON))
+            mock_get.return_value = fake_llm
             extract_graph([chapter])
-        mock_llm.with_structured_output.assert_called_once_with(KnowledgeGraph)
+        mock_get.assert_called_once_with(
+            "global_extraction", temperature=0.3, json_mode=True
+        )
 
     def test_chain_failure_returns_empty_kg(self) -> None:
         chapter = Chapter(text="test", title="T", index=0)
         with patch("cli.graphrag_builder.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.side_effect = RuntimeError("API error")
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            def _raise(_x):
+                raise RuntimeError("API error")
+            fake_llm = RunnableLambda(_raise)
+            mock_get.return_value = fake_llm
             kg = extract_graph([chapter])
             assert kg.nodes == []
 

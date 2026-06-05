@@ -43,7 +43,8 @@ def _make_embeddings() -> OpenAIEmbeddings:
         model=EMBEDDING_MODEL,
         openai_api_base=OPENROUTER_BASE,
         openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-        tiktoken_enabled=False,  # skip token counting to avoid tiktoken download
+        model_kwargs={"encoding_format": "float"},
+        check_embedding_ctx_length=False,  # send raw text (not token IDs) for OpenRouter compat
     )
 
 

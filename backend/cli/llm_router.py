@@ -49,12 +49,15 @@ _REQUEST_TIMEOUT = httpx.Timeout(
 # ---------------------------------------------------------------------------
 
 
-def get_llm(stage: str, temperature: float = 0.3) -> ChatOpenAI:
+def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> ChatOpenAI:
     """Return a LangChain ChatOpenAI instance routed to the correct DeepSeek model.
 
     Args:
         stage: One of the keys in MODEL_ROUTING.
         temperature: Sampling temperature (0.0–1.0).
+        json_mode: If True, set ``response_format`` to ``{"type": "json_object"}``
+            (DeepSeek native JSON mode, NOT OpenAI json_schema).  The prompt
+            MUST contain the word "json" and describe the expected structure.
 
     Returns:
         A configured ChatOpenAI instance pointed at the DeepSeek API.
@@ -73,7 +76,7 @@ def get_llm(stage: str, temperature: float = 0.3) -> ChatOpenAI:
         logger.warning("DEEPSEEK_API_KEY is not set — LLM calls will fail.")
         api_key = "not-set"  # placeholder so the client can be constructed
 
-    llm = ChatOpenAI(
+    kwargs: dict = dict(
         model=model_name,
         base_url=DEEPSEEK_BASE_URL,
         api_key=api_key,
@@ -81,5 +84,10 @@ def get_llm(stage: str, temperature: float = 0.3) -> ChatOpenAI:
         timeout=_REQUEST_TIMEOUT,
         max_retries=2,
     )
-    logger.debug("Created LLM client for stage=%s → model=%s", stage, model_name)
+    if json_mode:
+        kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+
+    llm = ChatOpenAI(**kwargs)
+    logger.debug("Created LLM client for stage=%s → model=%s json_mode=%s",
+                 stage, model_name, json_mode)
     return llm

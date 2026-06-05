@@ -83,3 +83,14 @@ class TestGetLLM:
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
             llm = get_llm("scene_conversion")
             assert llm.max_retries == 2
+
+    def test_json_mode_disabled_by_default(self) -> None:
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
+            llm = get_llm("scene_conversion")
+            assert llm.model_kwargs is None or llm.model_kwargs == {}
+
+    def test_json_mode_enabled_adds_response_format(self) -> None:
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
+            llm = get_llm("scene_conversion", json_mode=True)
+            assert llm.model_kwargs is not None
+            assert llm.model_kwargs.get("response_format") == {"type": "json_object"}

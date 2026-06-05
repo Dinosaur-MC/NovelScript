@@ -1,4 +1,4 @@
-"""Tests for cli.optimizer — cross-scene consistency check with LangChain."""
+"""Tests for cli.optimizer — cross-scene consistency check with JSON mode."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableLambda
 
 from cli.models import Element, KnowledgeGraph, KnowledgeNode, Scene
 from cli.optimizer import _serialize_scenes, _summarize_kg, SceneList, optimize
@@ -40,6 +42,8 @@ _MOCK_RESULT = SceneList(scenes=[
           characters_present=["n_01"]),
 ])
 
+_MOCK_RESULT_JSON = _MOCK_RESULT.model_dump_json()
+
 
 class TestOptimize:
     def test_empty_scenes_returns_empty(self) -> None:
@@ -47,24 +51,29 @@ class TestOptimize:
 
     def test_happy_path(self, sample_scenes: list[Scene], sample_kg: KnowledgeGraph) -> None:
         with patch("cli.optimizer.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.return_value = _MOCK_RESULT
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_MOCK_RESULT_JSON))
+            mock_get.return_value = fake_llm
             result = optimize(sample_scenes, sample_kg)
             assert len(result) == 1
             assert all(isinstance(s, Scene) for s in result)
 
     def test_failure_returns_originals(self, sample_scenes: list[Scene]) -> None:
         with patch("cli.optimizer.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.side_effect = RuntimeError("fail")
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            def _raise(_x):
+                raise RuntimeError("fail")
+            fake_llm = RunnableLambda(_raise)
+            mock_get.return_value = fake_llm
             result = optimize(sample_scenes, KnowledgeGraph())
             assert result == sample_scenes
+
+    def test_json_mode_passed(self, sample_scenes: list[Scene]) -> None:
+        with patch("cli.optimizer.get_llm") as mock_get:
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_MOCK_RESULT_JSON))
+            mock_get.return_value = fake_llm
+            optimize(sample_scenes, KnowledgeGraph())
+        mock_get.assert_called_once_with(
+            "consistency_check", temperature=0.2, json_mode=True
+        )
 
 
 class TestSerializeScenes:

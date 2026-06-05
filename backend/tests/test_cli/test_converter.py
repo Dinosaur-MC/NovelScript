@@ -1,10 +1,12 @@
-"""Tests for cli.converter — chapter→scene, source_ref injection."""
+"""Tests for cli.converter — chapter→scene, source_ref injection, JSON mode."""
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableLambda
 
 from cli.converter import _inject_source_refs, _summarize_kg, SceneList, convert_chapter
 from cli.models import (
@@ -81,15 +83,14 @@ _MOCK_SCENE_LIST = SceneList(scenes=[
           characters_present=["n_01"]),
 ])
 
+_MOCK_SCENE_LIST_JSON = _MOCK_SCENE_LIST.model_dump_json()
+
 
 class TestConvertChapter:
     def test_happy_path(self, sample_chapter: Chapter, sample_kg: KnowledgeGraph) -> None:
         with patch("cli.converter.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.return_value = _MOCK_SCENE_LIST
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_MOCK_SCENE_LIST_JSON))
+            mock_get.return_value = fake_llm
             scenes = convert_chapter(sample_chapter, sample_kg, ["上下文"])
         assert len(scenes) == 1
         assert scenes[0].scene_id == "s_000"
@@ -97,20 +98,25 @@ class TestConvertChapter:
 
     def test_empty_kg_and_rag_works(self, sample_chapter: Chapter) -> None:
         with patch("cli.converter.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.return_value = _MOCK_SCENE_LIST
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_MOCK_SCENE_LIST_JSON))
+            mock_get.return_value = fake_llm
             scenes = convert_chapter(sample_chapter, KnowledgeGraph(), [])
             assert len(scenes) == 1
 
     def test_failure_returns_empty(self, sample_chapter: Chapter) -> None:
         with patch("cli.converter.get_llm") as mock_get:
-            mock_llm = MagicMock()
-            mock_structured = MagicMock()
-            mock_structured.invoke.side_effect = RuntimeError("fail")
-            mock_llm.with_structured_output.return_value = mock_structured
-            mock_get.return_value = mock_llm
+            def _raise(_x):
+                raise RuntimeError("fail")
+            fake_llm = RunnableLambda(_raise)
+            mock_get.return_value = fake_llm
             scenes = convert_chapter(sample_chapter, KnowledgeGraph(), [])
             assert scenes == []
+
+    def test_json_mode_passed_to_llm(self, sample_chapter: Chapter) -> None:
+        with patch("cli.converter.get_llm") as mock_get:
+            fake_llm = RunnableLambda(lambda x: AIMessage(content=_MOCK_SCENE_LIST_JSON))
+            mock_get.return_value = fake_llm
+            convert_chapter(sample_chapter, KnowledgeGraph(), [])
+        mock_get.assert_called_once_with(
+            "scene_conversion", temperature=0.5, json_mode=True
+        )

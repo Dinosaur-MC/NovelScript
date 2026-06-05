@@ -1,6 +1,7 @@
 """Scene optimizer — cross-scene consistency check.
 
-Uses LangChain-native ChatPromptTemplate + with_structured_output().
+Uses LangChain-native ChatPromptTemplate + JsonOutputParser with
+DeepSeek native JSON mode (``response_format: {type: json_object}``).
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 
+from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
@@ -21,13 +23,17 @@ class SceneList(BaseModel):
     scenes: list[Scene] = Field(default_factory=list, description="优化后的场景列表")
 
 
+_parser = JsonOutputParser(pydantic_object=SceneList)
+
 _PROMPT = ChatPromptTemplate.from_messages([
     ("system", """\
 你是一个剧本质量控制专家。检查并修正剧本场景中的一致性问题：
 1. 人物弧光一致性 2. 地点连续性 3. 时间线 4. 对白风格。
-仅修正明显的不一致，保留原文风格和内容精髓。"""),
+仅修正明显的不一致，保留原文风格和内容精髓。
+
+{format_instructions}"""),
     ("human", """\
-请检查以下剧本场景的一致性并进行修正：
+请检查以下剧本场景的一致性并以 JSON 格式输出修正结果：
 
 {kg_summary}
 【场景列表】
@@ -39,16 +45,16 @@ def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
     if not scenes:
         return []
 
-    llm = get_llm("consistency_check", temperature=0.2)
-    structured_llm = llm.with_structured_output(SceneList)
+    llm = get_llm("consistency_check", temperature=0.2, json_mode=True)
+    chain = _PROMPT | llm | _parser
 
     try:
-        result: SceneList = structured_llm.invoke(
-            _PROMPT.invoke({
-                "scenes_json": _serialize_scenes(scenes)[:12000],
-                "kg_summary": _summarize_kg(kg),
-            })
-        )
+        raw = chain.invoke({
+            "scenes_json": _serialize_scenes(scenes)[:12000],
+            "kg_summary": _summarize_kg(kg),
+            "format_instructions": _parser.get_format_instructions(),
+        })
+        result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
         logger.info("Optimizer: %d scene(s) processed.", len(result.scenes))
         return result.scenes
     except Exception as exc:
