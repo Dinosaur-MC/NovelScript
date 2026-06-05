@@ -23,7 +23,7 @@ from cli.chunker import split_chapters
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/novel", tags=["Novel"])
+router = APIRouter(prefix="/novel", tags=["Novel"])
 
 novel_crud = BaseCRUD[Novel](Novel)
 chapter_crud = BaseCRUD[ChapterModel](ChapterModel)

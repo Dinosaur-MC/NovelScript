@@ -28,7 +28,7 @@ from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/editor", tags=["Editor"])
+router = APIRouter(prefix="/editor", tags=["Editor"])
 
 # ---------------------------------------------------------------------------
 # CRUD helpers

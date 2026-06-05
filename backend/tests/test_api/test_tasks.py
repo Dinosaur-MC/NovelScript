@@ -60,7 +60,7 @@ def client() -> TestClient:
 
 def test_create_task(client: TestClient, test_novel_id: str) -> None:
     """Create a task and verify the response shape."""
-    resp = client.post("/api/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
@@ -71,7 +71,7 @@ def test_create_task(client: TestClient, test_novel_id: str) -> None:
 
     # Also verify the lightweight status endpoint
     task_id = body["data"]["task_id"]
-    status_resp = client.get(f"/api/tasks/{task_id}/status")
+    status_resp = client.get(f"/api/v1/tasks/{task_id}/status")
     assert status_resp.status_code == 200
     assert status_resp.json()["data"]["status"] == "pending"
     assert status_resp.json()["data"]["progress"] == 0
@@ -87,7 +87,7 @@ def test_create_task_invalid_novel_404(
 ) -> None:
     """Creating a task for a novel that does not exist returns 404."""
     fake_id = str(uuid.uuid4())
-    resp = client.post("/api/tasks/", json={"novel_id": fake_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": fake_id})
     assert resp.status_code == 404, resp.text
 
 
@@ -101,13 +101,13 @@ def test_valid_status_transition(
 ) -> None:
     """Exercise the full happy path: pending→preprocessing→converting→completed."""
     # Create
-    resp = client.post("/api/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
     # pending → preprocessing
     resp = client.put(
-        f"/api/tasks/{task_id}/status",
+        f"/api/v1/tasks/{task_id}/status",
         json={"status": "preprocessing", "progress": 10},
     )
     assert resp.status_code == 200, resp.text
@@ -116,21 +116,21 @@ def test_valid_status_transition(
 
     # preprocessing → converting
     resp = client.put(
-        f"/api/tasks/{task_id}/status", json={"status": "converting", "progress": 50}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "converting", "progress": 50}
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "converting"
 
     # converting → completed
     resp = client.put(
-        f"/api/tasks/{task_id}/status", json={"status": "completed", "progress": 100}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "completed", "progress": 100}
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "completed"
     assert resp.json()["data"]["progress"] == 100
 
     # Verify the detail endpoint reflects the final state
-    detail = client.get(f"/api/tasks/{task_id}")
+    detail = client.get(f"/api/v1/tasks/{task_id}")
     assert detail.status_code == 200
     assert detail.json()["data"]["status"] == "completed"
     assert detail.json()["data"]["progress"] == 100
@@ -145,18 +145,18 @@ def test_invalid_skip_transition_422(
     client: TestClient, test_novel_id: str
 ) -> None:
     """Jumping from pending straight to completed must return 422."""
-    resp = client.post("/api/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
     # pending → completed is NOT a valid direct transition
     resp = client.put(
-        f"/api/tasks/{task_id}/status", json={"status": "completed"}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "completed"}
     )
     assert resp.status_code == 422, resp.text
 
     # The task should still be pending
-    status = client.get(f"/api/tasks/{task_id}/status")
+    status = client.get(f"/api/v1/tasks/{task_id}/status")
     assert status.json()["data"]["status"] == "pending"
 
 
@@ -169,29 +169,29 @@ def test_resume_from_failed(
     client: TestClient, test_novel_id: str
 ) -> None:
     """A failed task can be resumed (failed → converting)."""
-    resp = client.post("/api/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
     # pending → failed
     resp = client.put(
-        f"/api/tasks/{task_id}/status",
+        f"/api/v1/tasks/{task_id}/status",
         json={"status": "failed", "error_message": "Simulated crash"},
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "failed"
 
     # Resume
-    resp = client.post(f"/api/tasks/{task_id}/resume")
+    resp = client.post(f"/api/v1/tasks/{task_id}/resume")
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["status"] == "converting"
 
     # error_message must be cleared on resume
-    status = client.get(f"/api/tasks/{task_id}/status")
+    status = client.get(f"/api/v1/tasks/{task_id}/status")
     assert status.json()["data"]["error_message"] is None
 
     # Resume a non-failed task → 422
-    resp2 = client.post(f"/api/tasks/{task_id}/resume")
+    resp2 = client.post(f"/api/v1/tasks/{task_id}/resume")
     assert resp2.status_code == 422
 
 
@@ -204,14 +204,14 @@ def test_audit_log_written(
     client: TestClient, test_novel_id: str
 ) -> None:
     """Every status transition must persist an AuditLog row."""
-    resp = client.post("/api/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
     tid: uuid.UUID = uuid.UUID(task_id)
 
     # Perform a status change
     resp = client.put(
-        f"/api/tasks/{task_id}/status",
+        f"/api/v1/tasks/{task_id}/status",
         json={"status": "failed", "error_message": "Intentional failure"},
     )
     assert resp.status_code == 200

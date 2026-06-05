@@ -42,7 +42,7 @@ def test_upload_creates_novel_and_chapters(client, db):
         "title": "测试小说",
         "author": "测试作者",
     }
-    resp = client.post("/api/novel/upload", json=payload)
+    resp = client.post("/api/v1/novel/upload", json=payload)
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
@@ -85,10 +85,10 @@ def test_upload_creates_novel_and_chapters(client, db):
 
 def test_upload_empty_400(client):
     """Empty or whitespace-only content should return HTTP 400."""
-    resp = client.post("/api/novel/upload", json={"content": ""})
+    resp = client.post("/api/v1/novel/upload", json={"content": ""})
     assert resp.status_code == 400, resp.text
 
-    resp2 = client.post("/api/novel/upload", json={"content": "   "})
+    resp2 = client.post("/api/v1/novel/upload", json={"content": "   "})
     assert resp2.status_code == 400, resp2.text
 
 
@@ -109,20 +109,20 @@ def test_list_paginated(client, db):
     db.flush()
 
     # Page 1: limit 2
-    resp = client.get("/api/novel/?page=1&limit=2")
+    resp = client.get("/api/v1/novel/?page=1&limit=2")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["total"] >= 5
     assert len(body["data"]["items"]) == 2
 
     # Page 3: should have at least 1 item
-    resp2 = client.get("/api/novel/?page=3&limit=2")
+    resp2 = client.get("/api/v1/novel/?page=3&limit=2")
     assert resp2.status_code == 200, resp2.text
     body2 = resp2.json()
     assert len(body2["data"]["items"]) >= 1
 
     # No page param → defaults to page 1
-    resp3 = client.get("/api/novel/")
+    resp3 = client.get("/api/v1/novel/")
     assert resp3.status_code == 200, resp3.text
 
 
@@ -154,7 +154,7 @@ def test_get_single_novel(client, db):
         db.add(ch)
     db.flush()
 
-    resp = client.get(f"/api/novel/{nid}")
+    resp = client.get(f"/api/v1/novel/{nid}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["novel"]["title"] == "Detail Test Novel"
@@ -189,7 +189,7 @@ def test_delete_cascades(client, db):
     db.add(ch)
     db.flush()
 
-    resp = client.delete(f"/api/novel/{nid}")
+    resp = client.delete(f"/api/v1/novel/{nid}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["deleted_id"] == str(nid)
@@ -206,5 +206,5 @@ def test_delete_cascades(client, db):
     assert len(remaining) == 0
 
     # Deleting again → 404
-    resp2 = client.delete(f"/api/novel/{nid}")
+    resp2 = client.delete(f"/api/v1/novel/{nid}")
     assert resp2.status_code == 404, resp2.text

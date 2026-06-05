@@ -61,18 +61,9 @@ app.add_middleware(
 
 
 # ========== 路由注册 ==========
-from app.api import api_v1_router, auth_router
-from app.api.v1.novel import router as novel_router
-from app.api.v1.scripts import router as scripts_router
-from app.api.v1.tasks import router as tasks_router
-from app.api.v1.editor import router as editor_router
+from app.api import api_v1_router
 
 app.include_router(api_v1_router)
-app.include_router(auth_router)
-app.include_router(novel_router)
-app.include_router(scripts_router)
-app.include_router(tasks_router)
-app.include_router(editor_router)
 
 
 @app.get("/health", tags=["Health"])

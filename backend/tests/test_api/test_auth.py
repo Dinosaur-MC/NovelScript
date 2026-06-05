@@ -40,7 +40,7 @@ def client(db: Session):
 
 def _register(client: TestClient, username: str, email: str, password: str = "test1234"):
     return client.post(
-        "/api/auth/register",
+        "/api/v1/auth/register",
         json={"username": username, "email": email, "password": password},
     )
 
@@ -90,7 +90,7 @@ def test_login_success_returns_token(client: TestClient):
     _register(client, f"loginuser_{tag}", email, password)
 
     resp = client.post(
-        "/api/auth/login",
+        "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
     assert resp.status_code == 200
@@ -113,7 +113,7 @@ def test_login_wrong_password_401(client: TestClient):
     _register(client, f"wronguser_{tag}", email, "correct")
 
     resp = client.post(
-        "/api/auth/login",
+        "/api/v1/auth/login",
         json={"email": email, "password": "wrongpass"},
     )
     assert resp.status_code == 401
@@ -132,13 +132,13 @@ def test_me_with_valid_token(client: TestClient):
     _register(client, f"meuser_{tag}", email, password)
 
     login_resp = client.post(
-        "/api/auth/login",
+        "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
     token = login_resp.json()["data"]["token"]
 
     resp = client.get(
-        "/api/auth/me",
+        "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200
@@ -157,5 +157,5 @@ def test_me_with_valid_token(client: TestClient):
 
 def test_me_without_token_401(client: TestClient):
     """GET /me without any Authorization header returns 401."""
-    resp = client.get("/api/auth/me")
+    resp = client.get("/api/v1/auth/me")
     assert resp.status_code == 401

@@ -19,7 +19,7 @@ from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
+router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 # ---------------------------------------------------------------------------
 # CRUD instances

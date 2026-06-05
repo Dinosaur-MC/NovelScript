@@ -24,7 +24,7 @@ from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/scripts", tags=["Scripts"])
+router = APIRouter(prefix="/scripts", tags=["Scripts"])
 
 task_crud = BaseCRUD[Task](Task)
 

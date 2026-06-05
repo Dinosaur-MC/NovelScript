@@ -27,7 +27,7 @@ from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/auth", tags=["Auth"])
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
 _user_crud = BaseCRUD[User](User)
 

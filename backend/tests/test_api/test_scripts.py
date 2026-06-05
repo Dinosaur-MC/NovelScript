@@ -106,7 +106,7 @@ def test_list_scripts(client, db_engine):
         session.close()
 
     # List all scripts
-    resp = client.get("/api/scripts/")
+    resp = client.get("/api/v1/scripts/")
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
@@ -120,19 +120,19 @@ def test_list_scripts(client, db_engine):
     assert our["scene_count"] == 3
 
     # Filter by novel_id
-    resp2 = client.get(f"/api/scripts/?novel_id={nid}")
+    resp2 = client.get(f"/api/v1/scripts/?novel_id={nid}")
     assert resp2.status_code == 200
     items2 = resp2.json()["data"]["items"]
     assert all(i["novel_id"] == str(nid) for i in items2)
 
     # Filter by status
-    resp3 = client.get("/api/scripts/?status=completed")
+    resp3 = client.get("/api/v1/scripts/?status=completed")
     assert resp3.status_code == 200
     items3 = resp3.json()["data"]["items"]
     assert all(i["status"] == "completed" for i in items3)
 
     # Pagination
-    resp4 = client.get("/api/scripts/?page=1&limit=1")
+    resp4 = client.get("/api/v1/scripts/?page=1&limit=1")
     assert resp4.status_code == 200
     assert resp4.json()["data"]["limit"] == 1
     assert resp4.json()["data"]["page"] == 1
@@ -158,7 +158,7 @@ def test_get_script(client, db_engine):
     finally:
         session.close()
 
-    resp = client.get(f"/api/scripts/{tid}")
+    resp = client.get(f"/api/v1/scripts/{tid}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 0
@@ -172,7 +172,7 @@ def test_get_script(client, db_engine):
     assert data["characters_json"] == {"hero": {"name": "John", "age": 30}}
 
     # 404 for nonexistent task
-    resp404 = client.get(f"/api/scripts/{uuid.uuid4()}")
+    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}")
     assert resp404.status_code == 404
 
     # Cleanup
@@ -193,7 +193,7 @@ def test_put_valid_yaml(client_and_session, db_engine):
 
     valid_yaml = "scenes:\n  - id: 1\n    heading: Updated Scene\n    dialogue:\n      - character: ALICE\n        line: Hello"
     resp = tc.put(
-        f"/api/scripts/{tid}",
+        f"/api/v1/scripts/{tid}",
         json={"script_yaml": valid_yaml},
     )
     assert resp.status_code == 200
@@ -206,7 +206,7 @@ def test_put_valid_yaml(client_and_session, db_engine):
     assert data["validation"]["errors"] is None
 
     # Verify the YAML was actually saved (read via API — same session)
-    resp_get = tc.get(f"/api/scripts/{tid}")
+    resp_get = tc.get(f"/api/v1/scripts/{tid}")
     assert resp_get.status_code == 200
     assert resp_get.json()["data"]["script_yaml"] == valid_yaml
 
@@ -236,7 +236,7 @@ def test_put_invalid_yaml_422(client, db_engine):
     # Malformed YAML (tab character is illegal)
     invalid_yaml = "scenes:\n\t- id: 1"
     resp = client.put(
-        f"/api/scripts/{tid}",
+        f"/api/v1/scripts/{tid}",
         json={"script_yaml": invalid_yaml},
     )
     assert resp.status_code == 422
@@ -267,28 +267,28 @@ def test_export(client, db_engine):
         session.close()
 
     # Export YAML
-    resp_yaml = client.get(f"/api/scripts/{tid}/export?format=yaml")
+    resp_yaml = client.get(f"/api/v1/scripts/{tid}/export?format=yaml")
     assert resp_yaml.status_code == 200
     assert resp_yaml.text == sample_yaml
 
     # Export JSON
-    resp_json = client.get(f"/api/scripts/{tid}/export?format=json")
+    resp_json = client.get(f"/api/v1/scripts/{tid}/export?format=json")
     assert resp_json.status_code == 200
     parsed = json.loads(resp_json.text)
     assert parsed == sample_json
 
     # Export Fountain
-    resp_fountain = client.get(f"/api/scripts/{tid}/export?format=fountain")
+    resp_fountain = client.get(f"/api/v1/scripts/{tid}/export?format=fountain")
     assert resp_fountain.status_code == 200
     assert resp_fountain.text == sample_fountain
 
     # 404 for nonexistent task
-    resp404 = client.get(f"/api/scripts/{uuid.uuid4()}/export?format=yaml")
+    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}/export?format=yaml")
     assert resp404.status_code == 404
 
     # 422 for unsupported format — FastAPI validates the pattern so we get
     # a standard 422 from request validation, not from our code.
-    resp_bad = client.get(f"/api/scripts/{tid}/export?format=invalid")
+    resp_bad = client.get(f"/api/v1/scripts/{tid}/export?format=invalid")
     assert resp_bad.status_code == 422
 
     # Cleanup
