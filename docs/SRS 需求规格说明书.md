@@ -1,12 +1,12 @@
 # NovelScript (析幕) 软件需求规格说明书
 
-**项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-**文档版本**：v2.0.0 (Release)
-**日期**：2026-06-05
-**作者**：Dinosaur_MC
-**开发约束**：单人 72 小时极限开发，预算 ￥500~2000
-**目标模型**：DeepSeek-v4-flash（轻量/对话） / DeepSeek-v4-pro（高质量转换/推理）
-**核心数据底座**：PostgreSQL 18+ (集成 pgvector 与 JSONB)
+- **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
+- **文档版本**：v2.0.0 (Release)
+- **日期**：2026-06-05
+- **作者**：Dinosaur_MC
+- **开发约束**：单人 72 小时极限开发，预算 ￥500~2000
+- **目标模型**：DeepSeek-v4-flash（轻量/对话） / DeepSeek-v4-pro（高质量转换/推理）
+- **核心数据底座**：PostgreSQL 18+ (集成 pgvector 与 JSONB)
 
 ---
 

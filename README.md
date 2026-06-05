@@ -10,7 +10,7 @@
     <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
     <img src="https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql&logoColor=white" alt="PostgreSQL">
     <img src="https://img.shields.io/badge/LangChain-🦜️🔗-1C3C3C" alt="LangChain">
-    <img src="https://img.shields.io/badge/License-GPLv3-green" alt="License">
+    <img src="https://img.shields.io/badge/License-GPL%20v3-green" alt="License">
   </p>
 </p>
 
@@ -177,6 +177,8 @@ NovelScript/
 ## 📄 许可证 (License)
 
 本项目基于 [GPL v3 License](LICENSE) 开源。
+
+---
 
 <p align="center">
   <strong>Built with ❤️ and ☕ by Dinosaur_MC for Qiniu XEngineer 2026.</strong>
