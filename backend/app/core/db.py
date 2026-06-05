@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from collections.abc import Generator
 from pathlib import Path
 
@@ -14,11 +15,31 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _build_engine_url(raw_url: str) -> str:
+    """Build a URL-safe connection string, encoding user/password components.
+
+    psycopg2's ``make_dsn()`` chokes on non-ASCII bytes in the password
+    (common when the .env file was written from a Chinese-locale shell).
+    Using SQLAlchemy's URL object with percent-encoded components avoids this.
+    """
+    # Strip driver prefix if present
+    url = raw_url.replace("+asyncpg", "").replace("+psycopg", "")
+    parsed = urllib.parse.urlparse(url)
+    encoded_user = urllib.parse.quote(parsed.username or "", safe="")
+    encoded_pass = urllib.parse.quote(parsed.password or "", safe="")
+    encoded_netloc = (
+        f"{encoded_user}:{encoded_pass}@{parsed.hostname}"
+        + (f":{parsed.port}" if parsed.port else "")
+    )
+    return parsed._replace(netloc=encoded_netloc).geturl()
+
+
 # ---------------------------------------------------------------------------
 # SQLAlchemy engine (sync — no event-loop issues on Windows)
 # ---------------------------------------------------------------------------
 _engine = create_engine(
-    settings.DATABASE_URL.replace("+asyncpg", "").replace("+psycopg", ""),
+    _build_engine_url(settings.DATABASE_URL),
     echo=settings.DEBUG,
     pool_size=5,
     max_overflow=10,
