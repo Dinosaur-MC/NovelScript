@@ -68,10 +68,13 @@ app.add_middleware(
 
 
 # ========== 导入并注册各版本 API 路由 ==========
-from app.api import api_v1_router
+from app.api import api_v1_router, tasks_router
 
 # 注册 v1 版本
 app.include_router(api_v1_router)
+
+# 注册任务管理路由
+app.include_router(tasks_router)
 
 
 # ========== 健康检查端点 ==========
