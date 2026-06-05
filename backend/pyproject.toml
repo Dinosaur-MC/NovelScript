@@ -22,4 +22,9 @@ dependencies = [
     "beautifulsoup4>=4.13.0",
     "python-multipart>=0.0.20",
     "sse-starlette>=2.2.0",
+    "faiss-cpu>=1.14.2",
+    "langchain-openai>=1.2.2",
+    "langchain-community>=0.4.2",
+    "openai>=2.41.0",
+    "pyyaml>=6.0.3",
 ]
