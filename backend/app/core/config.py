@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_EMBEDDING_MODEL: str = "openai/text-embedding-3-small"
 
     # -- Application ----------------------------------------------------------
     DEBUG: bool = False
