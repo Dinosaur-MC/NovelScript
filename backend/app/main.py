@@ -69,9 +69,13 @@ app.add_middleware(
 
 # ========== 导入并注册各版本 API 路由 ==========
 from app.api import api_v1_router
+from app.api.scripts import router as scripts_router
 
 # 注册 v1 版本
 app.include_router(api_v1_router)
+
+# 注册 Script Management (Agent E)
+app.include_router(scripts_router)
 
 
 # ========== 健康检查端点 ==========
