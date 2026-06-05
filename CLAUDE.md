@@ -23,7 +23,8 @@ Work in the corresponding subdirectory (`backend/` or `frontend/`) before runnin
 cd backend
 uv sync                                    # Install dependencies
 uv run main.py                             # Start dev server (uvicorn, port 8000, reload on DEBUG)
-uv run pytest                              # Run tests
+uv run pytest                              # Run tests (pytest-asyncio)
+uv run python -m cli.pipeline <input.txt>  # Test pipeline end-to-end (no DB)
 uv add <package>                           # Add a dependency
 ```
 
@@ -45,20 +46,38 @@ pnpm run typecheck                         # TypeScript type checking
 ```
 app/
 ├── main.py          # FastAPI app factory — CORS, exception handlers, route registration
-├── api/             # Per-version route modules (v1.py → /api/v1/*)
-├── core/            # Config, security, DB connection (asyncpg)
-├── models/          # Pydantic V2 schemas — BaseResponse/ErrorResponse, YAML script schema
-├── services/        # Core business logic: LLM router, RAG retrieval, Auto-Fix loop
-└── db/              # PostgreSQL DDL and init scripts
+├── api/             # Route modules: auth.py, novel.py, scripts.py, tasks.py, editor.py
+├── core/            # config.py (pydantic-settings), security.py (JWT+argon2), db.py (asyncpg+SQLModel)
+├── models/          # Pydantic V2 & SQLModel — http.py, sql.py (8 tables), patch.py
+├── services/        # Core business logic: LLM router, RAG, pipeline, patcher, exporter, SSE
+├── db/              # init.sql (8-table DDL), connection.py (asyncpg pool), migrations/
+└── cli/             # Pipeline engine (Agent A): models, chunker, rag_builder, graphrag_builder,
+                     #   converter, optimizer, exporter, pipeline, llm_router
 ```
 
 **Entry point**: `backend/main.py` loads `.env` via `python-dotenv`, then starts uvicorn against `app.main:app`.
 
+**Pipeline CLI** (no DB, for standalone testing): `uv run python -m cli.pipeline <input.txt>`
+
 **Key architectural patterns**:
-- **Dual-model routing**: `DeepSeek-v4-pro` handles complex scene conversion and knowledge graph extraction; `DeepSeek-v4-flash` handles lightweight summaries, dialogue, and patch generation. Both gated behind `asyncio.Semaphore` for concurrency control.
-- **Auto-Fix loop**: When LLM outputs invalid JSON/YAML, the `ValidationError` is caught and fed back to the LLM for correction (max 2 retries). This ensures 100% schema-compliant output.
-- **SSE progress streaming**: Long-running pipeline jobs push progress events via `sse-starlette`.
-- **All-in-One DB**: PostgreSQL 18 with `pgvector` (HNSW + KNN for RAG), `JSONB`/`JSONPath` (knowledge graph, script storage), and relational tables (tasks, operations) — no separate vector DB or graph DB.
+- **Dual-model routing (ADR #8)**: `DeepSeek-v4-pro` for Stage 1 (planning/knowledge graph) and Stage 3 (optimization/consistency check); `DeepSeek-v4-flash` for Stage 2 (scene generation/dialogue) and lightweight tasks. Both gated behind `asyncio.Semaphore`.
+- **Embedding via OpenRouter**: OpenAI-compatible API at `https://openrouter.ai/api/v1/embeddings`. Auth: `OPENROUTER_API_KEY`. Model: `openai/text-embedding-3-small`. Used in both CLI (in-memory FAISS) and production (pgvector). LLM calls use `DEEPSEEK_API_KEY`.
+- **Auto-Fix loop**: Pydantic V2 validation failure → retry with error-aware prompt (max 2x) → graceful degradation with partial results + warning. Never crashes.
+- **SSE progress streaming**: `sse-starlette` for real-time pipeline progress; frontend uses `EventSource`.
+- **All-in-One DB**: PostgreSQL 18 with 8 tables — `users`, `novels`, `tasks`, `chapters`, `knowledge_nodes`, `knowledge_edges`, `operations`, `dialogues`, `audit_logs`. Extensions: `pgvector` (HNSW vector_cosine_ops), `uuid-ossp`, `pg_trgm`. No separate vector DB or graph DB.
+- **source_ref bidirectional trace**: Every script element carries `{chapter_id, offset}`, enabling click-to-highlight between source text and script in the IDE.
+
+### MVP Implementation Strategy
+
+Two-wave parallel agent execution with git worktree isolation:
+
+**Wave 1** (parallel): Agent A (Pipeline Engine, no DB) + Agent B (Database Foundation, 8 tables + SQLModel + security)
+
+**Wave 2** (parallel, after B merges): Agent C (User System `/api/auth`), Agent D (Novel Management `/api/novel`), Agent E (Script Management `/api/scripts`), Agent F (Task Management `/api/tasks` — lifecycle only, delegates to D/E/G), Agent G (AI Chat `/api/editor`)
+
+Post-Wave-2: Integrate Agent A's pipeline into DB-backed services (FAISS→pgvector, dict graph→knowledge_nodes/edges, CLI→Task scheduler).
+
+Spec: `docs/superpowers/specs/2026-06-06-mvp-implementation-design.md` (47 test cases across 7 agents).
 
 ### Frontend (`frontend/app/`)
 
@@ -87,8 +106,9 @@ app/
 ### Data Layer Philosophy
 
 The project explicitly rejects the `MySQL + FAISS + Neo4j` stack in favor of a single PostgreSQL instance:
-- **pgvector** with HNSW index replaces standalone vector DBs for RAG embeddings.
-- **JSONB** with JSONPath replaces graph databases for character relationship graphs.
+- **pgvector** with HNSW index replaces standalone vector DBs for RAG embeddings (`chapters.embedding`, `knowledge_nodes.embedding`).
+- **JSONB + dedicated edge tables** (`knowledge_nodes` / `knowledge_edges`) replace graph databases — supports recursive CTE for GraphRAG traversal.
+- **8 relational tables** (users, novels, tasks, chapters, knowledge_nodes, knowledge_edges, operations, dialogues, audit_logs) cover user auth, novel storage, task pipelines, knowledge graph, edit history, AI conversations, and system auditing.
 - This ensures ACID transactions and reduces Docker orchestration to a single DB container.
 
 ## Key Design Principles
