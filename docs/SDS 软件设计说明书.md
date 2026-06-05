@@ -1,8 +1,8 @@
 # NovelScript (析幕) 软件设计说明书
 
 - **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-- **文档版本**：v1.0.0
-- **日期**：2026-06-05
+- **文档版本**：v2.0.0
+- **日期**：2026-06-06
 - **作者**：Dinosaur_MC
 - **关联文档**：[SRS 需求规格说明书](./SRS%20需求规格说明书.md) · [YAML Schema 设计说明](./YAML_Schema_设计说明.md)
 
@@ -38,7 +38,7 @@
 | :------- | :----------------------------------------------------------------------------------------------------- |
 | **前端** | React 19 + TypeScript + Vite, React Router v7, Zustand, Ant Design 6, Monaco Editor, TipTap, ReactFlow |
 | **后端** | Python 3.13, FastAPI (async), Uvicorn, SQLModel + asyncpg, LangChain, sse-starlette                    |
-| **数据** | PostgreSQL 18 + pgvector + uuid-ossp                                                                   |
+| **数据** | PostgreSQL 18 + pgvector + uuid-ossp + pg_trgm                                                         |
 | **AI**   | DeepSeek-v4-pro (知识图谱/一致性检查), DeepSeek-v4-flash (场景生成/对话/补丁)                          |
 | **部署** | Docker Compose (Frontend + Backend + PostgreSQL), Nginx 反向代理                                       |
 
@@ -46,7 +46,7 @@
 
 ### 2.1 总体架构
 
-系统摒弃传统的 "MySQL + FAISS + Neo4j" 多组件堆砌，采用 **PostgreSQL All-in-One** 架构：pgvector 替代 FAISS 做向量检索，JSONB 替代 Neo4j 做图数据存储，关系表管理任务与操作日志。
+系统摒弃传统的 "MySQL + FAISS + Neo4j" 多组件堆砌，采用 **PostgreSQL All-in-One** 架构：pgvector 替代 FAISS 做向量检索，JSONB + 独立点边表 (`knowledge_nodes`/`knowledge_edges`) 替代 Neo4j 做图存储与 GraphRAG 遍历，8 张关系表管理用户、小说、任务管线、操作历史、AI 对话与系统审计。
 
 ```mermaid
 flowchart TB
@@ -64,7 +64,9 @@ flowchart TB
 
     subgraph FastAPI["FastAPI Application Server (Python 3.13)"]
         direction TB
-        Novel["/api/novel/*<br/>（任务调度）"]
+        Auth["/api/auth/*<br/>（用户认证）"]
+        Novel["/api/novel/*<br/>（任务管线）"]
+        ScriptApi["/api/scripts/*<br/>（剧本管理）"]
         EdApi["/api/editor/*<br/>（AI 编辑）"]
         Router["LLM Router<br/>（Pro ↔ Flash）"]
         DAL["Data Access Layer<br/>（Asyncpg + SQLModel）"]
@@ -74,9 +76,9 @@ flowchart TB
 
     subgraph PostgreSQL["PostgreSQL 18 (All-in-One Data Hub)"]
         direction BT
-        Rel["关系数据<br/>tasks, ops, dialogues"]
-        Vec["向量数据<br/>pgvector (HNSW 索引)"]
-        Doc["图 / 文档<br/>JSONB + GIN Index"]
+        Rel["关系数据<br/>users, novels, tasks, chapters<br/>knowledge_nodes, knowledge_edges<br/>operations, dialogues, audit_logs"]
+        Vec["向量数据<br/>pgvector (HNSW 索引)<br/>chapters.embedding<br/>knowledge_nodes.embedding"]
+        Doc["图 / 文档<br/>JSONB + GIN + JSONPath<br/>图遍历 / GraphRAG"]
     end
 ```
 
@@ -115,12 +117,14 @@ backend/app/
 ├── main.py                  # FastAPI 应用工厂, CORS, 异常处理器
 ├── core/
 │   ├── config.py            # 环境变量加载 (API Key, DB URL, 模型参数)
-│   ├── security.py          # API Key 隔离 (仅存后端, 前端不可见)
+│   ├── security.py          # 认证中间件 (JWT Session + API Key 隔离)
 │   └── db.py                # PostgreSQL 连接池 (asyncpg)
 ├── api/
 │   ├── __init__.py           # 路由聚合
 │   ├── v1.py                 # v1 路由注册
-│   ├── novel.py              # /api/novel/* (上传/预处理/转换/导出/状态)
+│   ├── auth.py               # /api/auth/* (注册/登录/会话)
+│   ├── novel.py              # /api/novel/* (上传/预处理/转换/状态)
+│   ├── scripts.py            # /api/scripts/* (剧本CRUD/版本对比/导出)
 │   └── editor.py             # /api/editor/* (对话/Patch/Undo)
 ├── models/
 │   ├── http.py               # BaseResponse, ErrorResponse
@@ -179,8 +183,8 @@ flowchart LR
 - **处理流程**：
     1. 调用 Pro 模型做全局语义理解
     2. 提取角色实体、地点实体、关系三元组
-    3. 构建 JSONB 知识图谱 (`nodes` + `edges`)
-    4. 将章节文本 Embedding 化写入 pgvector（为 Stage 2 提供 RAG 检索）
+    3. 写入知识图谱点边表 (`knowledge_nodes` + `knowledge_edges`)，同步保留 JSONB 聚合视图于 `tasks.characters_json`
+    4. 将章节文本 Embedding 化写入 `chapters.embedding`（为 Stage 2 提供 RAG 检索）
 
 > 对复杂请求，可启用 Pro 的 Thinking Mode (Chain-of-Thought)，让模型先输出思考过程再给出规划，提升输出质量。
 
@@ -301,9 +305,9 @@ script
 │       ├── type
 │       ├── content / line
 │       └── source_ref           # { chapter_id, offset }
-└── knowledge_graph
-    ├── nodes[]       # 实体节点 (角色、地点、关键物品)
-    └── edges[]       # 关系边 (relation, weight)
+└── knowledge_graph                # 逻辑视图；物理层由 knowledge_nodes + knowledge_edges 表存储
+    ├── nodes[]       # 实体节点 (角色、地点、关键物品)  → 同步至 knowledge_nodes 表
+    └── edges[]       # 关系边 (relation, weight)        → 同步至 knowledge_edges 表
 ```
 
 ### 5.2 YAML 快照 + JSON Patch 混合存储模型
@@ -383,77 +387,227 @@ flowchart TB
 
 ### 5.5 持久化存储 DDL
 
-利用 pgvector 和 JSONB 实现 All-in-One 架构：
+利用 pgvector 和 JSONB 实现 All-in-One 架构。相比 SRS v2.0.0 初版设计（4 表），重构后的数据模型扩展至 **8 张核心表**，覆盖用户鉴权、小说实体、任务管线、知识图谱、操作历史、AI 对话与系统审计七大领域。
 
 ```sql
 -- 启用必要插件
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;         -- 文本模糊搜索 (知识图谱实体名称)
 
--- 1. 任务主表
-CREATE TABLE tasks (
+-- ============================================================
+-- 0. 用户表 — 账户与鉴权
+-- ============================================================
+CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    source_text TEXT NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    progress INT DEFAULT 0,
-    summary TEXT,
-    characters_json JSONB,
-    knowledge_graph JSONB,
-    script_yaml TEXT,
-    script_json JSONB,
-    script_fountain TEXT,
-    error_message TEXT,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,         -- bcrypt / argon2
+    display_name VARCHAR(100),
+    avatar_url TEXT,
+    role VARCHAR(20) DEFAULT 'user'
+        CHECK (role IN ('admin', 'user')),
+    is_active BOOLEAN DEFAULT TRUE,
+    last_login_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_username ON users(username);
+
+-- ============================================================
+-- 1. 小说主表 — 原文存储的独立实体
+--     (与任务解耦：同一部小说可多次执行 Pipeline)
+-- ============================================================
+CREATE TABLE novels (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    title VARCHAR(500) NOT NULL,
+    author VARCHAR(255),
+    source_text TEXT NOT NULL,                   -- 原始全文 (从 tasks 迁移至此)
+    word_count INT,
+    language VARCHAR(10) DEFAULT 'zh'
+        CHECK (language IN ('zh', 'en')),
+    status VARCHAR(20) DEFAULT 'draft'
+        CHECK (status IN ('draft', 'processing', 'completed')),
+    metadata JSONB,                              -- { genre, tags, source_url, notes }
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_novels_user ON novels(user_id);
+CREATE INDEX idx_novels_status ON novels(status);
+
+-- ============================================================
+-- 2. 任务表 — 一次 Pipeline 运行
+--     引用 novels，去除 source_text，新增 pipeline_config
+-- ============================================================
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    novel_id UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    progress INT DEFAULT 0
+        CHECK (progress >= 0 AND progress <= 100),
+    summary TEXT,
+    characters_json JSONB,                       -- 本次运行提取的角色列表
+    script_yaml TEXT,                            -- 剧本 YAML
+    script_json JSONB,                           -- 剧本 JSON (支持 JSONPath)
+    script_fountain TEXT,                        -- 剧本 Fountain
+    error_message TEXT,
+    pipeline_config JSONB,                       -- { model_versions, chunk_size, overlap, ... }
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_tasks_novel ON tasks(novel_id);
+CREATE INDEX idx_tasks_user ON tasks(user_id);
 CREATE INDEX idx_tasks_status ON tasks(status);
 
--- 2. 章节与向量块表 (替代 FAISS，支持 RAG 检索)
+-- ============================================================
+-- 3. 章节表 — 属于小说 (非任务)
+--     章节切分后落库，pgvector HNSW 索引加速 RAG 检索
+-- ============================================================
 CREATE TABLE chapters (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    novel_id UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
     chapter_index INT NOT NULL,
     title VARCHAR(255),
     content TEXT NOT NULL,
-    embedding vector(1536),               -- 文本向量表示
+    embedding vector(1536),                      -- 文本语义向量
+    metadata JSONB,                              -- { word_count, start_offset, end_offset }
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX ON chapters USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_chapters_novel ON chapters(novel_id, chapter_index);
+
+-- ============================================================
+-- 4. 知识图谱 — 实体节点
+--     从 novels 提取，支持 GraphRAG 图遍历与语义搜索
+-- ============================================================
+CREATE TABLE knowledge_nodes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    novel_id UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,   -- 提取来源任务
+    node_type VARCHAR(50) NOT NULL
+        CHECK (node_type IN (
+            'character', 'location', 'item',
+            'organization', 'event', 'concept'
+        )),
+    name VARCHAR(255) NOT NULL,
+    aliases TEXT[],                              -- PostgreSQL 数组: 别名列表
+    description TEXT,
+    properties JSONB,                            -- { gender, age, faction, ... }
+    embedding vector(1536),                      -- 节点语义向量 (GraphRAG 检索)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX ON knowledge_nodes USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_kn_nodes_novel ON knowledge_nodes(novel_id);
+CREATE INDEX idx_kn_nodes_type ON knowledge_nodes(node_type);
+CREATE INDEX idx_kn_nodes_name ON knowledge_nodes USING gin (name gin_trgm_ops);
+
+-- ============================================================
+-- 5. 知识图谱 — 关系边
+--     支持图遍历: 递归 CTE / JSONPath 查询角色关系网
+-- ============================================================
+CREATE TABLE knowledge_edges (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    novel_id UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+    source_node_id UUID NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+    target_node_id UUID NOT NULL REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+    relation VARCHAR(100) NOT NULL,              -- 'friend_of', 'enemy_of', 'located_in', 'owns' ...
+    weight FLOAT DEFAULT 1.0,                    -- 关系强度 [0, 1]
+    evidence TEXT,                               -- 原文依据 (溯源)
     metadata JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX ON chapters USING hnsw (embedding vector_cosine_ops);  -- HNSW 加速 KNN
-CREATE INDEX idx_chapters_task ON chapters(task_id, chapter_index);
+CREATE INDEX idx_ke_edges_novel ON knowledge_edges(novel_id);
+CREATE INDEX idx_ke_edges_src ON knowledge_edges(source_node_id);
+CREATE INDEX idx_ke_edges_tgt ON knowledge_edges(target_node_id);
+CREATE INDEX idx_ke_edges_rel ON knowledge_edges(relation);
 
--- 3. 操作日志表 (JSON Patch + YAML 快照混合)
+-- ============================================================
+-- 6. 操作日志表 — JSON Patch + YAML 快照混合 (新增 user_id)
+-- ============================================================
 CREATE TABLE operations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    type VARCHAR(50) NOT NULL,            -- 'manual_edit', 'ai_patch', 'snapshot', 'rollback'
-    target_path TEXT,                     -- JSON Pointer 路径，如 'scenes[0].elements[1].line'
-    diff_json JSONB,                      -- RFC 6902 JSON Patch
-    previous_snapshot JSONB,              -- 修改前的完整快照 (仅在 type='snapshot' 时)
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    type VARCHAR(50) NOT NULL
+        CHECK (type IN ('manual_edit', 'ai_patch', 'snapshot', 'rollback')),
+    target_path TEXT,                            -- JSON Pointer 路径
+    diff_json JSONB,                             -- RFC 6902 JSON Patch
+    previous_snapshot JSONB,                     -- YAML 快照 (仅在 type='snapshot' 时)
     applied BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_ops_task_time ON operations(task_id, created_at DESC);
 
--- 4. AI 对话记录表
+-- ============================================================
+-- 7. AI 对话记录表 — 新增 system 角色 + metadata
+-- ============================================================
 CREATE TABLE dialogues (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
-    role VARCHAR(20) NOT NULL,            -- 'user', 'assistant'
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    role VARCHAR(20) NOT NULL
+        CHECK (role IN ('user', 'assistant', 'system')),
     content TEXT NOT NULL,
-    patch_json JSONB,                     -- 若消息包含 Patch 则记录
+    patch_json JSONB,                            -- 若消息包含 Patch 则记录
+    metadata JSONB,                              -- { scene_id, selected_text, model_used, token_count }
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_dialog_task_time ON dialogues(task_id, created_at);
+
+-- ============================================================
+-- 8. 系统审计日志 — LLM 调用、错误追踪、操作审计
+-- ============================================================
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
+    level VARCHAR(20) NOT NULL DEFAULT 'info'
+        CHECK (level IN ('debug', 'info', 'warn', 'error', 'fatal')),
+    category VARCHAR(50) NOT NULL,               -- 'llm_call', 'db_query', 'validation', 'pipeline', 'auth', 'export'
+    message TEXT NOT NULL,
+    detail JSONB,                                -- { model, tokens, latency_ms, endpoint, status_code, ... }
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_audit_level_time ON audit_logs(level, created_at DESC);
+CREATE INDEX idx_audit_category ON audit_logs(category);
+CREATE INDEX idx_audit_task ON audit_logs(task_id);
+-- 可选: 配置 pg_cron 定期清理 90 天前的日志
 ```
+
+**表设计对比**：
+
+| 版本    | 表数 | 覆盖领域                                                          |
+| :------ | :--- | :---------------------------------------------------------------- |
+| v1 (旧) | 4    | 任务 + 章节 + 操作 + 对话（小说原文内嵌于任务）                   |
+| v2 (新) | 8    | 用户 + 小说 + 任务 + 章节 + 知识图谱点边 + 操作 + 对话 + 审计日志 |
 
 **表关系概览**：
 
 ```mermaid
 erDiagram
-    tasks ||--o{ chapters : "1:N"
-    tasks ||--o{ operations : "1:N"
-    tasks ||--o{ dialogues : "1:N"
+    users ||--o{ novels : "owns 1:N"
+    users ||--o{ tasks : "triggers 1:N"
+    users ||--o{ operations : "performs 1:N"
+    users ||--o{ dialogues : "sends 1:N"
+    users ||--o{ audit_logs : "generates 1:N"
+
+    novels ||--o{ tasks : "pipeline runs 1:N"
+    novels ||--o{ chapters : "contains 1:N"
+    novels ||--o{ knowledge_nodes : "extracted to 1:N"
+    novels ||--o{ knowledge_edges : "extracted to 1:N"
+
+    tasks ||--o{ operations : "records 1:N"
+    tasks ||--o{ dialogues : "has 1:N"
+    tasks ||--o{ knowledge_nodes : "extracts 0..1:N"
+    tasks ||--o{ knowledge_edges : "extracts 0..1:N"
+
+    knowledge_nodes ||--o{ knowledge_edges : "source 1:N"
+    knowledge_nodes ||--o{ knowledge_edges : "target 1:N"
 ```
 
 ## 6. 任务状态机与生命周期
@@ -501,6 +655,8 @@ class TaskStatus(str, Enum):
 
 class TaskResponse(BaseModel):
     id: str
+    novel_id: str
+    user_id: Optional[str] = None
     status: TaskStatus
     progress: int = Field(ge=0, le=100)
     summary: Optional[str] = None
@@ -547,7 +703,7 @@ sequenceDiagram
     1. 正则主切分：`第[零一二三四五六七八九十百千0-9]+章` 匹配中文章节标题
     2. LLM 语义兜底：正则无法匹配时调用 Flash 做语义分章
     3. 前端编辑器：展示切分结果列表，允许用户手动合并/拆分/调整顺序
-- **数据流**：`输入 → 切分 → chapters 表写入 → 返回章节列表给前端确认`
+- **数据流**：`输入 → 创建 novel 记录 (关联 user) → 章节切分 → chapters 表写入 (关联 novel_id) → 创建 task (关联 novel_id + user_id) → 返回章节列表给前端确认`
 
 ### 7.2 RAG 记忆构建模块
 
@@ -562,7 +718,7 @@ sequenceDiagram
 
 ### 7.3 剧本转换引擎
 
-- **Scene 切分与重构**：以章为单位，结合全局知识图谱 + RAG 检索的前文记忆，调用 Flash 模型将叙事文本转换为 Scene 序列
+- **Scene 切分与重构**：以章为单位，结合全局知识图谱（`knowledge_nodes` + `knowledge_edges` 表查询） + RAG 检索的前文记忆，调用 Flash 模型将叙事文本转换为 Scene 序列
 - **并发策略**：
 
     ```python
@@ -593,8 +749,8 @@ sequenceDiagram
 
 ### 7.5 导出模块
 
-- **YAML 导出**：直接从 `tasks.script_yaml` 读取并返回文件流
-- **JSON 导出**：`tasks.script_json` 的 JSONB 字段直接序列化
+- **YAML 导出**：从 `tasks.script_yaml` 读取，通过 `/api/scripts/{id}/export?format=yaml` 返回文件流
+- **JSON 导出**：从 `tasks.script_json` 读取并序列化，通过 `/api/scripts/{id}/export?format=json` 返回
 - **Fountain 导出**：
     1. 遍历 Scene 序列
     2. Scene heading → `INT./EXT. 地点 - 时间`
@@ -607,16 +763,59 @@ sequenceDiagram
 
 ### 8.1 RESTful 端点签名
 
+#### 8.1.0 用户认证 (`/api/auth`)
+
+| 方法   | 路径                 | 说明                                   |
+| :----- | :------------------- | :------------------------------------- |
+| `POST` | `/api/auth/register` | 用户注册 (username + email + password) |
+| `POST` | `/api/auth/login`    | 用户登录，返回 session token           |
+| `POST` | `/api/auth/logout`   | 注销当前会话                           |
+| `GET`  | `/api/auth/me`       | 获取当前用户信息                       |
+
+**POST /api/auth/register**
+
+```json
+// Request
+{ "username": "writer01", "email": "a@b.com", "password": "…" }
+```
+
+```json
+// Response 201
+{ "code": 0, "data": { "user_id": "uuid", "username": "writer01" } }
+```
+
+**POST /api/auth/login**
+
+```json
+// Request
+{ "email": "a@b.com", "password": "…" }
+```
+
+```json
+// Response 200
+{
+    "code": 0,
+    "data": {
+        "token": "session-jwt-or-uuid",
+        "user": { "id": "uuid", "username": "writer01", "role": "user" }
+    }
+}
+```
+
+- **认证方式**：`Authorization: Bearer <token>` 头传递会话 token
+- **密码存储**：bcrypt / argon2 哈希
+- **P2 预留**：OAuth2 (GitHub/Google) 第三方登录
+
 #### 8.1.1 任务管理 (`/api/novel`)
 
-| 方法   | 路径                              | 说明                                        |
-| :----- | :-------------------------------- | :------------------------------------------ |
-| `POST` | `/api/novel/upload`               | 上传小说文本 (multipart 或 JSON)            |
-| `POST` | `/api/novel/preprocess/{task_id}` | 启动预处理 (章节切分 + 实体提取)            |
-| `GET`  | `/api/novel/status/{task_id}`     | 查询任务状态 (支持 SSE 流式进度)            |
-| `POST` | `/api/novel/convert/{task_id}`    | 启动剧本转换                                |
-| `POST` | `/api/novel/resume/{task_id}`     | 断点续传                                    |
-| `GET`  | `/api/novel/export/{task_id}`     | 导出剧本文件 (`?format=fountain/yaml/json`) |
+| 方法   | 路径                              | 说明                                                           |
+| :----- | :-------------------------------- | :------------------------------------------------------------- |
+| `POST` | `/api/novel/upload`               | 上传小说文本 (multipart 或 JSON)                               |
+| `POST` | `/api/novel/preprocess/{task_id}` | 启动预处理 (章节切分 + 实体提取)                               |
+| `GET`  | `/api/novel/status/{task_id}`     | 查询任务状态 (支持 SSE 流式进度)                               |
+| `POST` | `/api/novel/convert/{task_id}`    | 启动剧本转换                                                   |
+| `POST` | `/api/novel/resume/{task_id}`     | 断点续传                                                       |
+| `GET`  | `/api/novel/export/{task_id}`     | 导出剧本文件（快捷方式 → 重定向至 `/api/scripts/{id}/export`） |
 
 **POST /api/novel/upload**
 
@@ -632,7 +831,8 @@ sequenceDiagram
     "code": 0,
     "message": "上传成功",
     "data": {
-        "task_id": "uuid",
+        "novel_id": "uuid-novel",
+        "task_id": "uuid-task",
         "chapters": [
             { "index": 1, "title": "第一章" },
             { "index": 2, "title": "第二章" }
@@ -651,7 +851,7 @@ event: progress
 data: {"progress": 70, "status": "converting", "stage": "optimization"}
 
 event: complete
-data: {"progress": 100, "status": "completed", "script_yaml": "..."}
+data: {"progress": 100, "novel_id": "uuid-novel", "task_id": "uuid-task", "status": "completed", "script_yaml": "..."}
 ```
 
 #### 8.1.2 AI 编辑 (`/api/editor`)
@@ -680,6 +880,107 @@ data: {"progress": 100, "status": "completed", "script_yaml": "..."}
             "path": "/scenes/1/location",
             "value": "图书馆"
         }
+    }
+}
+```
+
+#### 8.1.3 剧本管理 (`/api/scripts`)
+
+剧本作为独立资源暴露 CRUD 端点，与任务管线解耦——用户从 Monaco 编辑器的直接修改、剧本版本对比、跨任务复用均通过此组端点完成。
+
+| 方法     | 路径                            | 说明                                          |
+| :------- | :------------------------------ | :-------------------------------------------- |
+| `GET`    | `/api/scripts`                  | 剧本列表 (`?novel_id=&status=&page=&limit=`)  |
+| `GET`    | `/api/scripts/{script_id}`      | 获取剧本详情 (含完整 YAML/JSON/Fountain)      |
+| `PUT`    | `/api/scripts/{script_id}`      | 更新剧本 YAML（Monaco 编辑器手动保存）        |
+| `DELETE` | `/api/scripts/{script_id}`      | 删除剧本及关联数据                            |
+| `GET`    | `/api/scripts/{script_id}/diff` | 对比两次保存的差异（`?from=&to=`）            |
+| `GET`    | `/api/scripts/{id}/export`      | 导出指定格式 (`?format=yaml\|json\|fountain`) |
+
+**GET /api/scripts?novel_id=uuid**
+
+```json
+// Response 200
+{
+    "code": 0,
+    "data": {
+        "total": 3,
+        "items": [
+            {
+                "script_id": "uuid-s1",
+                "novel_id": "uuid-novel",
+                "task_id": "uuid-task",
+                "status": "completed",
+                "scene_count": 12,
+                "character_count": 8,
+                "created_at": "2026-06-05T10:00:00Z"
+            }
+        ]
+    }
+}
+```
+
+**GET /api/scripts/{script_id}**
+
+```json
+// Response 200
+{
+    "code": 0,
+    "data": {
+        "script_id": "uuid-s1",
+        "novel_id": "uuid-novel",
+        "task_id": "uuid-task",
+        "script_yaml": "meta:\n  title: ...",
+        "script_json": { "meta": {}, "scenes": [] },
+        "script_fountain": "Title: ...\n\nINT. ...",
+        "characters": [{ "id": "char_01", "name": "林明" }],
+        "knowledge_graph": {
+            "nodes": [],
+            "edges": []
+        },
+        "updated_at": "2026-06-05T12:00:00Z"
+    }
+}
+```
+
+**PUT /api/scripts/{script_id}**
+
+```json
+// Request — 用户在中栏 Monaco 编辑器直接修改后点击"保存"
+{
+    "script_yaml": "meta:\n  title: 星辰低语\nscenes:\n  - scene_id: S001\n    heading: ..."
+}
+```
+
+```json
+// Response 200
+{
+    "code": 0,
+    "message": "保存成功",
+    "data": {
+        "script_id": "uuid-s1",
+        "updated_at": "2026-06-05T12:05:00Z",
+        "validation": { "valid": true, "errors": [] }
+    }
+}
+```
+
+- **保存时触发 Pydantic 校验**：YAML 不合法时返回 422 + 具体错误位置，前端 Monaco 的波浪线标注对应行
+- **自动创建操作记录**：每次 PUT 成功后写入 `operations` 表（`type='manual_edit'`），纳入 Undo/Redo 栈
+
+**GET /api/scripts/{script_id}/diff?from=op_001&to=op_003**
+
+```json
+// Response 200 — 返回两个操作点之间的差异
+{
+    "code": 0,
+    "data": {
+        "from": { "id": "op_001", "created_at": "2026-06-05T10:00:00Z" },
+        "to": { "id": "op_003", "created_at": "2026-06-05T12:00:00Z" },
+        "patches": [
+            { "op": "replace", "path": "/scenes/0/heading", "value": "内景. 图书馆 - 白天" },
+            { "op": "add", "path": "/scenes/3", "value": { "scene_id": "S004" } }
+        ]
     }
 }
 ```
@@ -762,10 +1063,11 @@ block-beta
 // task-store.ts — 任务状态
 interface TaskStore {
     taskId: string | null;
+    novelId: string | null;
     status: TaskStatus;
     progress: number; // 0-100
     errorMessage: string | null;
-    setTaskId: (id: string) => void;
+    setTask: (taskId: string, novelId: string) => void;
     updateProgress: (p: number, status: string) => void;
 }
 

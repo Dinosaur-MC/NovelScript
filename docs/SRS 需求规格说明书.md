@@ -1,8 +1,8 @@
 # NovelScript (析幕) 软件需求规格说明书
 
 - **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-- **文档版本**：v2.1.0 (Release)
-- **日期**：2026-06-05
+- **文档版本**：v2.3.0 (Release)
+- **日期**：2026-06-06
 - **作者**：Dinosaur_MC
 - **开发约束**：单人 72 小时极限开发，预算 ￥500~2000
 - **目标模型**：DeepSeek-v4-flash（场景生成/对话/轻量任务） / DeepSeek-v4-pro（知识图谱抽取/一致性检查/复杂推理）
@@ -53,7 +53,7 @@ NovelScript 是一个一体化的 Web 剧本工作台。用户输入小说文本
 
 - **前端**：React 19 + TypeScript + Vite，兼容 Chrome 90+, Edge 90+。
 - **后端**：Python 3.13, FastAPI, Uvicorn, 运行于 Linux 容器环境。
-- **数据库**：PostgreSQL 18 (搭载 `pgvector` 与 `uuid-ossp` 插件)。
+- **数据库**：PostgreSQL 18 (搭载 `pgvector`、`uuid-ossp` 与 `pg_trgm` 插件)。
 - **网络**：需稳定访问 DeepSeek API，最低 2Mbps 带宽。
 
 ### 2.4 设计与实现约束
@@ -192,7 +192,7 @@ INT. 废弃飞船驾驶舱 - 夜晚
 
 ### 6.4 持久化存储结构
 
-存储层以 PostgreSQL 18 作为唯一数据底座，包含 4 张核心表：`tasks`（任务主表，JSONB 存储图谱与剧本）、`chapters`（章节 + pgvector 向量，HNSW 索引加速 KNN）、`operations`（操作日志，JSON Patch + YAML 快照混合）、`dialogues`（AI 对话记录）。
+存储层以 PostgreSQL 18 作为唯一数据底座，包含 8 张核心表：`users`（用户账户与鉴权）、`novels`（小说原文独立实体）、`tasks`（任务主表，一次 Pipeline 运行）、`chapters`（章节 + pgvector 向量，HNSW 索引加速 KNN）、`knowledge_nodes` + `knowledge_edges`（知识图谱点边表，支持 GraphRAG 图遍历）、`operations`（操作日志，JSON Patch + YAML 快照混合）、`dialogues`（AI 对话记录）、`audit_logs`（系统审计日志）。
 
 > 完整 DDL、表关系、HNSW 索引配置详见 **[SDS §5.5 持久化存储 DDL](./SDS%20软件设计说明书.md#55-持久化存储-ddl)** 。
 
@@ -200,7 +200,14 @@ INT. 废弃飞船驾驶舱 - 夜晚
 
 ### 7.1 RESTful API 核心端点
 
-系统提供两组 RESTful API：**任务管理**（`/api/novel/*`）负责小说上传、预处理、剧本转换、状态查询（SSE 流式进度）、断点续传、多格式导出；**AI 编辑**（`/api/editor/*`）负责上下文感知对话、结构化 Patch 应用、撤销操作。所有响应统一使用 `BaseResponse` / `ErrorResponse` 模型包裹，错误码涵盖 400/404/422/500/503。
+系统提供四组 RESTful API：
+
+- **用户认证**（`/api/auth/*`）负责注册、登录与会话管理
+- **任务管理**（`/api/novel/*`）负责小说上传、预处理、剧本转换、状态查询（SSE 流式进度）、断点续传
+- **剧本管理**（`/api/scripts/*`）负责剧本 CRUD、版本对比、多格式导出
+- **AI 编辑**（`/api/editor/*`）负责上下文感知对话、结构化 Patch 应用、撤销操作
+
+所有响应统一使用 `BaseResponse` / `ErrorResponse` 模型包裹，错误码涵盖 400/404/422/500/503。
 
 > 完整端点签名、Request/Response 示例、SSE 事件格式、错误码规范详见 **[SDS §8 API 接口设计](./SDS%20软件设计说明书.md#8-api-接口设计)** 。
 
