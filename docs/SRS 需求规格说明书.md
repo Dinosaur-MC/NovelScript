@@ -1,10 +1,11 @@
 # NovelScript (析幕) 需求规格说明书
 
-**项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统  
-**版本**：v1.0  
-**日期**：2026-06-05  
-**作者**：Dinosaur_MC  
-**状态**：草案
+**项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
+**版本**：v1.1
+**日期**：2026-06-05
+**作者**：Dinosaur_MC
+**开发约束**：单人 72 小时，资金支持 ￥500~2000
+**目标模型**：DeepSeek-v4-flash（轻量快速） / DeepSeek-v4-pro（高质量转换）
 
 ## 1. 引言
 
@@ -54,11 +55,18 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
 - 核心依赖外部 LLM 服务，必须处理 API 调用延迟、Token 限制与 JSON 格式不稳定性。
 - 前端框架限定为 React + TypeScript，后端为 FastAPI。
 - 剧本输出格式主选 YAML，辅选 JSON。
+- 外部大模型调用成本需控制在预算内（￥500~2000），需合理分配 DeepSeek-v4-flash（日常对话、轻量抽取）与 DeepSeek-v4-pro（最终剧本转换、复杂推理）的使用比例。
+- 所有用户生成内容（小说原文、转换结果、对话记录）必须持久化存储，支持历史回溯与状态恢复。
 
-### 2.5 假设与依赖
+### 2.5 资金使用计划
+
+- **模型 API 费用**（约 70%）：优先保证转换引擎的 Pro 模型调用，对话模块主要使用 Flash 模型。
+- **云服务器**（约 20%）：轻量应用服务器，2C4G，按量或包月。
+- **其他**（10%）：域名、存储备份、可能的第三方 TTS/图像 API 调用（若扩展）。
+
+### 2.6 假设与依赖
 
 - 用户上传的小说文本为纯文本或 Markdown 格式，且包含明确或可推断的章节分割。
-- LLM 服务（如 GPT-4o、DeepSeek-V3）在比赛期间稳定可用，API 密钥已获取。
 - 小说样本的版权问题由用户自行负责。
 
 ## 3. 功能需求
@@ -167,6 +175,33 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
 - AI 场景图生成：为场景标题生成一张示意图片（调用 Stable Diffusion 或 DALL·E）。
 - 多语言支持：小说语言自动检测，输出剧本语言可切换。
 
+### 3.7 AI 辅助编辑与对话模块
+
+**3.7.1 上下文感知对话**
+
+- 用户可在右侧面板或弹窗中打开 AI 助手，基于当前完整转换上下文（包括原始小说、已生成的剧本、知识图谱）进行自然语言对话。
+- 支持以下对话意图：
+    - 询问某个场景的角色动机、情节合理性
+    - 请求解释某段对白为什么这样改编
+    - 建议修改某个场景的对白、动作或地点
+    - 自动执行修改，如“把第3场的地点改成图书馆”
+- 对话上下文自动注入当前关注的 Scene 信息与角色列表，确保 AI 回答紧扣内容。
+
+**3.7.2 剧本实时修改应用**
+
+- AI 提出的修改建议（如“将这场戏改成夜晚，并增加一句冲突对白”）可生成结构化补丁（diff）。
+- 用户可一键“应用修改”，前端立即更新剧本 YAML/JSON 并同步预览视图。
+- 修改历史记录在操作日志中，支持撤销（Undo）至上一状态（最多 5 步）。
+
+**3.7.3 操作日志与版本控制**
+
+- 每次手动编辑或 AI 修改均记录：时间、操作类型（AI建议应用 / 手动编辑）、变更字段、修改前后内容快照。
+- 用户可查看所有历史操作，并回滚到任意历史版本。
+
+**3.7.4 对话持久化**
+
+- 所有对话记录关联至当前剧本任务，按时间戳存储，切换会话后依然可查看历史讨论。
+
 ## 4. 非功能需求
 
 ### 4.1 性能
@@ -197,12 +232,18 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
 - 后端使用 FastAPI 自动生成交互式 API 文档（/docs）。
 - 核心 Prompt 以独立文件或配置项管理，方便调优。
 - Docker Compose 一键部署，依赖明确。
+- 采用 MySQL 关系数据库作为任务元数据与对话记录的存储。
 
 ### 4.6 可扩展性
 
 - Schema 设计预留扩展字段（`meta`），方便日后兼容更多剧本标准。
 - 知识图谱可替换为图数据库存储。
 - 转换引擎支持插件式新增其他输出格式（如 Fountain、Final Draft XML）。
+
+### 4.7 数据持久性
+
+- 用户提交的小说、生成的剧本、对话记录在服务器上至少永久保留 3 部，用户可手动删除。
+- 任务结果支持通过分享链接临时访问（可选 P2）。
 
 ## 5. 系统架构
 
@@ -224,7 +265,7 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
       └─ /api/novel/result/{id}     (获取结果)
       |
       ├─ LLM Service (OpenAI API)
-      └─ 本地文件缓存 (temp/)
+      └─ 数据库 (MySQL、FAISS)
 ```
 
 ### 5.2 前端架构
@@ -243,6 +284,9 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
 - 数据处理：Pydantic v2、PyYAML、LangChain
 - LLM 集成：openai Python 包（兼容 DeepSeek 等）
 - 部署：Docker + Nginx + BaoTa
+- `editor_service`：处理对话请求，管理上下文注入，生成修改建议与结构化补丁。
+- `storage_layer`：基于 SQLite 的任务存储、对话记录、操作日志表。
+- 模型路由：根据功能复杂度自动选择 flash 或 pro 模型（转换使用 pro，对话使用 flash，预处理两者按需）。
 
 ### 5.4 数据流
 
@@ -251,6 +295,8 @@ NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传
 3. 用户确认章节分割后调用转换 API → 后端分割章节并发调用 LLM → 各场景 JSON 合并。
 4. Pydantic 校验并注入 source_ref → 生成 YAML/JSON → 存入任务结果。
 5. 前端轮询状态 → 获取结果 → 渲染剧本视图和知识图谱。
+6. 用户在预览界面打开 AI 对话 → 前端发送当前 scene_id 与用户消息 → 后端构造包含原文、剧本片段、知识图谱的 Prompt → 调用 flash 模型生成回复与可选补丁。
+7. 前端展示回复，用户请求应用补丁 → 后端校验补丁有效性 → 更新剧本 JSON → 返回新 YAML 并记录操作日志。
 
 ## 6. 数据设计
 
@@ -313,6 +359,74 @@ class Task(BaseModel):
     error_message: str | None = None
 ```
 
+### 6.3 持久化存储结构（MySQL）
+
+**选型说明**：采用 MySQL 8.0，利用其事务支持、行级锁与良好的并发读性，保障多用户同时转换与编辑时数据一致。部署时将 MySQL 作为独立容器，通过 Docker Compose 与 FastAPI 后端协作。
+
+**建表语句概要**：
+
+```sql
+-- 用户任务主表
+CREATE TABLE tasks (
+    id VARCHAR(36) PRIMARY KEY COMMENT 'UUID',
+    source_text LONGTEXT NOT NULL COMMENT '原始小说全文',
+    status ENUM('pending','preprocessing','converting','completed','failed') NOT NULL DEFAULT 'pending',
+    summary TEXT COMMENT '预处理摘要',
+    characters_json JSON COMMENT '角色列表',
+    knowledge_graph_json JSON COMMENT '知识图谱',
+    script_yaml LONGTEXT COMMENT '最终剧本YAML',
+    script_json JSON COMMENT '最终剧本JSON',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_status (status),
+    INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 章节表（可选，便于独立引用）
+CREATE TABLE chapters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id VARCHAR(36) NOT NULL,
+    chapter_index INT NOT NULL COMMENT '章节序号',
+    title VARCHAR(255),
+    content LONGTEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    INDEX idx_task_chapter (task_id, chapter_index)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 操作日志表（支持撤销）
+CREATE TABLE operations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id VARCHAR(36) NOT NULL,
+    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    type ENUM('manual_edit','ai_patch','rollback') NOT NULL,
+    target VARCHAR(255) COMMENT '修改目标，如scenes[0].elements[1].line',
+    diff_json JSON COMMENT '变更补丁',
+    previous_json JSON COMMENT '修改前片段快照',
+    applied TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否已应用',
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    INDEX idx_task_ops (task_id, timestamp)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- AI 对话记录表
+CREATE TABLE dialogues (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id VARCHAR(36) NOT NULL,
+    role ENUM('user','assistant') NOT NULL,
+    content TEXT NOT NULL,
+    patch_json JSON COMMENT '若消息包含补丁则记录',
+    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    INDEX idx_task_dialog (task_id, timestamp)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+**关键设计点**：
+
+- 使用 **JSON 字段** 存储非结构化元数据，避免频繁 ALTER TABLE，且便于直接用 MySQL 的 JSON 函数查询补丁内容或角色关系。
+- 外键级联删除，保证数据一致性，清理任务时自动移除关联章节、日志与对话。
+- `operations.previous_json` 保存修改前片段，支持可靠的撤销链（前端可限制最多回滚 5 步，后端保留完整历史）。
+- 生产环境建议为 `tasks.script_yaml` 等大字段开启压缩或使用外部对象存储，但 72 小时项目直接存库即可。
+
 ## 7. 接口需求
 
 ### 7.1 RESTful API
@@ -347,28 +461,94 @@ class Task(BaseModel):
 
 ### 7.2 外部接口
 
-- OpenAI API：`https://api.openai.com/v1/chat/completions` 或兼容接口，使用 `gpt-4o` 或 `deepseek-chat` 模型。
+- Deepseek API：`https://api.deepseek.com` 或 OpenAI 兼容接口，使用 `deepseek-v4-flash` 和 `deepseek-v4-pro` 模型。
+
+### 7.3 AI 编辑对话接口
+
+**7.3.1 发送对话消息**
+
+- `POST /api/editor/chat/{task_id}`
+- Body: `{ "message": "把第2场的地点改为图书馆", "context": { "scene_id": 2 } }`
+- Response (SSE 或一次性):
+    ```json
+    {
+        "reply": "好的，我已将第2场地点改为图书馆...",
+        "patch": {
+            "target": "scenes[1].location",
+            "old_value": "咖啡馆",
+            "new_value": "图书馆"
+        }
+    }
+    ```
+
+**7.3.2 应用补丁**
+
+- `POST /api/editor/apply_patch/{task_id}`
+- Body: `{ "patch": { ... } }`
+- Response: `{ "success": true, "updated_script": { ... } }`
+
+**7.3.3 撤销操作**
+
+- `POST /api/editor/undo/{task_id}`
+- Response: 回滚后的完整剧本
+
+**7.3.4 获取操作历史**
+
+- `GET /api/editor/history/{task_id}`
+- Response: `{ "operations": [...] }`
 
 ## 8. 项目计划（72 小时）
 
-| 时间段        | 任务                                                              | 产出                            |
-| ------------- | ----------------------------------------------------------------- | ------------------------------- |
-| **D0（8h）**  | 项目初始化，前后端骨架，小说上传/章节切分，预处理 API 调通        | 能粘贴文本并返回摘要和角色列表  |
-| **D1（12h）** | 知识图谱构建，场景切分与转换引擎 Prompt 调试，并发调用，YAML 生成 | 端到端生成 3 章样本的 YAML 剧本 |
-| **D2（12h）** | 前端剧本预览组件，原文跳转，知识图谱面板，导出功能，UI 打磨       | 完整可交互的 Web 应用原型       |
-| **D3（8h）**  | 编写 Schema 设计文档，Docker 部署，异常处理，录制演示视频         | 上线演示、提交材料              |
+| 时间段        | 任务                                                                                              | 产出                            |
+| ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------- |
+| **D0（8h）**  | 项目初始化，前后端骨架，小说上传/章节切分，预处理 API 调通                                        | 能粘贴文本并返回摘要和角色列表  |
+| **D1（12h）** | 知识图谱构建，场景切分与转换引擎 Prompt 调试，并发调用，YAML 生成                                 | 端到端生成 3 章样本的 YAML 剧本 |
+| **D2（12h）** | 前端剧本预览组件，原文跳转，知识图谱面板，导出功能，AI 对话面板 UI，对接聊天接口，UI 打磨         | 完整可交互的 Web 应用原型       |
+| **D3（8h）**  | 编写 Schema 设计文档，Docker 部署，异常处理，录制演示视频，调试对话上下文注入准确性，编写测试用例 | 上线演示、提交材料              |
 
 风险缓释：D0 晚若预处理失败，回退为简单章节正则切分；D1 若 JSON 解析不稳定，增加正则兜底；D2 可用简化版布局确保可演示。
 
-## 9. 附录
+## 9. 测试方案
 
-### 9.1 待确认问题
+### 9.1 测试目标
 
-- 比赛是否提供大模型 API 额度？如有，需适配指定接口。
-- 是否需要服务端保留用户作品展示？本项目默认为无状态、不存储结果。
-- 评审标准中是否对“可量化反馈”有要求？本题侧重结构化转换，但可在 Schema 中加入“改编完整度”等元数据。
+验证小说→剧本转换的正确性、AI 编辑功能的可用性、数据持久化完整性。
 
-### 9.2 参考标准
+### 9.2 功能测试用例
+
+| 编号  | 场景          | 操作                                                             | 预期结果                                                  |
+| ----- | ------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
+| TC-01 | 标准小说输入  | 粘贴包含3章的中文小说，点击转换                                  | 返回合理 YAML，场景数≥1，角色提取正确，包含 source_ref    |
+| TC-02 | 章节自动识别  | 输入以“第X章”分割的文本                                          | 前端展示正确的章节列表，可手动调整                        |
+| TC-03 | 英文小说处理  | 输入英文小说                                                     | 同样输出结构化剧本，语言为英文                            |
+| TC-04 | 超长文本分片  | 提交单章 12000 字                                                | 系统自动分片处理，无报错，场景连贯                        |
+| TC-05 | 知识图谱构建  | 预处理完成                                                       | 返回角色节点与关系边，前端可渲染                          |
+| TC-06 | 原文跳转      | 点击某句对白的 source_ref                                        | 左侧原文滚动到对应段落并高亮                              |
+| TC-07 | AI 对话与补丁 | 在剧本界面询问“为什么这里冲突这么弱”，然后请求“增加一句冲突对白” | AI 给出合理解释，并生成修改补丁，应用后剧本更新、预览刷新 |
+| TC-08 | 撤销修改      | 应用补丁后点击撤销                                               | 剧本回退至上个状态，操作历史正确记录                      |
+| TC-09 | 异常输入      | 粘贴无章节散文、空文本、纯数字                                   | 系统提示“请提供有效小说文本”，不崩溃                      |
+| TC-10 | JSON 格式修复 | 模拟 LLM 返回缺少括号的 JSON                                     | 系统自动重试或正则修复，仍失败则返回部分结果并提示        |
+
+### 9.3 测试环境与方法
+
+- 使用固定的样本小说作为测试输入（中/英文各一篇），保证可重复。
+- 自动化测试脚本（pytest）覆盖 API 输入输出校验，前端 E2E 测试可使用简版手动执行。
+- 在提交前必须通过所有核心用例（TC-01~08）。
+
+## 10. 附录
+
+### 10.1 模型使用策略
+
+- **DeepSeek-v4-pro**：用于剧本转换（高难度生成，需强一致性），预处理中的角色关系抽取。
+- **DeepSeek-v4-flash**：用于对话交流、轻量内容摘要、章节切分、简单补丁生成。
+- 成本控制：单次转换按 2 万字估算，pro 模型输入约 15K tokens，输出约 5K tokens，成本约 ￥0.05/次；flash 成本极低。预算可支持数千次完整转换与大量对话，足够比赛演示与测试。
+
+### 10.2 用户界面原型（文字描述）
+
+- 三栏布局：左-小说原文（可编辑），中-剧本预览（带高亮与操作按钮），右-知识图谱 + AI 对话切换面板。
+- 底部浮动按钮：转换进度条、导出菜单。
+
+### 10.3 参考标准
 
 - **Final Draft**：行业剧本写作软件，格式为 .fdx（XML）。
 - **Fountain**：纯文本剧本标记语言，简单易读。
