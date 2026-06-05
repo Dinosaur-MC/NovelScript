@@ -24,10 +24,8 @@ app = FastAPI(
 )
 
 
-# ========== 全局异常处理器 ==========
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """HTTP 异常处理器 - 将 HTTPException 转换为统一的 ErrorResponse 格式"""
     logger.error(f"HTTP 异常：{str(exc)}", exc_info=True)
     import traceback
     return JSONResponse(
@@ -42,7 +40,6 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    """通用异常处理器 - 捕获所有未处理的异常"""
     logger.error(f"未处理的异常：{str(exc)}", exc_info=True)
     return JSONResponse(
         status_code=500,
@@ -63,29 +60,24 @@ app.add_middleware(
 )
 
 
-# ========== 导入并注册各版本 API 路由 ==========
+# ========== 路由注册 ==========
 from app.api import api_v1_router, auth_router
 from app.api.novel import router as novel_router
 from app.api.scripts import router as scripts_router
 from app.api.tasks import router as tasks_router
-from app.api.editor import router as editor_router
 
 app.include_router(api_v1_router)
 app.include_router(auth_router)
 app.include_router(novel_router)
 app.include_router(scripts_router)
 app.include_router(tasks_router)
-app.include_router(editor_router)
 
 
-# ========== 健康检查端点 ==========
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """健康检查"""
     return BaseResponse(code=0, message="健康检查通过", data={"status": "healthy"})
 
 
 @app.head("/", tags=["Root"])
 async def root_head():
-    """根路径 HEAD 请求 - 返回响应头"""
     return Response()
