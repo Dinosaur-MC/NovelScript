@@ -112,6 +112,10 @@ async def init_db() -> None:
     logger.info("DDL executed.")
 
     # -- 3. SQLModel tables --------------------------------------------- #
+    # Dispose any stale engine pool (may have been created in a different
+    # event loop on Windows — this is safe: it recreates fresh connections).
+    await _engine.dispose()
+
     # IMPORTANT: import all sql.py models so SQLModel.metadata knows about
     # them before create_all is called.
     import app.models.sql as _sql_models  # noqa: F401
