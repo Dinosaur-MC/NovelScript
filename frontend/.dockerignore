@@ -1,0 +1,11 @@
+.react-router
+build
+node_modules
+README.md
+.git
+.gitignore
+.vscode
+.env
+.env.*
+!.env.example
+.pnpm-store
