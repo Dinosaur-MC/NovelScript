@@ -1,346 +1,273 @@
-# NovelScript (析幕) 需求规格说明书
+# NovelScript (析幕) 软件需求规格说明书
 
 **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-**版本**：v1.1
+**文档版本**：v2.0.0 (Release)
 **日期**：2026-06-05
 **作者**：Dinosaur_MC
-**开发约束**：单人 72 小时，资金支持 ￥500~2000
-**目标模型**：DeepSeek-v4-flash（轻量快速） / DeepSeek-v4-pro（高质量转换）
+**开发约束**：单人 72 小时极限开发，预算 ￥500~2000
+**目标模型**：DeepSeek-v4-flash（轻量/对话） / DeepSeek-v4-pro（高质量转换/推理）
+**核心数据底座**：PostgreSQL 18+ (集成 pgvector 与 JSONB)
+
+---
 
 ## 1. 引言
 
 ### 1.1 编写目的
 
-本文档旨在完整定义 NovelScript 项目的功能需求、非功能需求、系统架构与接口规范，为 72 小时单人开发提供清晰的实施蓝图。目标读者为开发人员、评审专家及后续可能的维护者。
+本文档旨在完整、严谨地定义 NovelScript (析幕) 项目的功能需求、非功能需求、系统架构、数据模型与接口规范。本文档为 72 小时单人极限开发提供绝对清晰的实施蓝图，同时作为提交给七牛云 XEngineer 评审专家的核心技术白皮书，展现系统架构的完整性与工程落地的可行性。
 
 ### 1.2 项目背景
 
-大量小说作者希望将作品改编为影视或舞台剧本，但手工转换耗费大量时间，且需要同时精通文学叙事与剧本格式。现有工具多仅支持格式转换，缺乏对故事结构、角色关系、场景划分的深度理解。本项目利用大语言模型（LLM）自动完成从小说到 YAML 结构化剧本的转换，并提供原文追溯、知识图谱、在线预览等功能，大幅降低改编门槛。
+在网文 IP 影视化改编市场中，将数十万字的非结构化小说转化为符合视听语言逻辑的标准剧本，是一项极度耗时且依赖人工经验的工作。现有工具多局限于简单的格式排版，缺乏对故事因果结构、角色关系演进及场景调度的深度语义理解。
+NovelScript 旨在利用大型语言模型（LLM）构建一条**高可用、带溯源、强校验的 AI 异步内容管线**，自动完成从小说文本到工业级结构化剧本（YAML/JSON/Fountain）的转换，并提供原文双向追溯、知识图谱可视化、AI 辅助协同编辑等功能，大幅降低 IP 改编门槛。
 
 ### 1.3 适用范围
 
-- 输入：3 章及以上中文/英文小说（支持粘贴、上传 .txt/.md、网页链接抓取）
-- 输出：结构化剧本（YAML/JSON），兼容行业标准并附加增强字段
-- 用户：网文作者、独立编剧、内容创作团队
-- 平台：Web 应用，浏览器访问
+- **输入**：3 章及以上中文/英文小说文本（支持文本粘贴、`.txt`/`.md` 文件上传、公开网页 URL 抓取）。
+- **输出**：结构化剧本数据（YAML/JSON），以及兼容影视工业标准的 Fountain 纯文本标记格式。
+- **目标用户**：网文作者、独立编剧、影视策划、内容平台开发者。
+- **运行平台**：B/S 架构 Web 应用，现代浏览器访问。
 
 ### 1.4 术语与缩写
 
-- **Scene（场景）**：剧本的基本叙事单元，通常对应一个连续时空内的情节段落。
-- **Element（剧本元素）**：场景内部的原子单位，如对白（dialogue）、动作（action）、画面提示等。
-- **source_ref**：自定义增强字段，指向小说原文的章节、段落编号，用于追溯和定位。
-- **Knowledge Graph（知识图谱）**：以 JSON 图结构表示的角色、地点、事件及相互关系。
+- **Scene（场景）**：剧本的基本叙事单元，对应一个连续时空内的情节段落。
+- **Element（剧本元素）**：场景内部的原子单位，如对白（Dialogue）、动作（Action）、画面提示（Shot）等。
+- **source_ref（溯源锚点）**：自定义增强字段，指向小说原文的章节与段落偏移量，用于双向追溯。
+- **Fountain**：一种基于 Markdown 的纯文本剧本标记语言，可无缝导入 Final Draft 等专业软件。
+- **pgvector**：PostgreSQL 的开源向量相似度搜索插件，用于替代独立的向量数据库（如 FAISS/Milvus）。
+- **JSONB**：PostgreSQL 的二进制 JSON 数据类型，用于存储知识图谱与剧本结构，支持 GIN 索引与路径查询。
 
 ## 2. 总体描述
 
 ### 2.1 产品视角
 
-NovelScript 是一个 Web 应用，用户通过浏览器访问，粘贴或上传小说文本后，系统自动分析并生成结构化剧本。前端提供原文阅读、剧本预览、知识图谱浏览的一体化界面，支持一键导出与原文跳转。
+NovelScript 是一个一体化的 Web 剧本工作台。用户输入小说文本后，系统通过多阶段 Pipeline（解析 -> 记忆构建 -> 并发转换 -> 强校验）生成剧本。前端提供“原文阅读-代码编辑-可视化预览”三栏协同界面，支持基于 RAG（检索增强生成）的上下文感知 AI 对话与剧本补丁（Patch）应用。
 
 ### 2.2 用户特征
 
-- **小说作者**：具备文学素养，无技术背景，需要简单直观的操作流程。
-- **编剧/策划**：熟悉影视剧本格式，关注场景划分、对白质量与角色一致性。
-- **比赛评委**：注重技术难度、工程完整度、创新性与演示效果。
+- **小说作者**：关注 IP 转化效率，需要直观的原文对照与修改建议。
+- **专业编剧**：关注场景划分合理性、对白张力及格式规范性，依赖 Fountain 格式导出至专业软件。
+- **技术评委**：关注系统架构的鲁棒性、长文本处理的工程解法（并发/削峰/防幻觉）及数据一致性。
 
 ### 2.3 运行环境
 
-- **前端**：现代浏览器（Chrome 90+, Firefox 88+, Edge 90+）
-- **后端**：Linux 服务器，Python 3.10+，Docker 容器化部署
-- **网络**：需要访问大模型 API（OpenAI 兼容接口），最低 1Mbps 带宽
+- **前端**：React 19 + TypeScript + Vite，兼容 Chrome 90+, Edge 90+。
+- **后端**：Python 3.13, FastAPI, Uvicorn, 运行于 Linux 容器环境。
+- **数据库**：PostgreSQL 18 (搭载 `pgvector` 与 `uuid-ossp` 插件)。
+- **网络**：需稳定访问 DeepSeek API，最低 2Mbps 带宽。
 
 ### 2.4 设计与实现约束
 
-- 单人开发，总时间 72 小时。
-- 核心依赖外部 LLM 服务，必须处理 API 调用延迟、Token 限制与 JSON 格式不稳定性。
-- 前端框架限定为 React + TypeScript，后端为 FastAPI。
-- 剧本输出格式主选 YAML，辅选 JSON。
-- 外部大模型调用成本需控制在预算内（￥500~2000），需合理分配 DeepSeek-v4-flash（日常对话、轻量抽取）与 DeepSeek-v4-pro（最终剧本转换、复杂推理）的使用比例。
-- 所有用户生成内容（小说原文、转换结果、对话记录）必须持久化存储，支持历史回溯与状态恢复。
+1.  **时间与人力**：单人 72 小时闭环开发。
+2.  **技术栈锁定**：前端 React+TS，后端 FastAPI，数据库 PostgreSQL (All-in-One 架构)。
+3.  **模型路由**：严格区分 DeepSeek-v4-pro（核心转换）与 DeepSeek-v4-flash（对话/摘要），以控制成本与延迟。
+4.  **容错机制**：必须具备 LLM 结构化输出（JSON/YAML）的自动校验与重试修复机制。
 
-### 2.5 资金使用计划
+### 2.5 资金使用计划 (预算 ￥2000)
 
-- **模型 API 费用**（约 70%）：优先保证转换引擎的 Pro 模型调用，对话模块主要使用 Flash 模型。
-- **云服务器**（约 20%）：轻量应用服务器，2C4G，按量或包月。
-- **其他**（10%）：域名、存储备份、可能的第三方 TTS/图像 API 调用（若扩展）。
+- **模型 API 费用 (70%, ￥1400)**：保障 Pro 模型的高并发调用与 Flash 模型的长连接对话。
+- **云服务器 (20%, ￥400)**：2C4G 轻量应用服务器，按量计费，用于部署 Docker 容器。
+- **其他 (10%, ￥200)**：域名注册、SSL 证书、对象存储备用金、LLM开发Token费用。
 
 ### 2.6 假设与依赖
 
-- 用户上传的小说文本为纯文本或 Markdown 格式，且包含明确或可推断的章节分割。
-- 小说样本的版权问题由用户自行负责。
+- 假设上传的小说文本包含可推断的章节边界（如“第X章”或明显的空行分隔）。
+- 假设 DeepSeek API 在竞赛期间保持 99% 以上的可用性。
+- 依赖开源社区提供的 `pgvector` 镜像与 React 生态组件。
 
 ## 3. 功能需求
 
 ### 3.1 小说输入模块
 
-**3.1.1 文本粘贴与上传**
+- **3.1.1 文本粘贴与上传**：支持 TipTap 富文本/Markdown 编辑器直接粘贴；支持 `.txt`/`.md` 文件上传（限制 5MB）。
+- **3.1.2 网页抓取 (P1)**：输入 URL，后端通过 `BeautifulSoup`/`Playwright` 提取 `<article>` 或主内容区文本，自动清洗 HTML 标签。
+- **3.1.3 章节智能切分**：后端使用正则（`第[零一二三四五六七八九十百千0-9]+章`）与 LLM 语义兜底进行切分。前端提供章节列表，允许用户手动合并、拆分或调整顺序。
 
-- 用户可在前端编辑器中直接粘贴小说文本（支持 Markdown 标题识别章节）。
-- 提供文件上传按钮，支持 `.txt`、`.md` 格式，单文件大小不超过 5MB。
+### 3.2 LLM 预处理与记忆构建模块
 
-**3.1.2 链接抓取（可选，优先级 P1）**
+- **3.2.1 全局摘要与图谱提取**：调用 Pro 模型提取故事梗概、角色列表（含性格/身份）、地点列表及角色关系网，构建全局知识图谱（JSONB 格式）。
+- **3.2.2 向量化记忆入库 (RAG)**：将切分后的章节文本通过 Embedding 模型转化为向量，连同原文偏移量（Offset）存入 PostgreSQL 的 `pgvector` 字段，构建长文本记忆网络。
 
-- 输入公开小说网页 URL，后端抓取正文内容（仅提取 `<article>` 或特定 CSS 选择器内的文本）。
-- 抓取失败时提示用户改用粘贴或上传。
+### 3.3 剧本转换引擎 (核心 Pipeline)
 
-**3.1.3 章节识别与手动调整**
-
-- 后端自动按正则表达式（如“第[零一二三四五六七八九十百千0-9]+章”、“Chapter \d+”等）切分章节。
-- 前端展示章节列表，允许用户合并、拆分或重新排序章节，调整结果反馈至后续处理。
-
-### 3.2 LLM 预处理模块
-
-**3.2.1 全文摘要生成**
-
-- 调用 LLM 生成 100~200 字的故事梗概，用于后续场景一致性校验。
-- 支持中文和英文输出（根据文本语言自动切换）。
-
-**3.2.2 内容切分**
-
-- 若用户未提供章节切分，LLM 根据语义自动将全文划分为逻辑章节（最多 10 章），每章提取标题。
-
-**3.2.3 知识图谱构建**
-
-- 从全文中提取：
-    - 角色列表：姓名、别名、身份、性格简述
-    - 地点列表：名称、描述
-    - 角色间关系：关系类型（朋友、敌人、恋人等）、关系强度（强/弱）
-- 输出为 JSON 图结构（nodes 和 edges），前端可渲染为力导向图。
-
-### 3.3 剧本转换引擎
-
-**3.3.1 场景切分与转换**
-
-- 以章为单位，LLM 将叙事性文本转换为场景序列。
-- 每个场景包含：
-    - 场景标题（heading）：如“第1场 咖啡馆 白天”
-    - 地点（location）
-    - 时间（time_of_day：白天/夜晚/清晨等）
-    - 出场角色（characters 列表）
-    - 剧本元素序列（elements）：顺序排列的动作、对白、转场提示等。
-
-**3.3.2 并发分块处理**
-
-- 将各章并发发送给 LLM 进行转换，单章文本长度超过 8000 字时自动再分片。
-- 使用异步任务队列，避免阻塞请求，前端显示实时处理进度。
-
-**3.3.3 输出结构化与反序列化**
-
-- LangChain 的 `JsonOutputParser` 将 LLM 返回的 JSON 反序列化为 Pydantic 场景模型。
-- 校验失败时，自动重试或使用正则修复，最大重试次数 2。
-- 所有场景按原文顺序合并，生成完整剧本数据结构。
-
-**3.3.4 增强字段注入**
-
-- 为每个 `element` 添加 `source_ref` 字段，指向原文出处（格式：`chapter:段落编号`）。
-- 依据知识图谱，为 `character` 添加简要描述和关系链接。
+- **3.3.1 场景切分与重构**：以章为单位，结合全局知识图谱与 RAG 检索的前文记忆，调用 LLM 将叙事文本转换为场景序列（Scene）。
+- **3.3.2 并发分块处理**：使用 `asyncio.Semaphore` 控制并发，单章超过 8000 字时自动滑动窗口分片。通过 SSE (Server-Sent Events) 向前端推送实时进度。
+- **3.3.3 强校验与自动修复**：使用 Pydantic V2 校验 LLM 输出的 JSON。若抛出 `ValidationError`，系统自动捕获错误信息，构造“修复 Prompt”要求 LLM 重新输出，最大重试 2 次。
+- **3.3.4 溯源锚点注入**：为每个剧本 Element 强制注入 `source_ref`（包含 `chapter_id` 与 `offset`），确保 100% 可追溯。
 
 ### 3.4 输出与导出
 
-**3.4.1 YAML/JSON 生成**
+- **3.4.1 多格式生成**：
+    - **YAML/JSON**：供系统内部读取与前端渲染。
+    - **Fountain**：将结构化数据序列化为标准 Fountain 纯文本语法，支持一键下载 `.fountain` 文件。
+- **3.4.2 元数据注入**：在文件头部自动注入转换时间、使用模型、原著信息等 Metadata。
 
-- 按定义的 Schema 序列化整个剧本为 YAML 文件（默认）及 JSON 文件。
-- 在 YAML 头部的注释中写入元数据：转换时间、所用模型、小说源信息。
+### 3.5 剧本预览与交互工作台
 
-**3.4.2 前端下载与复制**
+- **3.5.1 三栏协同布局**：
+    - **左栏**：小说原文阅读器（支持段落高亮与锚点定位）。
+    - **中栏**：Monaco Editor（YAML/JSON 代码编辑）或 Fountain 源码编辑。
+    - **右栏**：剧本可视化预览（模拟影视排版）与知识图谱力导向图。
+- **3.5.2 双向溯源跳转**：点击右栏任意对白/动作，左栏原文自动滚动至对应段落并高亮；反之亦然。
+- **3.5.3 图谱联动**：在知识图谱中点击某角色，剧本预览区自动高亮该角色所有出场场景与对白。
 
-- 提供“下载 YAML”、“下载 JSON”、“一键复制到剪贴板”按钮。
-- 下载文件命名格式：`novelscript_<小说标题>_<时间戳>.yaml`
+### 3.6 AI 辅助编辑与对话模块
 
-### 3.5 剧本预览与交互
+- **3.6.1 上下文感知对话**：右侧面板集成 AI 助手。用户提问时，系统自动将当前选中的 Scene、相关角色设定及原文片段注入 Prompt（基于 Flash 模型）。
+- **3.6.2 结构化补丁 (Patch) 生成**：AI 可生成符合 JSON Patch 规范的修改建议（如修改地点、增加对白）。
+- **3.6.3 一键应用与撤销链 (Undo)**：用户确认应用 Patch 后，前端实时更新视图，后端记录操作日志。支持最多 5 步的 Undo/Redo 历史回滚。
 
-**3.5.1 分栏布局预览**
+### 3.7 扩展功能 (P2, 视时间余量)
 
-- 左侧：小说原文阅读器，支持滚动和高亮当前跳转段落。
-- 中间：格式化剧本视图，类似剧本排版（角色：对白，动作斜体，场景标题加粗）。
-- 右侧：知识图谱面板，展示角色关系图、地点列表。
-
-**3.5.2 原文跳转定位**
-
-- 点击剧本中的任意对白或动作，左侧原文自动滚动到对应段落并高亮。
-- 通过 `source_ref` 的段落 ID 实现双向锚点跳转。
-
-**3.5.3 角色/地点高亮**
-
-- 在知识图谱中点击角色或地点，剧本内所有相关对白/动作高亮显示。
-
-**3.5.4 简单播放演示（可选 P2）**
-
-- 自动滚动剧本并高亮当前“播放”的元素，模拟场景流转。
-- 播放速度可调（正常/快进）。
-
-### 3.6 扩展功能（P2，时间充裕时实现）
-
-- TTS 朗读：选中一句对白，调用浏览器内置语音合成或 ElevenLabs API 朗读。
-- AI 场景图生成：为场景标题生成一张示意图片（调用 Stable Diffusion 或 DALL·E）。
-- 多语言支持：小说语言自动检测，输出剧本语言可切换。
-
-### 3.7 AI 辅助编辑与对话模块
-
-**3.7.1 上下文感知对话**
-
-- 用户可在右侧面板或弹窗中打开 AI 助手，基于当前完整转换上下文（包括原始小说、已生成的剧本、知识图谱）进行自然语言对话。
-- 支持以下对话意图：
-    - 询问某个场景的角色动机、情节合理性
-    - 请求解释某段对白为什么这样改编
-    - 建议修改某个场景的对白、动作或地点
-    - 自动执行修改，如“把第3场的地点改成图书馆”
-- 对话上下文自动注入当前关注的 Scene 信息与角色列表，确保 AI 回答紧扣内容。
-
-**3.7.2 剧本实时修改应用**
-
-- AI 提出的修改建议（如“将这场戏改成夜晚，并增加一句冲突对白”）可生成结构化补丁（diff）。
-- 用户可一键“应用修改”，前端立即更新剧本 YAML/JSON 并同步预览视图。
-- 修改历史记录在操作日志中，支持撤销（Undo）至上一状态（最多 5 步）。
-
-**3.7.3 操作日志与版本控制**
-
-- 每次手动编辑或 AI 修改均记录：时间、操作类型（AI建议应用 / 手动编辑）、变更字段、修改前后内容快照。
-- 用户可查看所有历史操作，并回滚到任意历史版本。
-
-**3.7.4 对话持久化**
-
-- 所有对话记录关联至当前剧本任务，按时间戳存储，切换会话后依然可查看历史讨论。
+- **TTS 语音演示**：调用浏览器 Web Speech API 或第三方接口，根据剧本中的情绪提示（Parenthetical）朗读对白。
+- **AI 场景概念图**：根据 Scene 的 `action_description` 调用文生图 API 生成场景气氛图。
 
 ## 4. 非功能需求
 
-### 4.1 性能
+### 4.1 性能指标
 
-- 3 章共约 2 万字的转换总时间 ≤ 90 秒（含 LLM 调用、并发处理、格式化）。
-- 前端首次加载时间 ≤ 3 秒（gzip 压缩后资源 ≤ 2MB）。
-- 支持 10 个并发用户而不显著增加单任务耗时（系统设计为每用户独立任务队列）。
+- **转换延迟**：3 章（约 2 万字）小说的端到端转换时间 ≤ 90 秒（依赖并发与模型响应）。
+- **首屏加载**：前端 Gzip 压缩后资源 ≤ 2MB，首次加载时间 ≤ 3 秒。
+- **并发支持**：系统架构支持至少 10 个独立任务队列并行处理，互不阻塞。
 
-### 4.2 可用性
+### 4.2 可靠性与鲁棒性
 
-- 界面简洁，核心操作不超过 3 步：输入 → 点击转换 → 浏览/导出。
-- 提供友好的错误提示，如“文本过短，请至少输入 3 章内容”、“API 暂时不可用，请稍后重试”。
-- 转换过程中显示步骤进度条（预处理 → 正在构建第 X/总章数 章）。
+- **格式兜底**：LLM 输出非法 JSON 时，100% 触发自动修复流程；若 2 次重试仍失败，降级返回已解析的部分场景并警告用户，系统绝不崩溃。
+- **断点续传**：转换过程中若遇网络波动，支持从失败的 Chunk 处恢复，而非全盘重跑。
 
-### 4.3 可靠性
+### 4.3 安全性
 
-- LLM 输出的 JSON 解析失败时，自动请求 LLM 修正，最多 2 次重试，仍失败则返回部分结果并警告用户。
-- 对于不支持的格式或异常输入，系统不会崩溃，而是返回规范化错误信息。
+- **凭证隔离**：所有 API Key 仅存于后端 `.env`，严禁硬编码或暴露给前端。
+- **XSS 防护**：前端渲染小说原文与 AI 回复时，强制使用 `DOMPurify` 进行 HTML 消毒。
+- **数据隐私**：提供“阅后即焚”选项，任务完成 24 小时后自动清理服务器临时文件与向量数据。
 
-### 4.4 安全性
+### 4.4 可维护性与部署
 
-- API 密钥仅存于后端环境变量，不暴露给前端。
-- 对用户上传的文本内容不做永久存储，处理完成后 1 小时自动从服务器删除。
-- 前端使用 DOMPurify 消毒渲染内容，防止 XSS。
-
-### 4.5 可维护性
-
-- 后端使用 FastAPI 自动生成交互式 API 文档（/docs）。
-- 核心 Prompt 以独立文件或配置项管理，方便调优。
-- Docker Compose 一键部署，依赖明确。
-- 采用 MySQL 关系数据库作为任务元数据与对话记录的存储。
-
-### 4.6 可扩展性
-
-- Schema 设计预留扩展字段（`meta`），方便日后兼容更多剧本标准。
-- 知识图谱可替换为图数据库存储。
-- 转换引擎支持插件式新增其他输出格式（如 Fountain、Final Draft XML）。
-
-### 4.7 数据持久性
-
-- 用户提交的小说、生成的剧本、对话记录在服务器上至少永久保留 3 部，用户可手动删除。
-- 任务结果支持通过分享链接临时访问（可选 P2）。
+- **容器化**：提供完整的 `docker-compose.yml`，一键拉起 Frontend, Backend, PostgreSQL。
+- **API 文档**：FastAPI 自动生成 Swagger UI (`/docs`) 与 ReDoc。
 
 ## 5. 系统架构
 
-### 5.1 总体架构图
+### 5.1 总体架构 (All-in-One PostgreSQL)
+
+系统摒弃了传统的“MySQL + FAISS + Neo4j”多组件堆砌方案，采用 **PostgreSQL 作为唯一数据底座**，极大降低了 72 小时内的运维心智负担与网络通信开销。
 
 ```text
-[浏览器: React SPA]
-      |
-      | HTTP/REST
+[Browser: React 19 + TS + Ant Design + TipTap/Monaco]
+      | (HTTP/REST & SSE)
       v
-[Nginx 反向代理]
+[Nginx Reverse Proxy & Static Server]
       |
       v
-[FastAPI 应用服务器]
-      ├─ /api/novel/upload          (接收文本)
-      ├─ /api/novel/preprocess      (触发预处理)
-      ├─ /api/novel/convert         (开始转换)
-      ├─ /api/novel/status/{id}     (任务状态)
-      └─ /api/novel/result/{id}     (获取结果)
-      |
-      ├─ LLM Service (OpenAI API)
-      └─ 数据库 (MySQL、FAISS)
+[FastAPI Application Server (Python 3.13)]
+      ├─ /api/novel/*      (任务调度与状态机)
+      ├─ /api/editor/*     (AI 对话与 Patch 应用)
+      ├─ LLM Router        (DeepSeek Pro/Flash 智能路由)
+      └─ Data Access Layer (Asyncpg + SQLModel)
+             |
+             v
+[PostgreSQL 18 (All-in-One Data Hub)]
+      ├─ 关系数据 (tasks, operations, dialogues)
+      ├─ 向量数据 (chapters.embedding via pgvector) -> 替代 FAISS
+      └─ 图/文档数据 (JSONB via GIN Index)          -> 替代 Neo4j/MongoDB
 ```
 
 ### 5.2 前端架构
 
-- 框架：React 18 + TypeScript
-- UI 库：Ant Design 5
-- 状态管理：React Context + useReducer
-- 文本编辑器：TipTap（支持 Markdown）
-- 图表：vis.js 或 D3 用于知识图谱
-- 构建工具：Vite
+- **框架**：React 19 + TypeScript + Vite。
+- **路由**：React Router v7
+- **状态管理**：Zustand (轻量级) 或 React Context + useReducer。
+- **UI 组件**：Ant Design 6 (基础组件), Monaco Editor (代码编辑), TipTap (富文本), ReactFlow (知识图谱)。
 
 ### 5.3 后端架构
 
-- Web 框架：FastAPI
-- 异步任务：asyncio + asyncio.gather（轻量并发）
-- 数据处理：Pydantic v2、PyYAML、LangChain
-- LLM 集成：openai Python 包（兼容 DeepSeek 等）
-- 部署：Docker + Nginx + BaoTa
-- `editor_service`：处理对话请求，管理上下文注入，生成修改建议与结构化补丁。
-- `storage_layer`：基于 SQLite 的任务存储、对话记录、操作日志表。
-- 模型路由：根据功能复杂度自动选择 flash 或 pro 模型（转换使用 pro，对话使用 flash，预处理两者按需）。
-
-### 5.4 数据流
-
-1. 用户提交文本 → 后端生成任务 ID，存储原文至临时文件。
-2. 调用预处理 API → LLM 输出摘要、角色、章节切分 → 缓存为 JSON。
-3. 用户确认章节分割后调用转换 API → 后端分割章节并发调用 LLM → 各场景 JSON 合并。
-4. Pydantic 校验并注入 source_ref → 生成 YAML/JSON → 存入任务结果。
-5. 前端轮询状态 → 获取结果 → 渲染剧本视图和知识图谱。
-6. 用户在预览界面打开 AI 对话 → 前端发送当前 scene_id 与用户消息 → 后端构造包含原文、剧本片段、知识图谱的 Prompt → 调用 flash 模型生成回复与可选补丁。
-7. 前端展示回复，用户请求应用补丁 → 后端校验补丁有效性 → 更新剧本 JSON → 返回新 YAML 并记录操作日志。
+- **Web 框架**：FastAPI (异步非阻塞)。
+- **ORM/DB Driver**：SQLModel + `asyncpg` (高性能异步 PgSQL 驱动)。
+- **AI 编排**：LangChain (Prompt 管理), `pgvector` (相似度检索)。
+- **并发控制**：`asyncio.gather` + `Semaphore`。
 
 ## 6. 数据设计
 
-### 6.1 核心数据结构（YAML Schema）
-
-详见附件《NovelScript YAML Schema 设计文档》草案，此处简述顶层结构：
+### 6.1 核心数据结构：YAML Schema (完整版)
 
 ```yaml
 script:
   meta:
-    title: "小说标题"
-    author: "原作者"
-    converted_by: "NovelScript v1.0"
-    model: "deepseek-v3"
+    title: "星辰低语"
+    author: "原著: XXX / 改编: NovelScript AI"
+    model: "deepseek-v4-pro"
     timestamp: "2026-06-05T12:00:00Z"
-  summary: "故事摘要..."
-  characters:  # 去重角色列表
-    - name: "艾伦"
-      description: "年轻程序员"
+    version: "1.0.0"
+  summary: "在废弃的星际飞船上，颓废的领航员林明与冷酷的仿生人艾娃展开了一场关于宇宙边缘与人类情感的对话。"
+  characters:
+    - id: "char_01"
+      name: "林明"
+      description: "30岁，颓废的星际领航员，右眼有机械义眼。"
+    - id: "char_02"
+      name: "艾娃"
+      description: "AI 仿生人，冷静，缺乏人类情感。"
   scenes:
-    - scene_id: 1
-      heading: "第1场 咖啡馆 白天"
-      location: "纽约 中央咖啡馆"
-      time_of_day: "白天"
-      characters_present: ["艾伦"]
+    - scene_id: "S001"
+      heading: "内景. 废弃飞船驾驶舱 - 夜晚"
+      location: "飞船驾驶舱"
+      time_of_day: "夜晚"
+      characters_present: ["char_01", "char_02"]
       elements:
         - type: "action"
-          content: "艾伦推开玻璃门，风铃响起。"
-          source_ref: "ch2.para5"
+          content: "控制台上闪烁着微弱的红光。林明疲惫地靠在座椅上，手里把玩着一个旧式怀表。艾娃静静地站在他身后。"
+          source_ref:
+            chapter_id: "ch_02"
+            offset: [1450, 1520]
         - type: "dialogue"
-          speaker: "艾伦"
-          line: "一杯美式，谢谢。"
-          source_ref: "ch2.para6"
-        ...
+          character_id: "char_01"
+          parenthetical: "(自嘲地笑)"
+          line: "你说，宇宙的边缘到底有什么？"
+          source_ref:
+            chapter_id: "ch_02"
+            offset: [1521, 1545]
+        - type: "dialogue"
+          character_id: "char_02"
+          parenthetical: "(机械音，毫无波澜)"
+          line: "根据目前的物理模型，只有无尽的真空和辐射。"
+          source_ref:
+            chapter_id: "ch_02"
+            offset: [1546, 1580]
   knowledge_graph:
-    nodes: ...
-    edges: ...
+    nodes:
+      - id: "char_01", label: "林明", type: "character"
+      - id: "char_02", label: "艾娃", type: "character"
+    edges:
+      - source: "char_01", target: "char_02", relation: "主仆/同伴", weight: 0.8
 ```
 
-设计原则：以场景（Scene）为顶层叙事单位，内部元素顺序严格保持叙事流；每个元素携带原文锚点；角色关系图与场景解耦，便于独立展示。
+### 6.2 战略输出格式：Fountain 示例
 
-### 6.2 任务状态模型（Pydantic）
+```fountain
+Title: 星辰低语
+Author: 原著: XXX / 改编: NovelScript AI
+Draft date: 2026-06-05
+
+INT. 废弃飞船驾驶舱 - 夜晚
+
+控制台上闪烁着微弱的红光。林明疲惫地靠在座椅上，手里把玩着一个旧式怀表。艾娃静静地站在他身后。
+
+林明
+(自嘲地笑)
+你说，宇宙的边缘到底有什么？
+
+艾娃
+(机械音，毫无波澜)
+根据目前的物理模型，只有无尽的真空和辐射。
+```
+
+### 6.3 任务状态模型 (Pydantic V2)
 
 ```python
+from pydantic import BaseModel, Field
+from enum import Enum
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     PREPROCESSING = "preprocessing"
@@ -348,208 +275,175 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
-class Task(BaseModel):
+class TaskResponse(BaseModel):
     id: str
     status: TaskStatus
-    progress: int = 0        # 0-100
-    summary: str | None = None
-    characters: list[dict] | None = None
-    result_yaml: str | None = None
-    result_json: dict | None = None
-    error_message: str | None = None
+    progress: int = Field(ge=0, le=100)
+    summary: Optional[str] = None
+    characters: Optional[List[Dict[str, Any]]] = None
+    script_yaml: Optional[str] = None
+    script_fountain: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
 ```
 
-### 6.3 持久化存储结构（MySQL）
+### 6.4 持久化存储结构 (PostgreSQL DDL 完整版)
 
-**选型说明**：采用 MySQL 8.0，利用其事务支持、行级锁与良好的并发读性，保障多用户同时转换与编辑时数据一致。部署时将 MySQL 作为独立容器，通过 Docker Compose 与 FastAPI 后端协作。
-
-**建表语句概要**：
+利用 `pgvector` 和 `JSONB` 实现 All-in-One 架构。
 
 ```sql
--- 用户任务主表
+-- 启用必要插件
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. 任务主表 (利用 JSONB 存储复杂图谱与剧本结构)
 CREATE TABLE tasks (
-    id VARCHAR(36) PRIMARY KEY COMMENT 'UUID',
-    source_text LONGTEXT NOT NULL COMMENT '原始小说全文',
-    status ENUM('pending','preprocessing','converting','completed','failed') NOT NULL DEFAULT 'pending',
-    summary TEXT COMMENT '预处理摘要',
-    characters_json JSON COMMENT '角色列表',
-    knowledge_graph_json JSON COMMENT '知识图谱',
-    script_yaml LONGTEXT COMMENT '最终剧本YAML',
-    script_json JSON COMMENT '最终剧本JSON',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_status (status),
-    INDEX idx_created (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    source_text TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    progress INT DEFAULT 0,
+    summary TEXT,
+    characters_json JSONB,
+    knowledge_graph JSONB,
+    script_yaml TEXT,
+    script_json JSONB,
+    script_fountain TEXT,
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_tasks_status ON tasks(status);
 
--- 章节表（可选，便于独立引用）
+-- 2. 章节与向量块表 (完美替代 FAISS，支持 RAG 检索)
 CREATE TABLE chapters (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    task_id VARCHAR(36) NOT NULL,
-    chapter_index INT NOT NULL COMMENT '章节序号',
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    chapter_index INT NOT NULL,
     title VARCHAR(255),
-    content LONGTEXT NOT NULL,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    INDEX idx_task_chapter (task_id, chapter_index)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 操作日志表（支持撤销）
-CREATE TABLE operations (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    task_id VARCHAR(36) NOT NULL,
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    type ENUM('manual_edit','ai_patch','rollback') NOT NULL,
-    target VARCHAR(255) COMMENT '修改目标，如scenes[0].elements[1].line',
-    diff_json JSON COMMENT '变更补丁',
-    previous_json JSON COMMENT '修改前片段快照',
-    applied TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否已应用',
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    INDEX idx_task_ops (task_id, timestamp)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- AI 对话记录表
-CREATE TABLE dialogues (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    task_id VARCHAR(36) NOT NULL,
-    role ENUM('user','assistant') NOT NULL,
     content TEXT NOT NULL,
-    patch_json JSON COMMENT '若消息包含补丁则记录',
-    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    INDEX idx_task_dialog (task_id, timestamp)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    -- 核心：存储文本的向量表示，用于长文本记忆网络
+    embedding vector(1536),
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- 创建 HNSW 索引加速余弦相似度检索 (KNN)
+CREATE INDEX ON chapters USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX idx_chapters_task ON chapters(task_id, chapter_index);
+
+-- 3. 操作日志表 (支持 JSONB 差异对比与 Undo 链)
+CREATE TABLE operations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL, -- 'manual_edit', 'ai_patch', 'rollback'
+    target_path TEXT,          -- 例如 'scenes[0].elements[1].line'
+    diff_json JSONB,           -- 记录补丁
+    previous_snapshot JSONB,   -- 修改前的 JSONB 快照
+    applied BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_ops_task_time ON operations(task_id, created_at DESC);
+
+-- 4. AI 对话记录表
+CREATE TABLE dialogues (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL, -- 'user', 'assistant'
+    content TEXT NOT NULL,
+    patch_json JSONB,          -- 若消息包含补丁则记录
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_dialog_task_time ON dialogues(task_id, created_at);
 ```
-
-**关键设计点**：
-
-- 使用 **JSON 字段** 存储非结构化元数据，避免频繁 ALTER TABLE，且便于直接用 MySQL 的 JSON 函数查询补丁内容或角色关系。
-- 外键级联删除，保证数据一致性，清理任务时自动移除关联章节、日志与对话。
-- `operations.previous_json` 保存修改前片段，支持可靠的撤销链（前端可限制最多回滚 5 步，后端保留完整历史）。
-- 生产环境建议为 `tasks.script_yaml` 等大字段开启压缩或使用外部对象存储，但 72 小时项目直接存库即可。
 
 ## 7. 接口需求
 
-### 7.1 RESTful API
-
-**7.1.1 上传小说**
+### 7.1 RESTful API 核心端点
 
 - `POST /api/novel/upload`
-- Body: `{ "content": "文本内容..." }` 或 Form-Data `file`
-- Response: `{ "task_id": "uuid", "chapters": ["第1章 开始", ...] }`
+    - **Body**: `multipart/form-data` (file) 或 `application/json` (content)
+    - **Response**: `{ "task_id": "uuid", "chapters": [{"index": 1, "title": "第一章"}] }`
+- `POST /api/novel/preprocess/{task_id}`
+    - **Body**: `{ "chapter_boundaries": [...] }` (可选)
+    - **Response**: `{ "status": "preprocessing" }`
+- `GET /api/novel/status/{task_id}` (支持 SSE 流式返回进度)
+    - **Response**: `TaskResponse` 模型
+- `POST /api/novel/convert/{task_id}`
+    - **Response**: `{ "status": "converting" }`
+- `POST /api/novel/resume/{task_id}`
+    - **Description**: 断点续传。转换过程中若遇网络波动或 LLM 调用失败，从上次成功的 Chunk 处恢复，避免全盘重跑。
+    - **Response**: `{ "status": "converting", "resumed_from_chunk": 3 }`
+- `GET /api/novel/export/{task_id}?format=fountain`
+    - **Response**: 文件流 (`.fountain` 或 `.yaml`)
 
-**7.1.2 启动预处理**
-
-- `POST /api/novel/preprocess`
-- Body: `{ "task_id": "uuid", "chapter_boundaries": [...] }`（可选，用于自定义切分）
-- Response: `{ "task_id": "uuid", "status": "preprocessing" }`
-
-**7.1.3 查询任务状态**
-
-- `GET /api/novel/status/{task_id}`
-- Response: `Task` 模型
-
-**7.1.4 获取转换结果**
-
-- `GET /api/novel/result/{task_id}`
-- Response: 完整的 script JSON 结构
-
-**7.1.5 抓取网页（可选）**
-
-- `POST /api/novel/fetch`
-- Body: `{ "url": "https://..." }`
-- Response: `{ "content": "抓取到的文本..." }`
-
-### 7.2 外部接口
-
-- Deepseek API：`https://api.deepseek.com` 或 OpenAI 兼容接口，使用 `deepseek-v4-flash` 和 `deepseek-v4-pro` 模型。
-
-### 7.3 AI 编辑对话接口
-
-**7.3.1 发送对话消息**
+### 7.2 AI 编辑与对话接口
 
 - `POST /api/editor/chat/{task_id}`
-- Body: `{ "message": "把第2场的地点改为图书馆", "context": { "scene_id": 2 } }`
-- Response (SSE 或一次性):
-    ```json
-    {
-        "reply": "好的，我已将第2场地点改为图书馆...",
-        "patch": {
-            "target": "scenes[1].location",
-            "old_value": "咖啡馆",
-            "new_value": "图书馆"
-        }
-    }
-    ```
-
-**7.3.2 应用补丁**
-
+    - **Body**: `{ "message": "把第2场的地点改为图书馆", "scene_id": "S002" }`
+    - **Response**: `{ "reply": "好的...", "patch": { "op": "replace", "path": "/scenes/1/location", "value": "图书馆" } }`
 - `POST /api/editor/apply_patch/{task_id}`
-- Body: `{ "patch": { ... } }`
-- Response: `{ "success": true, "updated_script": { ... } }`
-
-**7.3.3 撤销操作**
-
+    - **Body**: `{ "patch": {...} }`
+    - **Response**: `{ "success": true, "updated_yaml": "..." }`
 - `POST /api/editor/undo/{task_id}`
-- Response: 回滚后的完整剧本
+    - **Response**: 回滚后的完整剧本数据。
 
-**7.3.4 获取操作历史**
+## 8. 项目计划（72 小时极限排期）
 
-- `GET /api/editor/history/{task_id}`
-- Response: `{ "operations": [...] }`
+| 阶段                  | 时间分配 | 核心任务                                                                                                                                              | 交付产出                                           |
+| :-------------------- | :------- | :---------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------- |
+| **D0: 基建与骨架**    | 0-8h     | 1. 搭建 React+Vite 与 FastAPI 脚手架。<br>2. 编写 PostgreSQL DDL 与 Docker Compose。<br>3. 实现文本上传、正则切分与 DB 持久化。                       | 跑通上传接口，数据库成功落库，前端可展示章节列表。 |
+| **D1: 核心引擎**      | 8-20h    | 1. 实现 LangChain 预处理链（摘要/图谱）。<br>2. 实现 `pgvector` 向量化入库。<br>3. 编写并发转换引擎与 Pydantic 强校验/重试机制。                      | 后端能稳定输出 3 章样本的合法 YAML/JSON，无崩溃。  |
+| **D2: 前端与交互**    | 20-44h   | 1. 搭建三栏布局（TipTap/Monaco/预览）。<br>2. 实现 `source_ref` 双向溯源高亮联动。<br>3. 集成 ReactFlow 渲染知识图谱。<br>4. 实现 Fountain 导出逻辑。 | 完整可交互的 Web 工作台，支持导出 `.fountain`。    |
+| **D3: AI 编辑与打磨** | 44-60h   | 1. 实现 AI 对话面板与 Patch 生成逻辑。<br>2. 实现 Undo/Redo 操作日志链。<br>3. 全局异常捕获与 UI 错误提示优化。                                       | AI 辅助编辑功能可用，系统具备极高鲁棒性。          |
+| **D4: 交付与路演**    | 60-72h   | 1. 撰写 YAML Schema 设计白皮书。<br>2. 录制 3 分钟高质量 Demo 视频。<br>3. 部署至云服务器，配置 Nginx 与域名。                                        | 公网可访问的 Demo 链接、完整源码、路演 PPT。       |
 
-## 8. 项目计划（72 小时）
+**风险缓释策略**：
 
-| 时间段        | 任务                                                                                              | 产出                            |
-| ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------- |
-| **D0（8h）**  | 项目初始化，前后端骨架，小说上传/章节切分，预处理 API 调通                                        | 能粘贴文本并返回摘要和角色列表  |
-| **D1（12h）** | 知识图谱构建，场景切分与转换引擎 Prompt 调试，并发调用，YAML 生成                                 | 端到端生成 3 章样本的 YAML 剧本 |
-| **D2（12h）** | 前端剧本预览组件，原文跳转，知识图谱面板，导出功能，AI 对话面板 UI，对接聊天接口，UI 打磨         | 完整可交互的 Web 应用原型       |
-| **D3（8h）**  | 编写 Schema 设计文档，Docker 部署，异常处理，录制演示视频，调试对话上下文注入准确性，编写测试用例 | 上线演示、提交材料              |
-
-风险缓释：D0 晚若预处理失败，回退为简单章节正则切分；D1 若 JSON 解析不稳定，增加正则兜底；D2 可用简化版布局确保可演示。
+- 若 `pgvector` 环境配置受阻，D1 立即降级为内存级 `FAISS` + `JSON` 文件存储，保核心业务。
+- 若 AI 对话 Patch 生成不稳定，D3 降级为“仅提供修改建议文本，由用户手动在中栏修改 YAML”。
 
 ## 9. 测试方案
 
 ### 9.1 测试目标
 
-验证小说→剧本转换的正确性、AI 编辑功能的可用性、数据持久化完整性。
+验证长文本转换的连贯性、All-in-One 数据库的读写性能、AI 补丁应用的准确性及前端溯源交互的流畅度。
 
-### 9.2 功能测试用例
+### 9.2 核心测试用例 (Test Cases)
 
-| 编号  | 场景          | 操作                                                             | 预期结果                                                  |
-| ----- | ------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
-| TC-01 | 标准小说输入  | 粘贴包含3章的中文小说，点击转换                                  | 返回合理 YAML，场景数≥1，角色提取正确，包含 source_ref    |
-| TC-02 | 章节自动识别  | 输入以“第X章”分割的文本                                          | 前端展示正确的章节列表，可手动调整                        |
-| TC-03 | 英文小说处理  | 输入英文小说                                                     | 同样输出结构化剧本，语言为英文                            |
-| TC-04 | 超长文本分片  | 提交单章 12000 字                                                | 系统自动分片处理，无报错，场景连贯                        |
-| TC-05 | 知识图谱构建  | 预处理完成                                                       | 返回角色节点与关系边，前端可渲染                          |
-| TC-06 | 原文跳转      | 点击某句对白的 source_ref                                        | 左侧原文滚动到对应段落并高亮                              |
-| TC-07 | AI 对话与补丁 | 在剧本界面询问“为什么这里冲突这么弱”，然后请求“增加一句冲突对白” | AI 给出合理解释，并生成修改补丁，应用后剧本更新、预览刷新 |
-| TC-08 | 撤销修改      | 应用补丁后点击撤销                                               | 剧本回退至上个状态，操作历史正确记录                      |
-| TC-09 | 异常输入      | 粘贴无章节散文、空文本、纯数字                                   | 系统提示“请提供有效小说文本”，不崩溃                      |
-| TC-10 | JSON 格式修复 | 模拟 LLM 返回缺少括号的 JSON                                     | 系统自动重试或正则修复，仍失败则返回部分结果并提示        |
+| 编号      | 场景          | 操作步骤                                                  | 预期结果                                                                                  |
+| :-------- | :------------ | :-------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
+| **TC-01** | 标准转换链路  | 上传《永恒至尊》前 4 章（约 1.5 万字），点击转换。       | 90秒内完成，生成合法 YAML，包含完整 Scene 与 Element，`source_ref` 准确。                 |
+| **TC-02** | 格式强校验    | 模拟 LLM 返回缺少引号的非法 JSON。                        | 后端捕获 `ValidationError`，自动触发重试修复，最终返回合法数据，日志记录修复过程。        |
+| **TC-03** | RAG 记忆检索  | 在第 4 章转换时，查询 `pgvector` 日志。                   | 系统成功检索到第 1 章的角色设定作为 Context 注入，角色性格未发生 OOC（崩塌）。            |
+| **TC-04** | 双向溯源      | 在右栏点击某句对白，观察左栏。                            | 左栏原文自动平滑滚动至对应段落，并添加黄色高亮背景。                                      |
+| **TC-05** | AI 补丁应用   | 在对话框输入“将第 1 场的地点改为赛博朋克酒吧”，点击应用。 | 后端生成 JSON Patch，更新 DB 中的 `script_json`，前端 YAML 与预览区同步刷新。             |
+| **TC-06** | 撤销链 (Undo) | 连续应用 2 次 AI 补丁，点击“撤销”。                       | 剧本状态精准回退至上一版本，`operations` 表正确记录 `rollback` 类型日志。                 |
+| **TC-07** | Fountain 导出 | 点击“导出 Fountain”，用记事本打开。                       | 格式符合 Fountain 语法规范（如 `INT. 地点 - 时间`，角色名大写居中），可被第三方工具解析。 |
+| **TC-08** | 异常输入防御  | 上传纯数字或空白文本。                                    | 前端拦截或后端返回 400 错误码及友好提示，服务不崩溃。                                     |
 
-### 9.3 测试环境与方法
+### 9.3 测试环境
 
-- 使用固定的样本小说作为测试输入（中/英文各一篇），保证可重复。
-- 自动化测试脚本（pytest）覆盖 API 输入输出校验，前端 E2E 测试可使用简版手动执行。
-- 在提交前必须通过所有核心用例（TC-01~08）。
+- **样本数据**：使用网络小说《永恒至尊》（剑游太虚 著，前4章，约1.5万字）作为基准测试集，存储于 `.temp/novel_samples/`。
+- **自动化**：使用 `pytest` 覆盖后端 API 与 Pydantic 校验逻辑；前端核心交互采用手动 E2E 验收。
 
 ## 10. 附录
 
-### 10.1 模型使用策略
+### 10.1 模型路由与成本控制策略
 
-- **DeepSeek-v4-pro**：用于剧本转换（高难度生成，需强一致性），预处理中的角色关系抽取。
-- **DeepSeek-v4-flash**：用于对话交流、轻量内容摘要、章节切分、简单补丁生成。
-- 成本控制：单次转换按 2 万字估算，pro 模型输入约 15K tokens，输出约 5K tokens，成本约 ￥0.05/次；flash 成本极低。预算可支持数千次完整转换与大量对话，足够比赛演示与测试。
+- **DeepSeek-v4-pro**：仅用于“全局知识图谱抽取”与“核心场景转换”。预估单次完整转换消耗约 20K Tokens，成本约 ￥0.08。
+- **DeepSeek-v4-flash**：用于“章节切分”、“AI 对话”、“轻量补丁生成”。预估单次对话消耗约 2K Tokens，成本极低。
+- **预算评估**：￥1400 预算足以支撑约 10,000 次完整转换与海量对话测试，完全满足 72 小时开发、调试与路演需求。
 
-### 10.2 用户界面原型（文字描述）
+### 10.2 用户界面原型 (文字描述)
 
-- 三栏布局：左-小说原文（可编辑），中-剧本预览（带高亮与操作按钮），右-知识图谱 + AI 对话切换面板。
-- 底部浮动按钮：转换进度条、导出菜单。
+- **顶栏**：Logo (NovelScript), 任务状态指示灯, 导出下拉菜单 (YAML/JSON/Fountain)。
+- **左栏 (30%)**：TipTap 原文阅读器，支持段落折叠与高亮。
+- **中栏 (40%)**：Monaco Editor，支持 YAML 语法高亮、折叠、错误波浪线提示。
+- **右栏 (30%)**：Tab 切换面板。Tab 1: 剧本可视化排版；Tab 2: ReactFlow 知识图谱；Tab 3: AI 对话与 Patch 历史。
+- **底栏**：全局进度条与系统日志滚动窗口。
 
-### 10.3 参考标准
+### 10.3 参考标准与文献
 
-- **Final Draft**：行业剧本写作软件，格式为 .fdx（XML）。
-- **Fountain**：纯文本剧本标记语言，简单易读。
-- 本项目 YAML Schema 综合考虑了以上标准的字段映射与可读性。
+1.  **Fountain Syntax**: 纯文本剧本标记语言官方规范。
+2.  **Final Draft (.fdx)**: 影视工业标准 XML 结构参考。
+3.  **pgvector Documentation**: PostgreSQL 向量检索插件官方文档。
+4.  **《从文本到影像蓝图：NovelScript 项目可行性深度评估》**: 内部战略指导文档。
