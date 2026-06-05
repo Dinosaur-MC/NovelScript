@@ -49,12 +49,21 @@ async def create_pool(dsn: str, **kwargs) -> asyncpg.Pool:
 
 
 async def close_pool() -> None:
-    """Gracefully close the global asyncpg pool."""
+    """Gracefully close the global asyncpg pool.
+
+    Catches exceptions from pools whose event loop has already been
+    torn down (happens on Windows when tests switch event loops between
+    modules).
+    """
     global _pool
     if _pool is not None:
         logger.info("Closing asyncpg connection pool …")
-        await _pool.close()
-        _pool = None
+        try:
+            await _pool.close()
+        except Exception:
+            logger.debug("Pool close raised (likely stale event loop) — discarding.")
+        finally:
+            _pool = None
         logger.info("asyncpg pool closed.")
 
 
