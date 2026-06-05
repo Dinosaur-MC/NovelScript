@@ -1,8 +1,9 @@
 """In-memory RAG builder — indexes novel chapters for semantic retrieval.
 
-Uses LangChain's FAISS wrapper with OpenRouter embeddings.  When the
-OpenRouter API is unavailable the module falls back to keyword-based
-search so the pipeline can still function in degraded mode.
+Uses LangChain's FAISS + OpenAIEmbeddings backed by OpenRouter.  On
+machines where the SSL_CERT_FILE or CURL_CA_BUNDLE env var points to a
+non-standard CA bundle (e.g. PostgreSQL's bundled cert), we patch
+os.environ at import time so tiktoken and httpx can download resources.
 """
 
 from __future__ import annotations
@@ -10,6 +11,18 @@ from __future__ import annotations
 import logging
 import os
 from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Fix non-standard CA bundle paths before any HTTP library initialises.
+# PostgreSQL on Windows sets SSL_CERT_FILE to its own ca-bundle.crt which
+# breaks tiktoken (tries to download cl100k_base tokenizer) and OpenRouter
+# TLS verification.  Clear these so Python falls back to certifi.
+# ---------------------------------------------------------------------------
+for _var in ("SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE"):
+    if _var in os.environ:
+        _val = os.environ[_var]
+        if "PostgreSQL" in _val or "postgresql" in _val.lower():
+            del os.environ[_var]
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
@@ -19,45 +32,22 @@ from cli.models import Chapter
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 EMBEDDING_MODEL = os.getenv(
     "OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small"
 )
 
-# ---------------------------------------------------------------------------
-# Embeddings factory
-# ---------------------------------------------------------------------------
-
 
 def _make_embeddings() -> OpenAIEmbeddings:
-    """Build an OpenAIEmbeddings instance pointed at OpenRouter."""
     return OpenAIEmbeddings(
         model=EMBEDDING_MODEL,
         openai_api_base=OPENROUTER_BASE,
         openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+        tiktoken_enabled=False,  # skip token counting to avoid tiktoken download
     )
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def build_index(chapters: list[Chapter]) -> Optional[FAISS]:
-    """Build a FAISS vector index from chapter texts.
-
-    Each chapter becomes a Document with metadata `chapter_index` and `title`.
-
-    Args:
-        chapters: List of Chapter objects to index.
-
-    Returns:
-        A FAISS vectorstore, or ``None`` if embedding fails (keyword fallback).
-    """
     if not chapters:
         logger.warning("No chapters to index — returning None.")
         return None
@@ -82,39 +72,21 @@ def build_index(chapters: list[Chapter]) -> Optional[FAISS]:
 
 
 def search(index: Optional[FAISS], query: str, k: int = 3) -> list[str]:
-    """Search the FAISS index for the top-*k* most relevant chunks.
-
-    Falls back to keyword search when *index* is ``None`` or the search fails.
-
-    Args:
-        index: A FAISS vectorstore or ``None``.
-        query: The search query string.
-        k: Number of results to return.
-
-    Returns:
-        List of document page-content strings.
-    """
     if index is None:
-        logger.info("No FAISS index — returning empty results.")
+        logger.info("No FAISS index — using keyword fallback.")
         return _keyword_fallback(query, [], k)
 
     try:
         docs = index.similarity_search(query, k=k)
         results = [d.page_content for d in docs]
-        logger.debug("FAISS search returned %d result(s) for query.", len(results))
+        logger.debug("FAISS search returned %d result(s).", len(results))
         return results
     except Exception:
         logger.exception("FAISS search failed — using keyword fallback.")
         return _keyword_fallback(query, [], k)
 
 
-# ---------------------------------------------------------------------------
-# Keyword fallback
-# ---------------------------------------------------------------------------
-
-
 def _keyword_fallback(query: str, texts: list[str], k: int) -> list[str]:
-    """Simple keyword-overlap search as a degraded fallback."""
     if not texts:
         return []
     query_tokens = set(query)

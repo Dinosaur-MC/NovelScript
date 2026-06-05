@@ -28,14 +28,13 @@ class TestBuildIndex:
 
     def test_no_api_key_returns_none_gracefully(self) -> None:
         chapters = [Chapter(text="测试", title="第一章", index=0)]
-        with patch.dict(os.environ, {"OPENROUTER_API_KEY": ""}):
-            with patch("cli.rag_builder.OpenAIEmbeddings") as mock_emb:
-                mock_emb.return_value = MagicMock()
-                # Embeddings creation succeeds but FAISS may fail
-                with patch("cli.rag_builder.FAISS") as mock_faiss:
-                    mock_faiss.from_documents.side_effect = Exception("no key")
-                    result = build_index(chapters)
-                    assert result is None
+        with patch("cli.rag_builder._make_embeddings") as mock_make:
+            mock_emb = MagicMock()
+            mock_make.return_value = mock_emb
+            with patch("cli.rag_builder.FAISS") as mock_faiss:
+                mock_faiss.from_documents.side_effect = Exception("embedding failed")
+                result = build_index(chapters)
+                assert result is None
 
 
 # ===========================================================================

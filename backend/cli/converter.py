@@ -231,22 +231,44 @@ def _parse_and_validate(raw_json: str, chapter_index: int) -> list[Scene]:
 def _inject_source_refs(scenes: list[Scene], chapter: Chapter) -> list[Scene]:
     """Add source_ref to each Element based on approximate text offsets.
 
-    Uses coarse substring matching to find the element's content in the
-    chapter text and record its span.
+    Strategy (in order):
+    1. Exact substring match → precise byte [start, end]
+    2. First-10-chars prefix match → approximate byte span
+    3. Chapter-level fallback → {chapter_index, element_index} with
+       estimated position (element_index/N * chapter_length)
     """
+    chapter_len = len(chapter.text)
+    total_elements = sum(len(s.elements) for s in scenes)
+    elem_seq = 0  # sequential counter across all scenes
+
     for scene in scenes:
         for elem in scene.elements:
             if elem.source_ref is not None:
+                elem_seq += 1
                 continue
+
             pos = chapter.text.find(elem.content)
+
+            if pos == -1:
+                # Try prefix match (first 10 chars)
+                prefix = elem.content[:10] if len(elem.content) >= 10 else elem.content
+                pos = chapter.text.find(prefix)
+
             if pos != -1:
-                elem.source_ref = {
-                    "chapter_id": f"ch_{chapter.index:02d}",
-                    "offset": [pos, pos + len(elem.content)],
-                }
+                # Found — precise or approximate span
+                offset_start = pos
+                offset_end = pos + len(elem.content)
             else:
-                elem.source_ref = {
-                    "chapter_id": f"ch_{chapter.index:02d}",
-                    "offset": None,
-                }
+                # Chapter-level fallback: estimate position within the chapter
+                ratio = elem_seq / max(total_elements, 1)
+                offset_start = int(chapter_len * ratio)
+                offset_end = offset_start + len(elem.content)
+
+            elem.source_ref = {
+                "chapter_id": f"ch_{chapter.index:02d}",
+                "offset": [offset_start, offset_end],
+                "confidence": "exact" if pos != -1 else "estimated",
+            }
+            elem_seq += 1
+
     return scenes

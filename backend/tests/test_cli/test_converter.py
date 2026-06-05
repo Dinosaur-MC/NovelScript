@@ -153,7 +153,7 @@ class TestInjectSourceRefs:
         assert elem.source_ref["chapter_id"] == "ch_00"
         assert elem.source_ref["offset"][0] >= 0
 
-    def test_content_not_found_gets_none_offset(self, sample_chapter: Chapter) -> None:
+    def test_content_not_found_gets_estimated_offset(self, sample_chapter: Chapter) -> None:
         scene = Scene(
             scene_id="s_000",
             heading="内. 大殿 - 日",
@@ -166,7 +166,10 @@ class TestInjectSourceRefs:
         elem = scenes[0].elements[0]
         assert elem.source_ref is not None
         assert elem.source_ref["chapter_id"] == "ch_00"
-        assert elem.source_ref["offset"] is None
+        # Even unmatched content gets estimated offset (never None)
+        assert isinstance(elem.source_ref["offset"], list)
+        assert elem.source_ref["offset"][0] >= 0
+        assert elem.source_ref["confidence"] == "estimated"
 
     def test_preserves_existing_source_ref(self) -> None:
         ch = Chapter(text="any", title="T", index=1)
