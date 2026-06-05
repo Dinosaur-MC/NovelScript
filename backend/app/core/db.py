@@ -112,9 +112,23 @@ async def init_db() -> None:
     logger.info("DDL executed.")
 
     # -- 3. SQLModel tables --------------------------------------------- #
-    # Dispose any stale engine pool (may have been created in a different
-    # event loop on Windows — this is safe: it recreates fresh connections).
+    global _engine, _async_session_factory
+
+    # When running across multiple test modules on Windows, the event loop
+    # changes.  Dispose the old engine pool and recreate it with fresh
+    # connections bound to the current event loop.
     await _engine.dispose()
+    _engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_size=5,
+        max_overflow=10,
+    )
+    _async_session_factory = sessionmaker(
+        _engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
     # IMPORTANT: import all sql.py models so SQLModel.metadata knows about
     # them before create_all is called.
