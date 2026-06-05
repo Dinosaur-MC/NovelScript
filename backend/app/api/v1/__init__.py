@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.editor import router as editor_router
-from app.api.v1.novel import router as novel_router
+from app.api.v1.novels import router as novel_router
 from app.api.v1.scripts import router as scripts_router
 from app.api.v1.tasks import router as tasks_router
 
