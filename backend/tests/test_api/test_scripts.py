@@ -112,11 +112,11 @@ def test_list_scripts(client, db_engine):
     assert body["code"] == 0
     assert body["data"]["total"] >= 1
     items = body["data"]["items"]
-    task_ids = [i["task_id"] for i in items]
-    assert str(tid) in task_ids
+    script_ids = [i["script_id"] for i in items]
+    assert str(tid) in script_ids
 
     # Verify scene_count for our task
-    our = next(i for i in items if i["task_id"] == str(tid))
+    our = next(i for i in items if i["script_id"] == str(tid))
     assert our["scene_count"] == 3
 
     # Filter by novel_id
@@ -163,7 +163,7 @@ def test_get_script(client, db_engine):
     body = resp.json()
     assert body["code"] == 0
     data = body["data"]
-    assert data["task_id"] == str(tid)
+    assert data["script_id"] == str(tid)
     assert data["novel_id"] == str(nid)
     assert data["status"] == "completed"
     assert data["script_yaml"] == "scenes:\n  - id: 1\n    heading: Opening"
