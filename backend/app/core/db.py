@@ -77,17 +77,39 @@ async def init_db() -> None:
     # -- 1. asyncpg pool ------------------------------------------------ #
     await create_pool(settings.DATABASE_URL)
 
-    # -- 2. Raw DDL (extensions, indexes, constraints) ------------------ #
-    sql_path = Path(__file__).resolve().parent.parent / "db" / "init.sql"
-    init_sql = sql_path.read_text(encoding="utf-8")
-
+    # -- 2. Raw DDL (extensions first, then tables/indexes) -------------- #
     pool = await _get_asyncpg_pool()
     if pool is None:
         raise RuntimeError("asyncpg pool was not created — check DATABASE_URL.")
-    async with pool.acquire() as conn:
-        await conn.execute(init_sql)
 
-    logger.info("init.sql executed successfully.")
+    async with pool.acquire() as conn:
+        # Extensions — CREATE EXTENSION requires superuser; if already
+        # installed by a superuser, the error is harmless.
+        for ext in ("uuid-ossp", "vector", "pg_trgm"):
+            try:
+                await conn.execute(
+                    f'CREATE EXTENSION IF NOT EXISTS "{ext}"'
+                )
+            except asyncpg.exceptions.InsufficientPrivilegeError:
+                logger.warning(
+                    "Cannot create extension %s (insufficient privileges). "
+                    "If it is already installed by a superuser, this is safe.",
+                    ext,
+                )
+
+        # Tables, indexes, CHECK constraints (the bulk of init.sql).
+        # Lines starting with CREATE EXTENSION are skipped — those are
+        # handled above with a privilege guard.
+        sql_path = Path(__file__).resolve().parent.parent / "db" / "init.sql"
+        raw_sql = sql_path.read_text(encoding="utf-8")
+        skip_extensions_sql = "\n".join(
+            line
+            for line in raw_sql.splitlines()
+            if not line.strip().startswith("CREATE EXTENSION")
+        )
+        await conn.execute(skip_extensions_sql)
+
+    logger.info("DDL executed.")
 
     # -- 3. SQLModel tables --------------------------------------------- #
     # IMPORTANT: import all sql.py models so SQLModel.metadata knows about
