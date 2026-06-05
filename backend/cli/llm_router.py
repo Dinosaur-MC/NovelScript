@@ -29,6 +29,7 @@ MODEL_ROUTING: dict[str, str] = {
     "scene_conversion": "deepseek-v4-flash",
     "consistency_check": "deepseek-v4-pro",
     "chapter_split": "deepseek-v4-flash",
+    "ai_chat": "deepseek-v4-flash",
 }
 
 # ---------------------------------------------------------------------------
