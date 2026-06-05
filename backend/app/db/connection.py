@@ -35,8 +35,11 @@ async def create_pool(dsn: str, **kwargs) -> asyncpg.Pool:
         await close_pool()
 
     logger.info("Creating asyncpg connection pool …")
+    # SQLAlchemy DSNs use postgresql+asyncpg:// — strip the +asyncpg driver
+    # prefix so asyncpg gets a plain postgresql:// URL.
+    asyncpg_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://")
     _pool = await asyncpg.create_pool(
-        dsn,
+        asyncpg_dsn,
         min_size=kwargs.pop("min_size", 2),
         max_size=kwargs.pop("max_size", 10),
         **kwargs,
