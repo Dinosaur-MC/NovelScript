@@ -22,9 +22,21 @@ dependencies = [
     "beautifulsoup4>=4.13.0",
     "python-multipart>=0.0.20",
     "sse-starlette>=2.2.0",
+    # Pipeline CLI (Agent A)
     "faiss-cpu>=1.14.2",
     "langchain-openai>=1.2.2",
     "langchain-community>=0.4.2",
     "openai>=2.41.0",
     "pyyaml>=6.0.3",
+    # Database Foundation (Agent B)
+    "pydantic-settings>=2.14.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
