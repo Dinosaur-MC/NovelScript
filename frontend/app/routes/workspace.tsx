@@ -41,6 +41,8 @@ export default function Workspace() {
   const centerW = useUIStore((s) => s.centerWidth);
   const rightW = useUIStore((s) => s.rightWidth);
   const setPanelWidths = useUIStore((s) => s.setPanelWidths);
+  const readerCollapsed = useUIStore((s) => s.readerCollapsed);
+  const setReaderCollapsed = useUIStore((s) => s.setReaderCollapsed);
 
   // Hooks — always called, safe with empty stores
   const autoSave = useAutoSave();
@@ -169,6 +171,40 @@ export default function Workspace() {
             <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
               加载中...
             </span>
+          </div>
+        ) : readerCollapsed ? (
+          <div style={{ display: "flex", height: "100%" }}>
+            <div
+              onClick={() => setReaderCollapsed(false)}
+              title="展开小说原文"
+              style={{
+                width: 28,
+                height: "100%",
+                flexShrink: 0,
+                cursor: "pointer",
+                userSelect: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "var(--color-bg-surface)",
+                borderRight: "1px solid var(--color-border-subtle)",
+                writingMode: "vertical-rl",
+                fontSize: 12,
+                color: "var(--color-text-muted)",
+                letterSpacing: 4,
+              }}
+            >
+              小说原文
+            </div>
+            <Splitter
+              direction="horizontal"
+              initialLeftPercent={65}
+              minLeftPx={360}
+              minRightPx={280}
+            >
+              <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
+              <RightPanel traceHook={traceHook} editorHook={editorHook} />
+            </Splitter>
           </div>
         ) : (
           <Splitter

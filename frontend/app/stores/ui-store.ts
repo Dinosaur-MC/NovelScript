@@ -34,6 +34,7 @@ export const useUIStore = create<UIState>((set) => ({
   centerWidth: defaults.c,
   rightWidth: defaults.r,
   activeTab: "preview",
+  readerCollapsed: false,
 
   setPanelWidths: (l, c, r) => {
     if (typeof window !== "undefined") {
@@ -43,4 +44,5 @@ export const useUIStore = create<UIState>((set) => ({
   },
 
   setActiveTab: (tab) => set({ activeTab: tab }),
+  setReaderCollapsed: (v) => set({ readerCollapsed: v }),
 }));

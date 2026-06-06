@@ -1,9 +1,11 @@
 import { useCallback, useMemo, useEffect } from "react";
-import { Select } from "antd";
+import { Button, Select } from "antd";
+import { MenuFoldOutlined } from "@ant-design/icons";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useNovelStore } from "../../stores/novel-store";
+import { useUIStore } from "../../stores/ui-store";
 import type { useNovelReader } from "../../hooks/useNovelReader";
 import type { useTraceLinking } from "../../hooks/useTraceLinking";
 
@@ -69,6 +71,9 @@ export function NovelReader({ readerHook, traceHook }: Props) {
           padding: "8px 12px",
           borderBottom: "1px solid var(--color-border-subtle)",
           flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
         <Select
@@ -79,8 +84,15 @@ export function NovelReader({ readerHook, traceHook }: Props) {
             value: String(ch.index),
             label: `第${ch.index}章 ${ch.title || ""}`,
           }))}
-          style={{ width: "100%" }}
+          style={{ flex: 1 }}
           placeholder="选择章节"
+        />
+        <Button
+          type="text"
+          size="small"
+          icon={<MenuFoldOutlined />}
+          onClick={() => useUIStore.getState().setReaderCollapsed(true)}
+          title="折叠"
         />
       </div>
 

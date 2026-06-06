@@ -104,14 +104,3 @@ html, body, #root {
 .ant-notification .ant-notification-notice-message { color: var(--color-text-primary) !important; }
 .ant-notification .ant-notification-notice-close   { color: var(--color-text-secondary) !important; }
 
-/* ---- Collapsed reader panel ---- */
-.ns-reader-collapsed {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  padding: 12px 4px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  letter-spacing: 4px;
-}
