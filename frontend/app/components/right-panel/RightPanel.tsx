@@ -23,7 +23,7 @@ export function RightPanel({ traceHook, editorHook }: Props) {
   const setActiveTab = useUIStore((s) => s.setActiveTab);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", paddingLeft: 8, paddingRight: 8 }}>
       <Tabs
         activeKey={activeTab}
         onChange={(key) => setActiveTab(key as RightTab)}
@@ -38,6 +38,7 @@ export function RightPanel({ traceHook, editorHook }: Props) {
         }))}
         size="small"
         style={{ marginBottom: 0 }}
+        tabBarStyle={{ paddingLeft: 8 }}
       />
       <div style={{ flex: 1, overflow: "hidden" }}>
         <div style={{ display: activeTab === "preview" ? "block" : "none", height: "100%" }}>

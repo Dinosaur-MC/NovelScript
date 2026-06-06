@@ -45,6 +45,7 @@ export function HomePage() {
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
+  const [uploadTitle, setUploadTitle] = useState("");
   const [uploading, setUploading] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -107,11 +108,12 @@ export function HomePage() {
     if (!pasteText.trim()) return;
     setUploading(true);
     try {
-      const upRes = await uploadNovel(pasteText.trim());
+      const upRes = await uploadNovel(pasteText.trim(), uploadTitle || undefined);
       const taskRes = await createTask(upRes.novel_id);
       message.success("上传成功！");
       setUploadOpen(false);
       setPasteText("");
+      setUploadTitle("");
       navigate(`/workspace/${taskRes.task_id}`);
     } catch {
       message.error("上传失败");
@@ -123,10 +125,11 @@ export function HomePage() {
   const handleFileUpload = async (file: File) => {
     setUploading(true);
     try {
-      const upRes = await uploadNovelFile(file);
+      const upRes = await uploadNovelFile(file, uploadTitle || undefined);
       const taskRes = await createTask(upRes.novel_id);
       message.success("上传成功！");
       setUploadOpen(false);
+      setUploadTitle("");
       navigate(`/workspace/${taskRes.task_id}`);
     } catch {
       message.error("上传失败");
@@ -206,7 +209,8 @@ export function HomePage() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100vh",
+        overflowY: "auto",
         backgroundColor: "var(--color-bg-canvas)",
         color: "var(--color-text-primary)",
         padding: 32,
@@ -467,10 +471,20 @@ export function HomePage() {
       <Modal
         title="上传小说"
         open={uploadOpen}
-        onCancel={() => setUploadOpen(false)}
+        onCancel={() => { setUploadOpen(false); setUploadTitle(""); }}
         footer={null}
         destroyOnHidden
       >
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+            小说标题（选填，留空则自动从正文提取）
+          </label>
+          <Input
+            value={uploadTitle}
+            onChange={(e) => setUploadTitle(e.target.value)}
+            placeholder="例如：红楼梦"
+          />
+        </div>
         <div style={{ marginBottom: 16 }}>
           <Input.TextArea
             rows={8}
