@@ -48,10 +48,12 @@ interface GraphData {
 }
 
 /**
- * Build graph nodes and edges from character & scene data.
+ * Build graph nodes and edges from character/item/location data and scenes.
  * - Character nodes: circle layout (inner ring)
+ * - Item / organization / event / concept nodes: middle ring (diamond shape)
  * - Location nodes: circle layout (outer ring), from scene headings
  * - Edges: character ↔ location when character appears in a scene
+ *   Edge stroke width scales with appearance count across scenes.
  * Positions are fully deterministic (index-based) to avoid SSR mismatches.
  */
 function buildGraph(
@@ -61,12 +63,23 @@ function buildGraph(
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // ── Character nodes (inner ring) ─────────────────────────────────
-  const chCount = characters.length;
-  for (let i = 0; i < chCount; i++) {
-    const ch = characters[i];
+  // ── Separate characters from other entity types ───────────────────
+  const chars: Record<string, unknown>[] = [];
+  const items: Record<string, unknown>[] = [];
+  for (const c of characters) {
+    const nodeType = c.node_type as string | undefined;
+    if (nodeType && nodeType !== "character") {
+      items.push(c);
+    } else {
+      chars.push(c);
+    }
+  }
+
+  // ── Character nodes (inner ring, radius ~180px) ──────────────────
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
     const chId = (ch.id as string) || `ch_${i}`;
-    const angle = (2 * Math.PI * i) / Math.max(chCount, 1);
+    const angle = (2 * Math.PI * i) / Math.max(chars.length, 1);
     nodes.push({
       id: chId,
       type: "default",
@@ -76,10 +89,25 @@ function buildGraph(
     });
   }
 
-  // ── Location nodes (outer ring) + scene index map ────────────────
+  // ── Item / org / event / concept nodes (middle ring, radius ~250px)
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const itId = (it.id as string) || `item_${i}`;
+    const angle = (2 * Math.PI * i) / Math.max(items.length, 1) + Math.PI / 8; // offset from chars
+    const nodeType = it.node_type as string;
+    const styleKey = (nodeType === "item") ? "item" : "location"; // fallback style
+    nodes.push({
+      id: itId,
+      type: "default",
+      data: { label: (it.name as string) || itId },
+      position: { x: Math.cos(angle) * 250 + 30, y: Math.sin(angle) * 250 },
+      style: { ...NODE_STYLE[styleKey] || NODE_STYLE.location, fontSize: 11 },
+    });
+  }
+
+  // ── Location nodes (outer ring, radius ~320px) ───────────────────
   const seenLocations = new Set<string>();
   const locs: string[] = [];
-  // sceneIndex → location node id (for edge wiring)
   const sceneLocMap = new Map<number, string>();
 
   for (let si = 0; si < scenes.length; si++) {
@@ -100,13 +128,14 @@ function buildGraph(
       id: `loc_${locs[i]}`,
       type: "default",
       data: { label: locs[i] },
-      position: { x: Math.cos(angle) * 300 + 50, y: Math.sin(angle) * 300 },
+      position: { x: Math.cos(angle) * 320 + 50, y: Math.sin(angle) * 320 },
       style: NODE_STYLE.location,
     });
   }
 
   // ── Edges: character appears in scene → edge to location ─────────
-  const addedEdges = new Set<string>();
+  // Count appearances for edge weighting (stroke width 1–4 px)
+  const edgeWeight = new Map<string, { count: number; lastScene: number }>();
 
   for (let si = 0; si < scenes.length; si++) {
     const scene = scenes[si];
@@ -117,33 +146,42 @@ function buildGraph(
     if (!elements) continue;
 
     for (const el of elements) {
-      // A character_name in a dialogue_block means this character appears
       const chName = el.character_name;
       if (!chName) continue;
 
-      // Try to match character by name or id
-      for (const ch of characters) {
+      for (const ch of chars) {
         const chId = ch.id as string;
-        if (
-          chId === chName ||
-          (ch.name as string) === chName
-        ) {
+        if (chId === chName || (ch.name as string) === chName) {
           const edgeKey = `${chId}->${targetLocId}`;
-          if (!addedEdges.has(edgeKey)) {
-            addedEdges.add(edgeKey);
-            edges.push({
-              id: edgeKey,
-              source: chId,
-              target: targetLocId,
-              style: { stroke: "var(--color-border-emphasis)", strokeDasharray: "4 3" },
-              label: `Scene ${si + 1}`,
-              labelStyle: { fill: "var(--color-text-muted)", fontSize: 10 },
-              labelBgStyle: { fill: "var(--color-bg-canvas)" },
-            });
-          }
+          const prev = edgeWeight.get(edgeKey);
+          edgeWeight.set(edgeKey, {
+            count: (prev?.count ?? 0) + 1,
+            lastScene: si + 1,
+          });
         }
       }
     }
+  }
+
+  const MAX_WEIGHT = 4;
+  const MIN_WEIGHT = 1;
+  const maxCount = Math.max(1, ...[...edgeWeight.values()].map((v) => v.count));
+
+  for (const [key, val] of edgeWeight) {
+    const strokeW = MIN_WEIGHT + ((val.count - 1) / Math.max(maxCount - 1, 1)) * (MAX_WEIGHT - MIN_WEIGHT);
+    edges.push({
+      id: key,
+      source: key.split("->")[0],
+      target: key.split("->")[1],
+      style: {
+        stroke: "var(--color-border-emphasis)",
+        strokeDasharray: "4 3",
+        strokeWidth: Math.round(strokeW * 10) / 10,
+      },
+      label: maxCount > 1 ? `S${val.lastScene}` : `Scene ${val.lastScene}`,
+      labelStyle: { fill: "var(--color-text-muted)", fontSize: 10 },
+      labelBgStyle: { fill: "var(--color-bg-canvas)" },
+    });
   }
 
   return { nodes, edges };

@@ -80,7 +80,7 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
             登录
           </Button>
         )}
-        {taskId && (
+        {taskId && status === "completed" && (
           <Dropdown
             menu={{
               items: [

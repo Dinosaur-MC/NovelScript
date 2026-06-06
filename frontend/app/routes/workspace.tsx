@@ -39,6 +39,8 @@ export default function Workspace() {
   const loadScript = useScriptStore((s) => s.loadFromTaskResponse);
   const leftW = useUIStore((s) => s.leftWidth);
   const centerW = useUIStore((s) => s.centerWidth);
+  const rightW = useUIStore((s) => s.rightWidth);
+  const setPanelWidths = useUIStore((s) => s.setPanelWidths);
 
   // Hooks — always called, safe with empty stores
   const autoSave = useAutoSave();
@@ -174,13 +176,22 @@ export default function Workspace() {
             initialLeftPercent={leftW}
             minLeftPx={240}
             minRightPx={280 + 360}
+            onResize={(pct) => {
+              const rem = 100 - pct;
+              const innerRatio = centerW / (centerW + rightW || 1);
+              setPanelWidths(pct, innerRatio * rem, rem - innerRatio * rem);
+            }}
           >
             <NovelReader readerHook={readerHook} traceHook={traceHook} />
             <Splitter
               direction="horizontal"
-              initialLeftPercent={centerW / (centerW + (100 - leftW - centerW)) * 100}
+              initialLeftPercent={centerW / (centerW + rightW || 1) * 100}
               minLeftPx={360}
               minRightPx={280}
+              onResize={(pct) => {
+                const rem = 100 - leftW;
+                setPanelWidths(leftW, (pct / 100) * rem, rem - (pct / 100) * rem);
+              }}
             >
               <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
               <RightPanel traceHook={traceHook} editorHook={editorHook} />

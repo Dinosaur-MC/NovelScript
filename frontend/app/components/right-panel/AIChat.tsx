@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Button, Input, message } from "antd";
+import { Button, Input, message, Select } from "antd";
 import { SendOutlined, UndoOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
 import { useEditorStore } from "../../stores/editor-store";
+import { useScriptStore } from "../../stores/script-store";
 import { sendChat, applyPatch, undoEdit } from "../../api/editor";
 import type { PatchOp, ChatResponse } from "../../api/editor";
 import type { useScriptEditor } from "../../hooks/useScriptEditor";
@@ -26,10 +27,22 @@ function nextId() {
 export function AIChat({ editorHook }: Props) {
   const taskId = useTaskStore((s) => s.taskId);
   const pushUndo = useEditorStore((s) => s.pushUndo);
+  const scenes = useScriptStore((s) => s.scenes);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [sceneId, setSceneId] = useState<string | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // Build scene options from script data
+  const sceneOptions = scenes.map((s, i) => {
+    const heading = s.heading as Record<string, string> | undefined;
+    const sceneIdVal = (s.scene_id as string) || `scene_${i}`;
+    const label = heading
+      ? `${heading.int_ext || ""} ${heading.location || ""} — ${heading.time || ""}`
+      : `场景 ${i + 1}`;
+    return { value: sceneIdVal, label: label.trim().replace(/^— /, "") || `场景 ${i + 1}` };
+  });
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -44,7 +57,7 @@ export function AIChat({ editorHook }: Props) {
     setSending(true);
 
     try {
-      const res: ChatResponse = await sendChat(taskId, userMsg.content);
+      const res: ChatResponse = await sendChat(taskId, userMsg.content, sceneId);
       setMessages((prev) => [
         ...prev,
         { id: nextId(), role: "assistant", content: res.reply, patch: res.patch },
@@ -92,9 +105,22 @@ export function AIChat({ editorHook }: Props) {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          gap: 8,
         }}
       >
-        <span style={{ fontWeight: 600, fontSize: 13 }}>AI 助手</span>
+        <span style={{ fontWeight: 600, fontSize: 13, flexShrink: 0 }}>AI 助手</span>
+        {sceneOptions.length > 0 && (
+          <Select
+            size="small"
+            placeholder="全部场景"
+            allowClear
+            value={sceneId}
+            onChange={(v) => setSceneId(v)}
+            options={sceneOptions}
+            style={{ flex: 1, minWidth: 0 }}
+            maxTagCount={0}
+          />
+        )}
         <Button size="small" icon={<UndoOutlined />} onClick={handleUndo}>
           撤销
         </Button>

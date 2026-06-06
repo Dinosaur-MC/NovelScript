@@ -12,19 +12,21 @@ interface TaskState {
   novelId: string | null;
   status: TaskStatusValue | null;
   progress: number; // 0–100
+  stage: string | null; // e.g. "chunking", "graphrag", "converting"
   errorMessage: string | null;
 
   setTask: (taskId: string, novelId: string, status: TaskStatusValue, progress?: number) => void;
-  updateProgress: (progress: number, status?: TaskStatusValue) => void;
+  updateProgress: (progress: number, status?: TaskStatusValue, stage?: string) => void;
   setError: (error: string) => void;
   clearTask: () => void;
 }
 
-const INITIAL: Pick<TaskState, "taskId" | "novelId" | "status" | "progress" | "errorMessage"> = {
+const INITIAL: Pick<TaskState, "taskId" | "novelId" | "status" | "progress" | "stage" | "errorMessage"> = {
   taskId: null,
   novelId: null,
   status: null,
   progress: 0,
+  stage: null,
   errorMessage: null,
 };
 
@@ -32,16 +34,17 @@ export const useTaskStore = create<TaskState>((set) => ({
   ...INITIAL,
 
   setTask: (taskId, novelId, status, progress = 0) =>
-    set({ taskId, novelId, status, progress, errorMessage: null }),
+    set({ taskId, novelId, status, progress, stage: null, errorMessage: null }),
 
-  updateProgress: (progress, status) =>
+  updateProgress: (progress, status, stage) =>
     set((s) => ({
       progress,
       ...(status ? { status } : {}),
+      ...(stage !== undefined ? { stage } : {}),
       ...(s.status === "failed" ? { errorMessage: null } : {}),
     })),
 
-  setError: (error) => set({ status: "failed", errorMessage: error }),
+  setError: (error) => set({ status: "failed", stage: null, errorMessage: error }),
 
   clearTask: () => set({ ...INITIAL }),
 }));

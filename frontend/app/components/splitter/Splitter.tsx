@@ -7,6 +7,8 @@ interface SplitterProps {
   /** Minimum pixel widths. */
   minLeftPx?: number;
   minRightPx?: number;
+  /** Called after drag ends with the new left percentage (0–100). */
+  onResize?: (leftPercent: number) => void;
   children: [ReactNode, ReactNode];
 }
 
@@ -20,11 +22,13 @@ export function Splitter({
   initialLeftPercent = 50,
   minLeftPx = 200,
   minRightPx = 200,
+  onResize,
   children,
 }: SplitterProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [leftPct, setLeftPct] = useState(initialLeftPercent);
   const dragging = useRef(false);
+  const latestPct = useRef(leftPct);
 
   const onMouseDown = useCallback(() => {
     dragging.current = true;
@@ -41,6 +45,7 @@ export function Splitter({
       const minRPct = (minRightPx / total) * 100;
       const clamped = Math.max(minLPct, Math.min(100 - minRPct, pct));
       setLeftPct(clamped);
+      latestPct.current = clamped;
     };
 
     const onUp = () => {
@@ -49,11 +54,12 @@ export function Splitter({
       document.body.style.userSelect = "";
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
+      onResize?.(latestPct.current);
     };
 
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }, [direction, minLeftPx, minRightPx]);
+  }, [direction, minLeftPx, minRightPx, onResize]);
 
   const isH = direction === "horizontal";
 
