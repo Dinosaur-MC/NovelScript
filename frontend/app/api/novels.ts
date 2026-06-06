@@ -59,3 +59,10 @@ export function uploadNovelFile(file: File, title?: string, author?: string) {
 export function deleteNovel(id: string) {
   return request<{ deleted_id: string }>(`/novels/${id}`, { method: "DELETE" });
 }
+
+export function updateNovel(id: string, data: { title?: string; author?: string }) {
+  return request<{ novel: Novel }>(`/novels/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
