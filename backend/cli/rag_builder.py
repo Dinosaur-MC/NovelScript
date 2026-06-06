@@ -48,6 +48,19 @@ def _make_embeddings() -> OpenAIEmbeddings:
     )
 
 
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Generate dense embeddings for *texts*.
+
+    Returns a list of float lists, each of dimension 1536 (for
+    ``text-embedding-3-small``).  The caller is responsible for
+    persisting these (e.g. into ``chapters.embedding``).
+    """
+    if not texts:
+        return []
+    emb = _make_embeddings()
+    return emb.embed_documents(texts)
+
+
 def build_index(chapters: list[Chapter]) -> Optional[FAISS]:
     if not chapters:
         logger.warning("No chapters to index — returning None.")
@@ -69,6 +82,54 @@ def build_index(chapters: list[Chapter]) -> Optional[FAISS]:
         return index
     except Exception:
         logger.exception("FAISS index build failed — RAG will use keyword fallback.")
+        return None
+
+
+def build_index_from_db_embeddings(
+    chapters: list[Chapter],
+    embeddings_map: dict[int, list[float]],
+) -> Optional[FAISS]:
+    """Build a FAISS index from pre-computed DB embeddings.
+
+    *embeddings_map* maps ``chapter_index → embedding vector``.  Chapters
+    whose index is missing from the map are skipped (no API call).
+
+    Returns ``None`` when *chapters* is empty or no embeddings are found.
+    """
+    if not chapters:
+        return None
+
+    docs = []
+    vectors = []
+    for ch in chapters:
+        vec = embeddings_map.get(ch.index)
+        if vec is None:
+            continue
+        docs.append(Document(
+            page_content=ch.text,
+            metadata={"chapter_index": ch.index, "title": ch.title},
+        ))
+        vectors.append(vec)
+
+    if not vectors:
+        logger.info("No DB embeddings found — FAISS cannot be built from cache.")
+        return None
+
+    try:
+        import numpy as np
+        embedding_model = _make_embeddings()
+        # FAISS.from_documents creates embeddings internally; for pre-computed
+        # vectors we use FAISS.add_embeddings pattern via from_embeddings
+        text_embeddings = list(zip([d.page_content for d in docs], vectors))
+        index = FAISS.from_embeddings(
+            text_embeddings=text_embeddings,
+            embedding=embedding_model,
+            metadatas=[d.metadata for d in docs],
+        )
+        logger.info("FAISS index built from %d cached embedding(s).", len(vectors))
+        return index
+    except Exception:
+        logger.exception("FAISS from DB embeddings failed — RAG will use keyword fallback.")
         return None
 
 

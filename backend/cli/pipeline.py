@@ -38,7 +38,7 @@ load_dotenv()  # load .env so os.getenv() works for DEEPSEEK_API_KEY etc.
 from cli.chunker import split_chapters
 from cli.converter import convert_chapter
 from cli.exporter import to_yaml
-from cli.graphrag_builder import extract_graph
+from cli.graphrag_builder import extract_graph, extract_graph_incremental
 from cli.llm_router import get_llm, invoke_llm_with_retry
 from cli.models import Chapter, KnowledgeGraph, Scene, Script
 from cli.optimizer import optimize
@@ -151,6 +151,9 @@ async def run_from_chapters(
     chapters: list[Chapter],
     progress_callback: ProgressCallback | None = None,
     source_name: str = "",
+    *,
+    faiss_index=None,  # pre-built FAISS index — skips stage 3 when set
+    kg: KnowledgeGraph | None = None,  # pre-built KG — skips stage 4 when set
 ) -> Script:
     """Execute the full pipeline on pre-built *chapters*.
 
@@ -158,12 +161,19 @@ async def run_from_chapters(
         chapters:     Ordered list of already-split Chapter objects.
         progress_callback:  Optional ``(percent, stage)`` reporter for SSE / UI.
         source_name:  Human-readable label for the ``meta.source_file`` field.
+        faiss_index:  Pre-built FAISS index for cross-chapter RAG context.
+                      When ``None`` (default), the index is built from scratch.
+        kg:           Pre-built KnowledgeGraph.  When ``None`` (default),
+                      the KG is extracted via LLM (stage 4).
 
     Returns:
         A complete Script model ready for export.
 
-    When chapters are pre-built (e.g. from a directory of per-chapter
+    When *chapters* are pre-built (e.g. from a directory of per-chapter
     files or from the database), the chunking stage is skipped entirely.
+    When *faiss_index* or *kg* are provided, their corresponding stages
+    are skipped — this enables cached reuse from the database across
+    multiple pipeline runs.
     """
     started = time.monotonic()
     cb = progress_callback
@@ -196,18 +206,41 @@ async def run_from_chapters(
     _call_cb(cb, 15, "summarizing")
 
     # ------------------------------------------------------------------
-    # 3. RAG — build FAISS index
+    # 3. RAG — build FAISS index (or use cached)
     # ------------------------------------------------------------------
-    logger.info("=== Stage 3: RAG Index Building ===")
-    faiss_index = build_index(chapters)
+    if faiss_index is not None:
+        logger.info("=== Stage 3: RAG Index (cached) ===")
+        logger.info("FAISS index provided — embedding API call skipped.")
+    else:
+        logger.info("=== Stage 3: RAG Index Building ===")
+        faiss_index = build_index(chapters)
     _call_cb(cb, 25, "rag")
 
     # ------------------------------------------------------------------
-    # 4. GraphRAG — knowledge graph extraction (with RAG context)
+    # 4. GraphRAG — knowledge graph extraction (or use cached)
     # ------------------------------------------------------------------
-    logger.info("=== Stage 4: Knowledge Graph Extraction ===")
-    kg = extract_graph(chapters, faiss_index=faiss_index,
-                       all_chapter_texts=all_chapter_texts)
+    if kg is not None:
+        logger.info("=== Stage 4: Knowledge Graph (cached) ===")
+        logger.info("KG provided: %d node(s), %d edge(s) — LLM extraction skipped.",
+                     len(kg.nodes), len(kg.edges))
+    else:
+        logger.info("=== Stage 4: Knowledge Graph Extraction ===")
+        if len(chapters) > 5:
+            # Incremental: chapter-by-chapter, prior entities as context.
+            # Scales to 100+ chapters without exceeding context windows.
+            kg = extract_graph_incremental(
+                chapters,
+                faiss_index=faiss_index,
+                all_chapter_texts=all_chapter_texts,
+            )
+        else:
+            # Single-shot: all chapters in one prompt.  Faster for short
+            # novels (≤5 chapters) where context-fit isn't a concern.
+            kg = extract_graph(
+                chapters,
+                faiss_index=faiss_index,
+                all_chapter_texts=all_chapter_texts,
+            )
     logger.info(
         "KG: %d node(s), %d edge(s).",
         len(kg.nodes),
