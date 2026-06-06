@@ -16,10 +16,11 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.db import _session_factory
-from app.models.sql import Novel, Task
+from app.models.sql import Chapter as ChapterModel, Novel, Task
 from app.services.progress import progress_manager
 from cli.exporter import to_json, to_yaml
-from cli.pipeline import ProgressCallback, run_from_text
+from cli.models import Chapter
+from cli.pipeline import ProgressCallback, run_from_chapters, run_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +104,26 @@ def _run_in_thread(task_id: uuid.UUID, novel_id: uuid.UUID) -> None:
                 session.rollback()
 
         # ---- run pipeline ------------------------------------------------
-        # run_from_text() calls progress_callback(0, "starting") as its first
-        # action, so there is no need to pre-emit a "starting" event here.
-
-        script = asyncio.run(
-            run_from_text(
-                source,
-                progress_callback=_on_progress,
-                source_name=novel.title or str(novel_id),
+        # Prefer DB-stored chapters (already split during upload) to avoid
+        # re-running the LLM chunker on source_text.  Fall back to raw text
+        # when no chapters exist in the database.
+        chapters = _load_chapters(session, novel_id)
+        if chapters:
+            script = asyncio.run(
+                run_from_chapters(
+                    chapters,
+                    progress_callback=_on_progress,
+                    source_name=novel.title or str(novel_id),
+                )
             )
-        )
+        else:
+            script = asyncio.run(
+                run_from_text(
+                    source,
+                    progress_callback=_on_progress,
+                    source_name=novel.title or str(novel_id),
+                )
+            )
 
         # ---- persist results ---------------------------------------------
         task = session.get(Task, task_id)
@@ -144,6 +155,26 @@ def _run_in_thread(task_id: uuid.UUID, novel_id: uuid.UUID) -> None:
     finally:
         session.close()
         progress_manager.cleanup(tid)
+
+
+def _load_chapters(session, novel_id: uuid.UUID) -> list[Chapter] | None:
+    """Load DB-stored chapters for *novel_id* as pipeline Chapter objects.
+
+    Returns ``None`` when no chapters exist (caller falls back to raw text).
+    """
+    rows = (
+        session.query(ChapterModel)
+        .filter(ChapterModel.novel_id == novel_id)
+        .order_by(ChapterModel.chapter_index.asc())
+        .all()
+    )
+    if not rows:
+        return None
+
+    return [
+        Chapter(text=r.content or "", title=r.title or f"第{i+1}章", index=r.chapter_index)
+        for i, r in enumerate(rows)
+    ]
 
 
 def _fail(session, task_id: uuid.UUID, message: str) -> None:
