@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_EMBEDDING_MODEL: str = "openai/text-embedding-3-small"
 
+    # -- Redis / Celery --------------------------------------------------------
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # -- Application ----------------------------------------------------------
     DEBUG: bool = False
 

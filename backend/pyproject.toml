@@ -30,6 +30,8 @@ dependencies = [
     "pyyaml>=6.0.3",
     # Database Foundation (Agent B)
     "pydantic-settings>=2.14.1",
+    "celery[redis]>=5.6.3",
+    "redis>=6.4.0",
 ]
 
 [dependency-groups]
