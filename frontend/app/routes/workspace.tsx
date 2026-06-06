@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Spin } from "antd";
-import { LoadingOutlined } from "@ant-design/icons";
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
 import { useTaskStore } from "../stores/task-store";
@@ -140,15 +139,7 @@ export default function Workspace() {
               gap: 16,
             }}
           >
-            <Spin
-              size="large"
-              indicator={
-                <LoadingOutlined
-                  style={{ fontSize: 48, color: "var(--color-accent-primary)" }}
-                  spin
-                />
-              }
-            />
+            <Spin size="large" />
             <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
               加载中...
             </span>
