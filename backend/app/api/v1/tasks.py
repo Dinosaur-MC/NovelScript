@@ -1,21 +1,27 @@
-"""Task lifecycle manager API — status tracking only (no pipeline execution).
+"""Task lifecycle manager API — CRUD, state machine, SSE progress streaming.
 
-All routes are synchronous and use the shared ``get_db()`` dependency.
+POST / creates a task and spawns a background daemon thread that runs the
+pipeline.  GET /{task_id}/stream provides real-time SSE progress events.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import queue
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sse_starlette.sse import EventSourceResponse
 
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import AuditLog, Novel, Task
 from app.services.base import BaseCRUD
+from app.services.progress import progress_manager
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +109,12 @@ def create_task(body: dict, db: Session = Depends(get_db)):
     task = task_crud.create(db, task)
 
     logger.info("Task %s created for novel %s", task.id, novel_id)
+
+    # ── kick off pipeline in background thread ────────────────────────
+    from app.services.pipeline_executor import execute_pipeline
+
+    execute_pipeline(task.id, novel_id)
+
     return BaseResponse(
         code=200,
         message="Task created",
@@ -158,6 +170,85 @@ def list_tasks(
             "limit": limit,
         },
     )
+
+
+# ===================================================================
+# GET /api/tasks/{task_id}/stream  (declared BEFORE /{task_id}/status
+# so FastAPI matches "/stream" before the generic path param)
+# ===================================================================
+
+
+@router.get("/{task_id}/stream")
+async def stream_progress(task_id: str, db: Session = Depends(get_db)):
+    """SSE endpoint — streams pipeline progress events in real time.
+
+    Returns ``text/event-stream``.  Events:
+
+    * ``progress`` — ``{progress: int, stage: str}``
+    * ``complete`` — ``{progress: 100}`` (stream closes)
+    * ``error``   — ``{error: str}`` (stream closes)
+    * ``heartbeat`` — empty data, keeps connection alive
+
+    If the task is already completed or failed when the client connects,
+    a single final event is yielded and the stream closes immediately.
+    """
+    try:
+        tid = uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid task_id: {task_id!r}")
+
+    # ── quick sync check: task exists? ──────────────────────────────────
+    task = db.get(Task, tid)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+    q = progress_manager.create_queue(str(tid))
+
+    async def _event_generator():
+        try:
+            # If the task already reached a terminal state before the SSE
+            # client connected, push one final event and exit immediately.
+            if task.status == "completed":
+                yield {"event": "complete", "data": json.dumps({"progress": 100})}
+                return
+            if task.status == "failed":
+                err = task.error_message or "Unknown error"
+                yield {"event": "error", "data": json.dumps({"error": str(err)})}
+                return
+
+            # Main poll loop
+            while True:
+                try:
+                    event = q.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.5)
+                    yield {"event": "heartbeat", "data": ""}
+                    continue
+
+                event_type = event.get("type", "")
+                data = event.get("data", {})
+
+                if event_type == "progress":
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(data, ensure_ascii=False),
+                    }
+                elif event_type == "complete":
+                    yield {
+                        "event": "complete",
+                        "data": json.dumps(data, ensure_ascii=False),
+                    }
+                    return
+                elif event_type == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps(data, ensure_ascii=False),
+                    }
+                    return
+        finally:
+            progress_manager.remove_queue(str(tid))
+
+    return EventSourceResponse(_event_generator())
 
 
 # ===================================================================

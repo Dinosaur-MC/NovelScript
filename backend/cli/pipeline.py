@@ -10,6 +10,9 @@ Stages:
     4. Conversion  — convert each chapter to script scenes (Flash)
     5. Optimization — cross-scene consistency check (Pro)
     6. Export       — YAML to stdout
+
+The ``run_from_text()`` entry point accepts an optional ``progress_callback``
+so the backend's pipeline-executor thread can stream real-time SSE events.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import asyncio
 import logging
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +47,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
+# ---------------------------------------------------------------------------
+# Type alias
+# ---------------------------------------------------------------------------
+
+ProgressCallback = Callable[[int, str], None]
+"""A progress reporter: ``callback(percent: int, stage: str)``."""
+
+
+def _call_cb(cb: ProgressCallback | None, progress: int, stage: str) -> None:
+    """Invoke *cb* if not None, swallowing any exception it raises."""
+    if cb is None:
+        return
+    try:
+        cb(progress, stage)
+    except Exception:
+        logger.debug("Progress callback raised (ignored).", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Pipeline orchestration
@@ -58,18 +79,35 @@ async def run(file_path: str) -> Script:
     Returns:
         A complete Script model ready for export.
     """
-    started = time.monotonic()
-
-    # ------------------------------------------------------------------
-    # 0. Load raw text
-    # ------------------------------------------------------------------
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"Input file not found: {file_path}")
 
     raw_text = path.read_text(encoding="utf-8")
+    return await run_from_text(raw_text, source_name=path.name)
+
+
+async def run_from_text(
+    raw_text: str,
+    progress_callback: ProgressCallback | None = None,
+    source_name: str = "",
+) -> Script:
+    """Execute the full pipeline on in-memory *raw_text*.
+
+    Args:
+        raw_text:     The complete novel as a single UTF-8 string.
+        progress_callback:  Optional ``(percent, stage)`` reporter for SSE / UI.
+        source_name:  Human-readable label for the ``meta.source_file`` field
+                      (e.g. the original filename or novel title).
+
+    Returns:
+        A complete Script model ready for export.
+    """
+    started = time.monotonic()
+    cb = progress_callback
     total_chars = len(raw_text)
-    logger.info("Loaded %s (%d chars).", path.name, total_chars)
+    logger.info("Loaded %s (%d chars).", source_name or "<text>", total_chars)
+    _call_cb(cb, 0, "starting")
 
     # ------------------------------------------------------------------
     # 1. Chunking
@@ -77,6 +115,7 @@ async def run(file_path: str) -> Script:
     logger.info("=== Stage 1: Chapter Chunking ===")
     chapters = split_chapters(raw_text)
     logger.info("Split into %d chapter(s).", len(chapters))
+    _call_cb(cb, 10, "chunking")
 
     # ------------------------------------------------------------------
     # 2. GraphRAG — knowledge graph extraction
@@ -88,12 +127,14 @@ async def run(file_path: str) -> Script:
         len(kg.nodes),
         len(kg.edges),
     )
+    _call_cb(cb, 25, "graphrag")
 
     # ------------------------------------------------------------------
     # 3. RAG — build FAISS index
     # ------------------------------------------------------------------
     logger.info("=== Stage 3: RAG Index Building ===")
     faiss_index = build_index(chapters)
+    _call_cb(cb, 35, "rag")
 
     # ------------------------------------------------------------------
     # 4. Conversion — chapter → scenes (concurrent)
@@ -101,11 +142,17 @@ async def run(file_path: str) -> Script:
     logger.info("=== Stage 4: Scene Conversion ===")
 
     all_scenes: list[Scene] = []
+    chapter_count = len(chapters)
+    completed_count = 0
 
     async def convert_one(ch: Chapter) -> list[Scene]:
+        nonlocal completed_count
         rag_ctx = search(faiss_index, ch.text[:500], k=3)
-        # Run the synchronous converter in a thread to avoid blocking
-        return await asyncio.to_thread(convert_chapter, ch, kg, rag_ctx)
+        result = await asyncio.to_thread(convert_chapter, ch, kg, rag_ctx)
+        completed_count += 1
+        progress = 35 + int((completed_count / max(chapter_count, 1)) * 45)
+        _call_cb(cb, progress, "converting")
+        return result
 
     tasks = [convert_one(ch) for ch in chapters]
     results = await asyncio.gather(*tasks)
@@ -115,6 +162,7 @@ async def run(file_path: str) -> Script:
         logger.info("  Chapter %d → %d scene(s)", i, len(scenes))
 
     logger.info("Total scenes converted: %d", len(all_scenes))
+    _call_cb(cb, 80, "converting")
 
     # ------------------------------------------------------------------
     # 5. Optimization — cross-scene consistency
@@ -122,13 +170,13 @@ async def run(file_path: str) -> Script:
     logger.info("=== Stage 5: Scene Optimization ===")
     optimized_scenes = await asyncio.to_thread(optimize, all_scenes, kg)
     logger.info("Optimized %d scene(s).", len(optimized_scenes))
+    _call_cb(cb, 95, "optimizing")
 
     # ------------------------------------------------------------------
     # 6. Assemble Script
     # ------------------------------------------------------------------
     logger.info("=== Stage 6: Assembly ===")
 
-    # Derive characters from KG character nodes
     from cli.models import Character as ScriptCharacter
 
     characters = [
@@ -143,7 +191,7 @@ async def run(file_path: str) -> Script:
     ]
 
     meta = {
-        "source_file": path.name,
+        "source_file": source_name or "<text>",
         "source_chars": total_chars,
         "chapter_count": len(chapters),
         "scene_count": len(optimized_scenes),
@@ -160,6 +208,7 @@ async def run(file_path: str) -> Script:
 
     elapsed = time.monotonic() - started
     logger.info("Pipeline complete in %.1fs.", elapsed)
+    _call_cb(cb, 100, "assembling")
 
     return script
 
