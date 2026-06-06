@@ -63,5 +63,15 @@ export function useScriptEditor() {
     decorationRef.current = ed.deltaDecorations(decorationRef.current, []);
   }, []);
 
-  return { bindEditor, getValue, setValue, applyExternalEdit, highlightLines, clearHighlights };
+  /** Trigger Monaco's native undo. */
+  const triggerUndo = useCallback(() => {
+    editorRef.current?.trigger("keyboard", "undo", null);
+  }, []);
+
+  /** Trigger Monaco's native redo. */
+  const triggerRedo = useCallback(() => {
+    editorRef.current?.trigger("keyboard", "redo", null);
+  }, []);
+
+  return { bindEditor, getValue, setValue, applyExternalEdit, highlightLines, clearHighlights, triggerUndo, triggerRedo };
 }
