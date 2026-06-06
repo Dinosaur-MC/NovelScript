@@ -4,12 +4,14 @@ Uses LangChain-native ChatPromptTemplate + JsonOutputParser with
 DeepSeek native JSON mode (``response_format: {type: json_object}``).
 
 When the serialized scene list exceeds the per-call budget, scenes are
-split into batches and each batch is processed independently.  This
-avoids silent truncation (which previously dropped up to 74% of scenes).
+split into batches.  Batches are **independent** — they are dispatched
+concurrently via ``asyncio.gather`` so wall-clock time is bounded by the
+slowest single batch rather than the sum of all batches.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -17,7 +19,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from cli.llm_router import get_llm, invoke_with_retry
+from cli.llm_router import get_llm, get_llm_semaphore, invoke_with_retry
 from cli.models import KnowledgeGraph, Scene
 
 logger = logging.getLogger(__name__)
@@ -51,11 +53,15 @@ _PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
+async def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
     """Check and improve cross-scene consistency.
 
     Scenes are processed in batches so the per-call JSON payload stays
     within ``_BATCH_BUDGET`` characters — no scenes are silently dropped.
+
+    Batches are independent and dispatched **concurrently** via
+    ``asyncio.to_thread`` so wall-clock time is roughly the duration of
+    the slowest batch, not the sum of all batches.
     """
     if not scenes:
         return []
@@ -68,12 +74,14 @@ def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
         logger.info("Optimizer: 1 batch (%d scenes).", len(scenes))
     else:
         logger.info(
-            "Optimizer: %d scenes split into %d batches.",
+            "Optimizer: %d scenes split into %d batches (concurrent).",
             len(scenes), len(batches),
         )
 
-    optimized: list[Scene] = []
-    for bi, batch in enumerate(batches):
+    llm_sem = get_llm_semaphore()
+
+    async def _process_batch(bi: int, batch: list[Scene]) -> list[Scene]:
+        """Run a single batch in a background thread (blocking LLM call)."""
         batch_json = _serialize_scenes(batch)
         context_note = ""
         if len(batches) > 1:
@@ -83,19 +91,32 @@ def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
             )
 
         try:
-            raw = _invoke_chain(batch_json, kg_summary, format_instructions, context_note)
+            async with llm_sem:
+                raw = await asyncio.to_thread(
+                    _invoke_chain, batch_json, kg_summary, format_instructions, context_note,
+                )
             result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
-            optimized.extend(result.scenes)
             logger.info(
                 "  Batch %d/%d: %d → %d scenes.",
                 bi + 1, len(batches), len(batch), len(result.scenes),
             )
+            return result.scenes
         except Exception:
             logger.exception(
                 "Batch %d/%d failed — keeping original scenes for this batch.",
                 bi + 1, len(batches),
             )
-            optimized.extend(batch)
+            return batch
+
+    # Dispatch all batches concurrently — each batch is an independent LLM call
+    batch_results = await asyncio.gather(
+        *[_process_batch(i, b) for i, b in enumerate(batches)],
+    )
+
+    # Flatten (batch_results preserves insertion order since gather does)
+    optimized: list[Scene] = []
+    for result in batch_results:
+        optimized.extend(result)
 
     # Restore source_ref tracing lost during serialization/LLM round-trips
     optimized = _restore_source_refs(scenes, optimized)

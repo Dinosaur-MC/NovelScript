@@ -1,12 +1,16 @@
 """Pipeline engine — main orchestrator for novel-to-script conversion.
 
 Usage:
-    uv run python -m cli.pipeline <input_file> [-o output.yaml]
-    uv run python -m cli.pipeline <directory/>  [-o output.yaml]
+    uv run python -m cli.pipeline <input_file> [-o output.yaml] [-n N] [-c C]
+    uv run python -m cli.pipeline <directory/>  [-o output.yaml] [-n N] [-c C]
 
-When *input* is a directory, all ``.txt`` files are read in alphabetical
-order and concatenated as individual chapters.  This is convenient for
-novels where each chapter is a separate file.
+When *input* is a directory, all ``.txt`` / ``.md`` / ``.utf8`` files are
+read in alphabetical order, each treated as a separate chapter.  This is
+convenient for novels where each chapter is a single file.
+
+``-n N`` / ``--limit N`` restricts processing to the first N chapters.
+``-c C`` / ``--concurrency C`` caps concurrent LLM API calls (default 20,
+also settable via ``LLM_MAX_CONCURRENCY`` env var).
 
 Stages:
     1. Chunking      — split raw novel into chapters
@@ -39,7 +43,7 @@ from cli.chunker import split_chapters
 from cli.converter import convert_chapter
 from cli.exporter import to_yaml
 from cli.graphrag_builder import extract_graph, extract_graph_incremental
-from cli.llm_router import get_llm, invoke_llm_with_retry
+from cli.llm_router import get_llm, get_llm_semaphore, invoke_llm_with_retry
 from cli.models import Chapter, KnowledgeGraph, Scene, Script
 from cli.optimizer import optimize
 from cli.rag_builder import build_index, search
@@ -80,18 +84,21 @@ def _call_cb(cb: ProgressCallback | None, progress: int, stage: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run(input_path: str) -> Script:
+async def run(input_path: str, *, limit: int | None = None) -> Script:
     """Execute the full pipeline on a novel file or directory.
 
     Args:
         input_path: Path to a UTF-8 plain-text novel file, or a directory
-                    containing ``.txt`` files (one per chapter, read in
+                    containing ``.txt`` / ``.md`` files (one per chapter, read in
                     alphabetical order).
+        limit:      Maximum number of chapters to process (``None`` = all).
+                    Applied after sorting; the first *limit* files/chapters
+                    are kept in alphabetical / occurrence order.
 
     Returns:
         A complete Script model ready for export.
 
-    When *input_path* is a directory each ``.txt`` file is treated as a
+    When *input_path* is a directory each ``.txt`` / ``.md`` file is treated as a
     single pre-split chapter — the chunking stage is skipped entirely.
     """
     path = Path(input_path)
@@ -101,10 +108,10 @@ async def run(input_path: str) -> Script:
     if path.is_dir():
         txt_files = sorted(
             p for p in path.iterdir()
-            if p.suffix.lower() in (".txt", ".utf8", ".utf-8")
+            if p.suffix.lower() in (".txt", ".utf8", ".utf-8", ".md")
         )
         if not txt_files:
-            raise FileNotFoundError(f"No .txt files found in directory: {input_path}")
+            raise FileNotFoundError(f"No .txt / .md files found in directory: {input_path}")
 
         logger.info("Reading %d pre-split chapter(s) from directory: %s",
                      len(txt_files), path.name)
@@ -117,18 +124,24 @@ async def run(input_path: str) -> Script:
                 chapters.append(Chapter(text=text, title=title, index=i))
 
         if not chapters:
-            raise ValueError(f"All .txt files in {input_path} are empty.")
+            raise ValueError(f"All chapter files in {input_path} are empty.")
+
+        if limit is not None and limit > 0:
+            chapters = chapters[:limit]
+
         logger.info("Loaded %d chapter(s) (chunking skipped).", len(chapters))
         return await run_from_chapters(chapters, source_name=path.name)
 
     raw_text = path.read_text(encoding="utf-8")
-    return await run_from_text(raw_text, source_name=path.name)
+    return await run_from_text(raw_text, source_name=path.name, limit=limit)
 
 
 async def run_from_text(
     raw_text: str,
     progress_callback: ProgressCallback | None = None,
     source_name: str = "",
+    *,
+    limit: int | None = None,
 ) -> Script:
     """Execute the full pipeline on in-memory *raw_text*.
 
@@ -137,11 +150,14 @@ async def run_from_text(
         progress_callback:  Optional ``(percent, stage)`` reporter for SSE / UI.
         source_name:  Human-readable label for the ``meta.source_file`` field
                       (e.g. the original filename or novel title).
+        limit:        Maximum number of chapters to process (``None`` = all).
 
     Returns:
         A complete Script model ready for export.
     """
     chapters = split_chapters(raw_text)
+    if limit is not None and limit > 0:
+        chapters = chapters[:limit]
     return await run_from_chapters(
         chapters, progress_callback=progress_callback, source_name=source_name,
     )
@@ -191,10 +207,13 @@ async def run_from_chapters(
     logger.info("=== Stage 2: Chapter Summarization ===")
     summaries: list[str] = [""] * len(chapters)
 
+    llm_sem = get_llm_semaphore()
+
     async def summarize_one(ch: Chapter) -> tuple[int, str]:
         # The summarizer only needs the chapter text (no KG dependency),
         # so it can run before GraphRAG.
-        result = await asyncio.to_thread(summarize_chapter, ch)
+        async with llm_sem:
+            result = await asyncio.to_thread(summarize_chapter, ch)
         return ch.index, result
 
     if chapters:
@@ -262,10 +281,11 @@ async def run_from_chapters(
         rag_ctx = search(faiss_index, ch.text[:800], k=3,
                          fallback_texts=all_chapter_texts)
         ch_summary = summaries[ch.index] if ch.index < len(summaries) else ""
-        result = await asyncio.to_thread(
-            convert_chapter, ch, kg, rag_ctx,
-            chapter_summary=ch_summary,
-        )
+        async with llm_sem:
+            result = await asyncio.to_thread(
+                convert_chapter, ch, kg, rag_ctx,
+                chapter_summary=ch_summary,
+            )
         completed_count += 1
         progress = 35 + int((completed_count / max(chapter_count, 1)) * 40)
         _call_cb(cb, progress, "converting")
@@ -285,7 +305,7 @@ async def run_from_chapters(
     # 6. Optimization — cross-scene consistency
     # ------------------------------------------------------------------
     logger.info("=== Stage 6: Scene Optimization ===")
-    optimized_scenes = await asyncio.to_thread(optimize, all_scenes, kg)
+    optimized_scenes = await optimize(all_scenes, kg)
     logger.info("Optimized %d scene(s).", len(optimized_scenes))
     _call_cb(cb, 90, "optimizing")
 
@@ -385,13 +405,16 @@ def _programmatic_summary(kg: KnowledgeGraph) -> str:
 
 
 def main():
-    """CLI entry: uv run python -m cli.pipeline <INPUT> [-o OUTPUT] [--json]
+    """CLI entry: uv run python -m cli.pipeline <INPUT> [-o OUTPUT] [--json] [-n N] [-c C]
 
     When ``-o`` / ``--output`` is given the result is written to that
     file (logs go to stderr only).  Otherwise it is printed to stdout.
     ``--json`` exports JSON instead of the default YAML.
+    ``-n N`` / ``--limit N`` restricts processing to the first N chapters.
+    ``-c C`` / ``--concurrency C`` caps concurrent LLM calls (default: 20).
     """
     import argparse
+    import os
 
     # On Windows the default console codepage cannot encode CJK characters.
     # Reconfigure stdout/stderr for UTF-8 so the YAML output doesn't crash.
@@ -404,7 +427,7 @@ def main():
     )
     parser.add_argument(
         "input",
-        help="Path to a UTF-8 plain-text novel file, or a directory of .txt files "
+        help="Path to a UTF-8 plain-text novel file, or a directory of .txt / .md files "
              "(one per chapter, read in alphabetical order).",
     )
     parser.add_argument(
@@ -415,10 +438,23 @@ def main():
         "--json", dest="format_json", action="store_true",
         help="Export as JSON instead of YAML.",
     )
+    parser.add_argument(
+        "-n", "--limit", type=int, default=None, metavar="N",
+        help="Limit processing to the first N chapters (for quick testing).",
+    )
+    parser.add_argument(
+        "-c", "--concurrency", type=int, default=None, metavar="C",
+        help="Maximum concurrent LLM API calls (default: 20).  "
+             "Also settable via LLM_MAX_CONCURRENCY env var.",
+    )
     args = parser.parse_args()
 
+    # Apply CLI override early — the semaphore reads this env var on first access.
+    if args.concurrency is not None:
+        os.environ["LLM_MAX_CONCURRENCY"] = str(args.concurrency)
+
     try:
-        script = asyncio.run(run(args.input))
+        script = asyncio.run(run(args.input, limit=args.limit))
         if args.format_json:
             from cli.exporter import to_json
 

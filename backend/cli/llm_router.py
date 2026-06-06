@@ -22,6 +22,7 @@ import os
 import random
 import time
 from typing import Any
+import asyncio
 
 import httpx
 from langchain_core.runnables import RunnableSerializable
@@ -110,6 +111,32 @@ _REQUEST_TIMEOUT = httpx.Timeout(
     write=10.0,
     pool=5.0,
 )
+
+# ---------------------------------------------------------------------------
+# Concurrency limiter — prevents flooding the LLM API with too many
+# parallel calls (default: 20).  Override via ``LLM_MAX_CONCURRENCY`` env var.
+#
+# DeepSeek API limits (for reference):
+#   deepseek-v4-pro   500
+#   deepseek-v4-flash 2500
+# ---------------------------------------------------------------------------
+
+_llm_semaphore: asyncio.Semaphore | None = None
+
+_DEFAULT_MAX_CONCURRENCY = 20
+
+
+def get_llm_semaphore() -> asyncio.Semaphore:
+    """Return a module-level :class:`asyncio.Semaphore` that gates concurrent
+    LLM API calls.  Created lazily on first access so the env var is
+    guaranteed to have been loaded by that point.
+    """
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        max_cc = int(os.getenv("LLM_MAX_CONCURRENCY", _DEFAULT_MAX_CONCURRENCY))
+        _llm_semaphore = asyncio.Semaphore(max_cc)
+        logger.debug("LLM concurrency limit: %d", max_cc)
+    return _llm_semaphore
 
 
 # ---------------------------------------------------------------------------

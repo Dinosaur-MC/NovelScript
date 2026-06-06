@@ -55,15 +55,23 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 - **JSON mode**: `response_format: {type: json_object}`, NOT OpenAI json_schema
 - **Retry**: Application-layer exponential backoff with jitter (per-stage: 1-3 retries)
 - **Context budget**: Auto-detected from model name + `.env` overrides (`LLM_CONTEXT_WINDOW`, `LLM_MAX_OUTPUT_TOKENS`)
+- **Concurrency**: `asyncio.Semaphore` gates concurrent LLM calls (default 20, configurable via `LLM_MAX_CONCURRENCY` or `-c` CLI flag)
 - **Paragraph splitter**: Boundary-aware (`\n\n+`), short paragraphs (≤32 chars) merged
 - **OpenRouter**: Embeddings only — `openai/text-embedding-3-small` via `https://openrouter.ai/api/v1/embeddings`
 
 ### Key CLI Options
 
 ```
-uv run python -m cli.pipeline <input> [-o output.yaml] [--json]
-uv run python -m cli.pipeline chapters/ -o out.yaml  # directory mode
+uv run python -m cli.pipeline <input> [-o output.yaml] [--json] [-n N] [-c C]
+uv run python -m cli.pipeline chapters/ -o out.yaml -n 3  # first 3 chapters, dir mode
 ```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-o`, `--output` | Write result to file instead of stdout | stdout |
+| `--json` | Export JSON instead of YAML | YAML |
+| `-n N`, `--limit N` | Process only the first N chapters | all |
+| `-c C`, `--concurrency C` | Max concurrent LLM API calls | 20 |
 
 ## Package Managers
 

@@ -7,6 +7,7 @@ invocation through ``_invoke_chain``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -58,12 +59,12 @@ _MOCK_DICT = _MOCK_RESULT.model_dump()
 
 class TestOptimize:
     def test_empty_scenes_returns_empty(self) -> None:
-        assert optimize([], KnowledgeGraph()) == []
+        assert asyncio.run(optimize([], KnowledgeGraph())) == []
 
     def test_happy_path_single_batch(self, sample_scenes: list[Scene],
                                       sample_kg: KnowledgeGraph) -> None:
         with patch("cli.optimizer._invoke_chain", return_value=_MOCK_DICT) as mock_invoke:
-            result = optimize(sample_scenes, sample_kg)
+            result = asyncio.run(optimize(sample_scenes, sample_kg))
             # 2 small scenes → 1 batch
             assert mock_invoke.call_count == 1
             assert len(result) == 1
@@ -71,7 +72,7 @@ class TestOptimize:
 
     def test_failure_returns_originals(self, sample_scenes: list[Scene]) -> None:
         with patch("cli.optimizer._invoke_chain", side_effect=RuntimeError("fail")) as mock_invoke:
-            result = optimize(sample_scenes, KnowledgeGraph())
+            result = asyncio.run(optimize(sample_scenes, KnowledgeGraph()))
             assert mock_invoke.call_count == 1
             assert result == sample_scenes
 
@@ -87,7 +88,7 @@ class TestOptimize:
         ]
 
         with patch("cli.optimizer._invoke_chain", return_value=_MOCK_DICT):
-            result = optimize(many, KnowledgeGraph())
+            result = asyncio.run(optimize(many, KnowledgeGraph()))
             # Each batch produces 1 scene from the mock → we get batch_count scenes
             assert len(result) >= 1
             assert all(isinstance(s, Scene) for s in result)
