@@ -10,8 +10,8 @@ export function ScriptPreview({ traceHook }: Props) {
   const scenes = useScriptStore((s) => s.scenes);
 
   const handleElementClick = useCallback(
-    (sceneId: string, elementIdx: number) => {
-      traceHook.onElementClick(`${sceneId}_${elementIdx}`, sceneId, elementIdx);
+    (elementId: string, sceneId: string, elementIdx: number) => {
+      traceHook.onElementClick(elementId, sceneId, elementIdx);
     },
     [traceHook],
   );
@@ -44,11 +44,13 @@ export function ScriptPreview({ traceHook }: Props) {
       }}
     >
       {scenes.map((scene: Record<string, unknown>, si: number) => {
-        const heading = scene.heading as Record<string, string> | undefined;
+        // heading can be a string ("地点 — 时间") or an object ({text, location, time_of_day})
+        const headingRaw = scene.heading;
+        const headingStr = typeof headingRaw === "string" ? headingRaw : (headingRaw as Record<string, string>)?.text || (headingRaw as Record<string, string>)?.location || `Scene ${si + 1}`;
         const elements = scene.elements as Array<Record<string, unknown>> | undefined;
 
         return (
-          <div key={String(scene.scene_id ?? si)} style={{ marginBottom: 32 }}>
+          <div key={`${String(scene.scene_id ?? "")}_${si}`} style={{ marginBottom: 32 }}>
             {/* Scene Heading */}
             <h3
               style={{
@@ -58,17 +60,24 @@ export function ScriptPreview({ traceHook }: Props) {
                 color: "var(--color-text-primary)",
               }}
             >
-              {heading?.text ?? heading?.location ?? `Scene ${si + 1}`}
+              {headingStr || `Scene ${si + 1}`}
             </h3>
 
             {/* Elements */}
             {elements?.map((el, ei) => {
-              switch (el.type) {
+              // Field names in the YAML: "content" (action/dialogue text), "character_name", "dialogue"
+              const text = (el.content as string) || (el.text as string) || "";
+              const charName = (el.character_name as string) || "";
+              const dialogue = (el.dialogue as string) || "";
+              const type = (el.type as string) || "";
+              const elId = (el.id as string) || `${scene.scene_id}_${ei}`;
+
+              switch (type) {
                 case "action":
                   return (
                     <p
                       key={ei}
-                      onClick={() => handleElementClick(String(scene.scene_id ?? si), ei)}
+                      onClick={() => handleElementClick(elId, String(scene.scene_id ?? si), ei)}
                       style={{
                         textAlign: "justify",
                         marginBottom: 12,
@@ -78,14 +87,15 @@ export function ScriptPreview({ traceHook }: Props) {
                         transition: "background-color 0.2s",
                       }}
                     >
-                      {el.text as string}
+                      {text}
                     </p>
                   );
+                case "dialogue":
                 case "dialogue_block":
                   return (
                     <div
                       key={ei}
-                      onClick={() => handleElementClick(String(scene.scene_id ?? si), ei)}
+                      onClick={() => handleElementClick(elId, String(scene.scene_id ?? si), ei)}
                       style={{
                         textAlign: "center",
                         marginBottom: 12,
@@ -94,17 +104,32 @@ export function ScriptPreview({ traceHook }: Props) {
                         borderRadius: 4,
                       }}
                     >
-                      <div style={{ fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>
-                        {el.character_name as string}
-                        {el.character_extension ? ` ${el.character_extension}` : ""}
-                      </div>
+                      {charName && (
+                        <div style={{ fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>
+                          {charName}
+                          {el.character_extension ? ` ${el.character_extension}` : ""}
+                        </div>
+                      )}
                       {(el.parenthetical as string | undefined) && (
                         <div style={{ color: "var(--color-text-secondary)", marginBottom: 4 }}>
                           {el.parenthetical as string}
                         </div>
                       )}
-                      <div>{(el.dialogue as string) ?? ""}</div>
+                      <div>{dialogue || text}</div>
                     </div>
+                  );
+                case "character":
+                  return (
+                    <p
+                      key={ei}
+                      style={{
+                        textAlign: "center",
+                        marginBottom: 12,
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      {text}
+                    </p>
                   );
                 case "transition":
                   return (
@@ -117,7 +142,7 @@ export function ScriptPreview({ traceHook }: Props) {
                         color: "var(--color-text-secondary)",
                       }}
                     >
-                      {el.text as string}
+                      {text}
                     </p>
                   );
                 default:

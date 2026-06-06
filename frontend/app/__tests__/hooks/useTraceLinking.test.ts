@@ -21,11 +21,14 @@ describe("useTraceLinking", () => {
       applyExternalEdit: vi.fn(),
       highlightLines: highlightFn,
       clearHighlights: vi.fn(),
+      triggerUndo: vi.fn(),
+      triggerRedo: vi.fn(),
     };
   }
 
   describe("forward trace (element click → scroll source)", () => {
-    it("calls scrollToOffset with the correct offset", () => {
+    it("calls scrollToOffset with the correct offset (after rAF+setTimeout)", () => {
+      vi.useFakeTimers();
       useScriptStore.getState().loadFromTaskResponse({
         script_json: {
           scenes: [
@@ -53,10 +56,14 @@ describe("useTraceLinking", () => {
       );
 
       result.current.onElementClick("el_alpha", "s1", 0);
+      // rAF fires → setTimeout(50) → scrollToOffset called
+      vi.advanceTimersByTime(100);
       expect(scrollToOffset).toHaveBeenCalledWith(500);
+      vi.useRealTimers();
     });
 
     it("selects the right chapter before scrolling", () => {
+      vi.useFakeTimers();
       useNovelStore.getState().setChapters([
         { index: 1, title: "第一章", content: "..." },
         { index: 2, title: "第二章", content: "..." },
@@ -89,7 +96,9 @@ describe("useTraceLinking", () => {
 
       result.current.onElementClick("el_x", "s1", 0);
       expect(useNovelStore.getState().selectedChapterId).toBe("2");
+      vi.advanceTimersByTime(100);
       expect(scrollToOffset).toHaveBeenCalledWith(1200);
+      vi.useRealTimers();
     });
   });
 
@@ -155,7 +164,7 @@ describe("useTraceLinking", () => {
       // el_1 [100,200] overlaps ch_01:[120,180] → line 2
       // el_2 [150,250] overlaps ch_01:[120,180] → line 2
       // el_3 is ch_02 — excluded
-      expect(highlightLines).toHaveBeenCalledWith([2, 2]);
+      expect(highlightLines).toHaveBeenCalledWith([2]);
     });
 
     it("calls nothing when no elements match the selection", () => {

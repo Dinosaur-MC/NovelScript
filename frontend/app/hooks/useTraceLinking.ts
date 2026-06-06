@@ -24,15 +24,23 @@ export function useTraceLinking(
 
   /** Forward trace: element click → scroll source to cited offset. */
   const onElementClick = useCallback(
-    (elementId: string, _sceneId: string, _elementIdx: number) => {
-      const ref = sourceRefMap.get(elementId);
+    (elementId: string, sceneId: string, elementIdx: number) => {
+      // Try primary id first, then positional fallback (sceneId_index)
+      let ref = sourceRefMap.get(elementId);
+      if (!ref) {
+        ref = sourceRefMap.get(`${sceneId}_${elementIdx}`);
+      }
       if (!ref) return;
       // Switch chapter if needed
       const chIdx = parseInt(ref.chapter_id.replace(/^ch_/, ""), 10);
       if (!isNaN(chIdx)) {
         selectChapter(chIdx);
       }
-      readerHook.scrollToOffset(ref.offset[0]);
+      // Use rAF → setTimeout to wait for React re-render + TipTap content swap
+      // + DOM paint before resolving offset to a DOM position.
+      requestAnimationFrame(() => {
+        setTimeout(() => readerHook.scrollToOffset(ref.offset[0]), 50);
+      });
     },
     [sourceRefMap, selectChapter, readerHook],
   );
@@ -56,7 +64,8 @@ export function useTraceLinking(
 
       if (matchingLines.length > 0) {
         // Convert source offsets to approximate lines (100 chars per line heuristic)
-        const lines = matchingLines.map((offset) => Math.floor(offset / 100) + 1);
+        // Deduplicate — same element may be registered under multiple keys
+        const lines = [...new Set(matchingLines.map((offset) => Math.floor(offset / 100) + 1))];
         editorHook.highlightLines(lines);
       }
     },

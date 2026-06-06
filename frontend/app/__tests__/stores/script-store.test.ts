@@ -86,7 +86,8 @@ describe("script-store", () => {
       useScriptStore.getState().loadFromTaskResponse(payload);
 
       const map = useScriptStore.getState().sourceRefMap;
-      expect(map.size).toBe(2);
+      // 2 elements with source_ref × 2 keys each (id + positional fallback) = 4
+      expect(map.size).toBe(4);
       expect(map.get("el_a")).toEqual({
         chapter_id: "ch_01",
         offset: [0, 50],
