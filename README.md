@@ -29,12 +29,13 @@ NovelScript 摒弃了“一个 Prompt 搞定一切”的玩具思维，构建了
 ### 🚀 1. 工业级双模型路由与并发管线
 
 - **智能路由**：严格区分 `DeepSeek-v4-pro`（负责高难度的核心场景转换与图谱抽取）与 `DeepSeek-v4-flash`（负责轻量摘要、对话与补丁生成），在保证质量的同时极致压缩 Token 成本。
-- **异步并发**：基于 `FastAPI + asyncio.Semaphore` 构建，支持多章节分块并发调用，3 万字小说的端到端转换时间压缩至 90 秒内。
+- **7 阶段智能管线**：Chunking → Summarize → RAG → GraphRAG → Conversion → Optimization → Narrative Summary。每阶段独立回退，段落级切分杜绝裸截断。
 
-### 🛡️ 2. Pydantic V2 强校验与 Auto-Fix 兜底
+### 🛡️ 2. 应用层重试与 Pydantic V2 强校验
 
-- 彻底解决 LLM 结构化输出（JSON/YAML）的“格式漂移”痛点。
-- 独创 **Auto-Fix 容错循环**：当 LLM 输出非法 JSON 时，系统自动捕获 `ValidationError`，将错误信息回传 LLM 进行二次修复（最大重试 2 次），确保最终交付物 100% 合法可用。
+- 彻底解决 LLM 结构化输出（JSON）的"格式漂移"痛点。
+- 独创 **指数退避重试**：每阶段可配置 (1-3 次)，处理网络错误、超时、限流、5xx。不可重试的 4xx 直接上抛。
+- `JsonOutputParser` + `model_validate()` 双阶段校验，各级独立回退——系统绝不崩溃。
 
 ### 🔗 3. 双向溯源映射 (Trace Mapping)
 
@@ -74,7 +75,7 @@ graph TD
     subgraph 后端引擎 FastAPI
         E[RESTful API 和 SSE 进度推送]
         F[LLM Router]
-        G[Pipeline: 切分 → RAG → 转换 → 校验]
+        G[7-Stage Pipeline:<br/>Chunking → Summarize → RAG →<br/>GraphRAG → Conversion →<br/>Optimize → Narrative Summary]
     end
 
     subgraph 数据底座 PostgreSQL
@@ -99,7 +100,7 @@ graph TD
 | 领域        | 技术选型                                                                   | 说明                                 |
 | :---------- | :------------------------------------------------------------------------- | :----------------------------------- |
 | **前端**    | React 19, TypeScript, Vite, Ant Design 6, TipTap, Monaco Editor, ReactFlow | 构建 Web IDE 级别的三栏协同编辑体验  |
-| **后端**    | Python 3.13, FastAPI, Pydantic V2, Uvicorn                                 | 高性能异步非阻塞 API 服务            |
+| **后端**    | Python 3.13, FastAPI (sync psycopg2), Pydantic V2, Uvicorn                 | 同步数据层 + 异步管道引擎并行        |
 | **AI 编排** | LangChain, DeepSeek API (v4-pro / v4-flash)                                | 多阶段 Pipeline 编排与智能模型路由   |
 | **数据库**  | PostgreSQL 18 (`pgvector`, `uuid-ossp`)                                    | 关系型 + 向量检索 + JSONB 多模态融合 |
 | **部署**    | Docker, Docker Compose, Nginx                                              | 一键容器化编排，环境强一致性         |

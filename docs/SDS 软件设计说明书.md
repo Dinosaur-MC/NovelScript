@@ -1,7 +1,7 @@
 # NovelScript (析幕) 软件设计说明书
 
 - **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-- **文档版本**：v2.0.0
+- **文档版本**：v2.1.0
 - **日期**：2026-06-06
 - **作者**：Dinosaur_MC
 - **关联文档**：[SRS 需求规格说明书](./SRS%20需求规格说明书.md) · [YAML Schema 设计说明](./YAML_Schema_设计说明.md)
@@ -37,10 +37,12 @@
 | 层       | 技术选型                                                                                               |
 | :------- | :----------------------------------------------------------------------------------------------------- |
 | **前端** | React 19 + TypeScript + Vite, React Router v7, Zustand, Ant Design 6, Monaco Editor, TipTap, ReactFlow |
-| **后端** | Python 3.13, FastAPI (async), Uvicorn, SQLModel + asyncpg, LangChain, sse-starlette                    |
-| **数据** | PostgreSQL 18 + pgvector + uuid-ossp + pg_trgm                                                         |
-| **AI**   | DeepSeek-v4-pro (知识图谱/一致性检查), DeepSeek-v4-flash (场景生成/对话/补丁)                          |
-| **部署** | Docker Compose (Frontend + Backend + PostgreSQL), Nginx 反向代理                                       |
+| **后端** | Python 3.13, FastAPI (sync, psycopg2), Uvicorn, SQLAlchemy + psycopg2-binary, LangChain, sse-starlette |
+| **数据** | PostgreSQL 18 + pgvector + uuid-ossp + pg_trgm                                                    |
+| **AI**   | DeepSeek V4 Pro (1M ctx/384K output) — 知识图谱/一致性检查; DeepSeek V4 Flash (1M ctx/384K output) — 场景生成/对话/摘要/补丁 |
+| **部署** | Docker Compose (Frontend + Backend + PostgreSQL), Nginx 反向代理                                  |
+
+> **注意**：后端使用**同步 `psycopg2`** 驱动（非 asyncpg），避免 Windows ProactorEventLoop 兼容性问题。管道引擎内部使用 `asyncio` 做并行章节转换，但 FastAPI 路由和 DB 层均为同步实现。
 
 ## 2. 系统架构设计
 
@@ -108,136 +110,141 @@ frontend/app/
 ```
 
 - **状态管理 (Zustand)**：4 个独立 store，按领域拆分。跨 store 通信通过组件层调用多个 store action 实现。
-- **SSE 进度推送**：使用 `EventSource` 订阅 `/api/novel/status/{task_id}` 的 SSE 流，实时更新 `task-store` 中的 `progress`。
+- **SSE 进度推送**：使用 `EventSource` 订阅 `/api/v1/tasks/{task_id}/stream` 的 SSE 流，接收 `progress`/`complete`/`error` 事件，实时更新 `task-store`。
 
 ### 2.3 后端架构
 
 ```
 backend/app/
-├── main.py                  # FastAPI 应用工厂, CORS, 异常处理器
+├── main.py                     # FastAPI 应用工厂, lifespan (引擎池回收), CORS, 异常处理器
+├── api/v1/
+│   ├── __init__.py             # 统一路由树 → /api/v1/*
+│   ├── auth.py                 # /api/v1/auth/* (register/login/logout/me)
+│   ├── novels.py               # /api/v1/novels/* (upload/list/get/update/delete)
+│   ├── scripts.py              # /api/v1/scripts/* (list/get/update/delete/export)
+│   ├── tasks.py                # /api/v1/tasks/* (create/list/stream/status/update/resume/get)
+│   └── editor.py               # /api/v1/editor/* (chat/apply_patch/undo)
 ├── core/
-│   ├── config.py            # 环境变量加载 (API Key, DB URL, 模型参数)
-│   ├── security.py          # 认证中间件 (JWT Session + API Key 隔离)
-│   └── db.py                # PostgreSQL 连接池 (asyncpg)
-├── api/
-│   ├── __init__.py           # 路由聚合
-│   ├── v1.py                 # v1 路由注册
-│   ├── auth.py               # /api/auth/* (注册/登录/会话)
-│   ├── novel.py              # /api/novel/* (上传/预处理/转换/状态)
-│   ├── scripts.py            # /api/scripts/* (剧本CRUD/版本对比/导出)
-│   └── editor.py             # /api/editor/* (对话/Patch/Undo)
+│   ├── config.py               # pydantic-settings (DB URL, API Key, ADMIN_*, LLM_*)
+│   ├── security.py             # argon2 哈希, JWT 创建/解码 (sync)
+│   └── db.py                   # 同步 psycopg2 引擎, get_db(), init_db(), dispose_engine()
 ├── models/
-│   ├── http.py               # BaseResponse, ErrorResponse
-│   ├── task.py               # TaskStatus, TaskResponse (Pydantic V2)
-│   ├── script.py             # YAML Schema 完整 Pydantic 模型
-│   └── patch.py              # JSON Patch RFC 6902 模型
+│   ├── http.py                 # BaseResponse(code, message, data), ErrorResponse
+│   └── sql.py                  # 9 表 SQLModel 定义
 ├── services/
-│   ├── llm_router.py         # DeepSeek Pro/Flash 模型路由
-│   ├── pipeline.py           # 三阶段管道编排 (规划→生成→优化)
-│   ├── preprocessor.py       # 章节切分 + 全局摘要/图谱提取
-│   ├── converter.py          # 剧本转换引擎 (并发分片 + 溯源注入)
-│   ├── validator.py          # Pydantic 强校验 + Auto-Fix 重试
-│   ├── rag.py                # pgvector 向量化入库与相似度检索
-│   ├── patcher.py            # JSON Patch 生成、验证、应用
-│   ├── exporter.py           # YAML/JSON/Fountain 多格式导出
-│   └── sse.py                # SSE 进度事件推送
+│   ├── base.py                 # BaseCRUD[T] — 通用增删改查
+│   ├── progress.py             # ProgressManager 单例 (queue.Queue 每任务, 线程安全)
+│   ├── pipeline_executor.py    # 后台守护线程, DB 章节优先, SSE 事件推送
+│   └── sse.py                  # push_progress() → ProgressManager 委托
 └── db/
-    ├── init.sql               # 完整 DDL
-    └── migrations/            # 增量迁移脚本 (预留)
+    └── init.sql                # 9 表 DDL + 3 扩展 + HNSW + GIN 索引
+
+backend/cli/                    # Pipeline 引擎 (11 模块)
+├── models.py                   # Chapter, ParagraphGroup, Scene, Script, KG
+├── chunker.py                  # 正则切分 (第X章) + LLM 回退 (JSON mode)
+├── paragraph_splitter.py       # 段落级对齐切分 (短段合并, 预算分组)
+├── summarizer.py               # 逐章客观摘要 (Flash, 100-200 字)
+├── rag_builder.py              # FAISS 索引 (OpenRouter embedding) + 关键词回退
+├── graphrag_builder.py         # 知识图谱提取 (Pro, RAG 跨章节上下文)
+├── converter.py                # 章节→场景 (Flash, paragraph groups, 前情提要)
+├── optimizer.py                # 分批一致性检查 (Pro, 位置索引 source_ref 恢复)
+├── llm_router.py               # 模型路由, 上下文/输出限制, invoke_with_retry()
+├── exporter.py                 # YAML/JSON 导出
+└── pipeline.py                 # 7 阶段编排 (3 入口: file/directory/chapters)
 ```
 
 **分层职责**：
 
-- **api/** — 薄路由层，仅做参数解析与 Response 封装，业务逻辑委托给 services
-- **services/** — 核心业务逻辑，每个模块独立且可单独测试
-- **models/** — Pydantic V2 数据模型，是 LLM 输出的强制校验门
-- **core/** — 配置、安全、DB 连接等基础设施
+- **api/** — 薄路由层，Pydantic 参数校验，SSE 端点，业务逻辑委托给 services
+- **services/** — 后台执行、SSE 事件分发、CRUD 基类
+- **cli/** — Pipeline 引擎核心，每个模块独立可单独测试（166 测试覆盖）
+- **models/** — Pydantic V2 模型 + SQLModel 表定义，是 LLM 输出的强制校验门
+- **core/** — 配置、安全、DB 生命周期（引擎池回收 atexit + lifespan + test teardown）
 
 ## 3. 核心管道设计 (Pipeline)
 
-### 3.1 三阶段管道总览
+### 3.1 7 阶段管道总览
 
-借鉴现代 AI Agent Pipeline 最佳实践，将小说→剧本转换分解为三个专业化阶段：
+Pipeline 将小说→剧本转换分解为 7 个专业化阶段，阶段间**松耦合**，每个阶段有独立的前向依赖与回退策略：
 
-```mermaid
-flowchart LR
-    S1["<b>Stage 1</b><br/>意图理解与规划<br/><br/>🟣 Pro Model<br/><br/>输出：结构化规划<br/>（全局图谱 + 角色）"]
-    S2["<b>Stage 2</b><br/>场景生成与初步验证<br/><br/>🟢 Flash Model<br/><br/>输出：Scene + Element<br/>（经 Pydantic 校验）"]
-    S3["<b>Stage 3</b><br/>优化与序列化<br/><br/>🟣 Pro Model<br/><br/>输出：最终 YAML<br/>+ Fountain 导出"]
-
-    S1 --> S2 --> S3
-
-    S2 -.->|"ValidationError<br/>触发闭环"| AutoFix["🔧 Auto-Fix<br/>（max 2x）"]
-    AutoFix -.->|"修复后重试"| S2
+```
+1. Chunking      —— 正则 (第X章) + LLM 回退 (Flash)
+2. Summarize     —— 逐章客观摘要 (Flash, 并行)
+3. RAG Index     —— FAISS 向量索引 (OpenRouter embedding)
+4. GraphRAG      —— 知识图谱提取 (Pro, 带 RAG 跨章节上下文)
+5. Conversion    —— 章节→场景 (Flash, 并行, 段落组输入)
+6. Optimization  —— 跨场景一致性 (Pro, 按场景分批)
+7. Narrative Summary —— 全局故事概述 (Flash, 从章摘要合成)
 ```
 
-### 3.2 Stage 1: 意图理解与规划
+### 3.2 Stage 1: 章节切分 (Chunking)
 
-- **模型**：DeepSeek-v4-pro（强推理能力, 1.6T 总参数/49B 激活参数）
-- **输入**：完整小说章节文本
-- **输出**：
-    - 故事全局摘要 (`summary`)
-    - 角色列表（含性格/身份/关系）
-    - 地点列表
-    - 角色关系网（图结构, JSONB）
-- **处理流程**：
-    1. 调用 Pro 模型做全局语义理解
-    2. 提取角色实体、地点实体、关系三元组
-    3. 写入知识图谱点边表 (`knowledge_nodes` + `knowledge_edges`)，同步保留 JSONB 聚合视图于 `tasks.characters_json`
-    4. 将章节文本 Embedding 化写入 `chapters.embedding`（为 Stage 2 提供 RAG 检索）
+- **模型**：DeepSeek V4 Flash（回退时）
+- **策略**：正则优先匹配 `第[零一二三四五六七八九十百千0-9]+章`，匹配失败或短章节（avg<5 字符）则触发 LLM 回退
+- **特殊路径**：目录输入（每 `.txt` 文件一章）/ DB 章节持久化（跳过拆分）
+- **LLM 回退**：JSON mode，Pydantic 校验 `{chapters: [{title, body}]}`
 
-> 对复杂请求，可启用 Pro 的 Thinking Mode (Chain-of-Thought)，让模型先输出思考过程再给出规划，提升输出质量。
+### 3.3 Stage 2: 逐章摘要 (Summarize, 并行)
 
-### 3.3 Stage 2: 场景生成与初步验证
+- **模型**：DeepSeek V4 Flash
+- **设计**：每章独立并行执行，无跨章依赖 → 保持并行性
+- **输出**：100-200 字客观事件摘要（仅事实描述，不推论/评价）
+- **用途**：存入 `meta.chapter_summaries`，供 Converter 的前情提要和 Narrative Summary 使用
 
-- **模型**：DeepSeek-v4-flash（高吞吐、低延迟、低成本, 284B/13B 激活参数）
-- **输入**：Stage 1 的规划 + RAG 检索的前文记忆（通过 pgvector KNN 查询）
-- **输出**：Scene 序列，每个 Scene 包含 Element 列表（action/dialogue/shot 等）
-- **处理流程**：
-    1. 以章节为单位，RAG 检索前文相关上下文注入 Prompt
-    2. 调用 Flash 模型生成 Scene + Element 结构
-    3. **Pydantic V2 严格校验**：输出必须通过 YAML Schema 对应的 Pydantic 模型
-    4. 若校验失败 → 进入 Auto-Fix 闭环
-    5. 校验通过后强制注入 `source_ref`（`chapter_id` + `offset`）
+### 3.4 Stage 3: RAG 索引构建
 
-**并发控制**：
+- **Embedding**：OpenRouter `openai/text-embedding-3-small`（`encoding_format=float`）
+- **索引**：内存 FAISS（每章全文存为 Document）
+- **回退**：FAISS 失败 → 关键词字符重叠搜索（`fallback_texts` 传入章节全文）
 
-- 使用 `asyncio.Semaphore` 限制并发 Flash 调用数（默认 5）
-- 单章超过 8000 字自动滑动窗口分片（chunk_size=4000, overlap=200）
-- 通过 SSE 向前端推送实时进度
+### 3.5 Stage 4: 知识图谱提取 (GraphRAG)
 
-### 3.4 Stage 3: 优化与序列化
+- **模型**：DeepSeek V4 Pro（JSON mode）
+- **输入增强**：RAG 为每章检索跨章节语义关联上下文（≤3K 字符），注入 KG 提取 prompt
+- **切片**：段落组对齐（`ParagraphSplitter`），每章 ≤`context_chars()` 预算
+- **输出**：`KnowledgeNode` 列表（character/location/item/event/organization）+ `KnowledgeEdge` 列表
+- **回退**：失败返回空 `KnowledgeGraph()`
 
-- **模型**：DeepSeek-v4-pro（宏观审视与创造性修改能力）
-- **输入**：Stage 2 输出的已校验 Scene 集合
-- **输出**：
-    - 优化后的完整 YAML（结构性调整、对白润色、节奏优化）
-    - Fountain 序列化文件
-- **处理流程**：
-    1. Pro 模型对全量 Scene 做一致性检查（角色性格、地点连续性、时间线合理性）
-    2. 生成 Metadata（转换时间、使用模型、原著信息）
-    3. 调用 Fountain 导出器序列化为 `.fountain` 文件
-    4. 落库保存
+### 3.6 Stage 5: 场景转换 (Conversion, 并行)
 
-### 3.5 闭环反馈与自动修复 (Auto-Fix Loop)
+- **模型**：DeepSeek V4 Flash（JSON mode, `max_tokens=8000`）
+- **输入**：
+  - 段落组对齐的章节文本（ParagraphSplitter，杜绝跨句截断）
+  - RAG 跨章节上下文（每片段 ≤2000 字符）
+  - 知识图谱摘要（角色 + 关系）
+  - 本章前情摘要
+- **输出**：`SceneList`（通过 Pydantic 校验 + `source_ref` 注入`）
+- **回退**：失败返回 `[]`（该章静默丢失，不阻断管线）
+- **重试**：应用层指数退避，最大 2 次（`scene_conversion`）
 
-```mermaid
-flowchart TD
-    LLM["LLM 输出"] --> Validate{"Pydantic V2 校验"}
+### 3.7 Stage 6: 一致性优化 (Optimization, 分批)
 
-    Validate -->|"✅ 通过"| Inject["注入 source_ref → 入库"]
+- **模型**：DeepSeek V4 Pro（JSON mode, `max_tokens=4000`）
+- **分批策略**：按 `_BATCH_BUDGET=10K` 字符将场景拆为独立批次，以场景为原子单位（不跨场景切分）；单场景超预算也允许通过
+- **source_ref 恢复**：优化后按**位置索引**（非 scene_id）从原始场景恢复溯源锚点
+- **回退**：批次失败保留原始场景
+- **重试**：最大 3 次（`consistency_check`）——管线末端，损失成本最高
 
-    Validate -->|"❌ ValidationError"| Fix["构造『修复 Prompt』<br/>（含错误详情 + 期望 Schema）"]
-    Fix --> Retry["重新调用 LLM"]
+### 3.8 Stage 7: 叙事摘要 (Narrative Summary)
 
-    Retry --> Validate2{"Pydantic V2 校验"}
-    Validate2 -->|"✅ 通过"| Inject2["注入 source_ref → 入库"]
-    Validate2 -->|"❌ 第 2 次失败"| Fallback["降级策略：返回已解析部分 + 警告标记"]
-```
+- **模型**：DeepSeek V4 Flash
+- **输入**：逐章摘要拼接（"第 1 章摘要: …第 2 章摘要: …"）
+- **输出**：一段话（≤300 字）全局故事概述
+- **回退**：程序化摘要（角色数+地点数+事件数）
 
-- **最大重试**：2 次
-- **修复 Prompt**：包含原始输出的错误位置、Pydantic 错误详情、期望的正确 JSON Schema
-- **降级兜底**：2 次重试均失败后，降级返回已成功解析的场景部分并标记警告，系统绝不崩溃
+### 3.9 段落级切分 (Paragraph Splitter)
+
+- **输入**：章节全文
+- **切分**：按 `\n{2,}` 边界（空行=段落边界）→ 短段落（≤32 字）合并 → 按 Token 预算累加分组
+- **保证**：每个 ParagraphGroup 以完整段落结束，LLM 从不收到截断的句子
+- **预算**：由 `context_chars(stage)` 自动计算（从模型名匹配上下文窗口，保守 CJK 密度 0.6 chars/token，60% 窗口为输入预算）
+
+### 3.10 Auto-Fix 与重试
+
+- **校验**：所有 JSON 输出通过 `JsonOutputParser(pydantic_object=Model)` + `Model.model_validate()` 双阶段校验
+- **重试**：应用层 `invoke_with_retry()` 处理可重试异常（`APIConnectionError`, `APITimeoutError`, `RateLimitError`, `InternalServerError`, `httpx.ConnectError` 等），指数退避（base=1s, factor=2, max=30s）加随机抖动
+- **不可重试**：4xx 客户端错误直接上抛
+- **全局覆盖**：`LLM_MAX_RETRIES` 环境变量统一调整所有阶段
 
 ## 4. 模型路由策略
 
@@ -245,36 +252,48 @@ flowchart TD
 
 | 任务类型                | 推荐模型          | 设计依据                                           |
 | :---------------------- | :---------------- | :------------------------------------------------- |
-| 全局知识图谱抽取        | DeepSeek-v4-pro   | 需要深度理解全文、实体关系抽取，要求最强推理能力   |
-| 场景转换与重构          | DeepSeek-v4-flash | 模式化生成任务，Flash 成本效益高，速度满足迭代需求 |
-| 全量 Scene 一致性检查   | DeepSeek-v4-pro   | 需要全局视野审视所有场景，发现潜在矛盾与 OOC       |
-| 章节切分（兜底）        | DeepSeek-v4-flash | 轻量语义任务，当正则可覆盖 90% 时仅作补充          |
-| AI 对话 / 上下文问答    | DeepSeek-v4-flash | 对延迟要求高，Flash 高速推理提供流畅对话体验       |
-| Patch 生成 (结构化修改) | DeepSeek-v4-flash | 符合 RFC 6902 的模式化输出，Flash 足以胜任         |
-| 对话摘要 / 轻量摘要     | DeepSeek-v4-flash | 低复杂度文本总结，Pro 浪费算力与成本               |
+| 全局知识图谱提取        | DeepSeek V4 Pro   | 需要深度理解全文、实体关系抽取，要求最强推理能力   |
+| 场景转换与重构          | DeepSeek V4 Flash | 模式化生成任务，Flash 成本效益高，速度满足迭代需求 |
+| 全量 Scene 一致性检查   | DeepSeek V4 Pro   | 需要全局视野审视所有场景，发现潜在矛盾             |
+| 章节切分（回退）        | DeepSeek V4 Flash | 轻量语义任务，当正则可覆盖 90% 时仅作补充          |
+| 逐章摘要生成            | DeepSeek V4 Flash | 低复杂度文本总结，Pro 浪费算力与成本               |
+| 叙事摘要合成            | DeepSeek V4 Flash | 低复杂度文本总结                                   |
+| AI 对话 / 上下文问答    | DeepSeek V4 Flash | 对延迟要求高，Flash 高速推理提供流畅对话体验       |
+| Patch 生成 (结构化修改) | DeepSeek V4 Flash | 符合 RFC 6902 的模式化输出，Flash 足以胜任         |
 
-### 4.2 路由实现
+### 4.2 模型感知上下文预算
+
+- **上下文窗口**：`_MODEL_LIMITS` 表按模型名记录（DeepSeek V4: 1M tokens / 384K output）
+- **自动计算**：`context_chars(stage)` → `context_tokens * 0.6 * 0.6`（CJK 密度 × 输入使用率）
+- **手动覆盖**：`.env` 中 `LLM_CONTEXT_WINDOW` 和 `LLM_MAX_OUTPUT_TOKENS` 可全局覆盖
+- **每阶段 `max_tokens`**：`min(per_stage_cap, model_max_output)` → 防止输出截断和成本失控
+
+### 4.3 代码实现
 
 ```python
-# 静态路由表（核心逻辑示意）
+# 模型路由表
 MODEL_ROUTING = {
-    "global_extraction": DeepSeekV4Pro(),
-    "scene_conversion": DeepSeekV4Flash(),
-    "consistency_check": DeepSeekV4Pro(),
-    "chapter_split": DeepSeekV4Flash(),
-    "ai_chat": DeepSeekV4Flash(),
-    "patch_generate": DeepSeekV4Flash(),
-    "summarize": DeepSeekV4Flash(),
+    "global_extraction":  "deepseek-v4-pro",
+    "scene_conversion":   "deepseek-v4-flash",
+    "consistency_check":  "deepseek-v4-pro",
+    "chapter_split":      "deepseek-v4-flash",
+    "chapter_summary":    "deepseek-v4-flash",
+    "ai_chat":            "deepseek-v4-flash",
+}
+
+# 上下文/输出限制
+_MODEL_LIMITS = {
+    "deepseek-v4-pro":   {"context": 1_000_000, "max_output": 384_000},
+    "deepseek-v4-flash": {"context": 1_000_000, "max_output": 384_000},
 }
 ```
 
-### 4.3 成本控制与降级策略
+### 4.4 成本控制与降级策略
 
-- **Pro 模型调用**：仅用于知识图谱抽取（Stage 1）与全量一致性检查（Stage 3），单次完整转换预估 20K tokens（约 ¥0.08）
-- **Flash 模型调用**：承担 Stage 2 主要负载，单次对话约 2K tokens（成本极低）
-- **预算约束**：¥1400 预算可支撑约 10,000 次完整转换
-- **Redis 缓存（P2）**：对相同或高度相似的章节摘要进行缓存，避免重复消耗 Pro 模型 Token
-- **降级**：若 Pro 模型不可用，Flash 可降级执行 Stage 1（质量下降但系统可用）
+- **Pro 模型调用**：仅用于知识图谱提取（Stage 4）与全量一致性检查（Stage 6）
+- **Flash 模型调用**：承担 Stage 1/2/5/7 及编辑器主要负载
+- **逐阶段回退**：每阶段失败独立降级（KG→空图, 转换→空列表, 优化→原始场景）
+- **段落级切分**：避免裸字符截断导致的场景丢失和重复 LLM 调用
 
 ## 5. 数据模型设计
 
@@ -719,22 +738,9 @@ sequenceDiagram
 ### 7.3 剧本转换引擎
 
 - **Scene 切分与重构**：以章为单位，结合全局知识图谱（`knowledge_nodes` + `knowledge_edges` 表查询） + RAG 检索的前文记忆，调用 Flash 模型将叙事文本转换为 Scene 序列
-- **并发策略**：
+- **并发策略**：所有章节通过 `asyncio.gather(*tasks)` 并行执行，无信号量限制（依赖 DeepSeek 自带速率限制 + 应用层重试）。长章节通过 `ParagraphSplitter` 按段落边界分组（不跨句截断），每组不超过 `context_chars("converting")` 预算。
 
-    ```python
-    # 核心并发模型
-    semaphore = asyncio.Semaphore(5)  # 最大 5 并发
-
-    async def convert_chapter(chapter, kg_context, rag_context):
-        async with semaphore:
-            if len(chapter.content) > 8000:
-                return await sliding_window_convert(chapter, chunk_size=4000, overlap=200)
-            return await single_convert(chapter, kg_context, rag_context)
-
-    results = await asyncio.gather(*[convert_chapter(c, kg, rag) for c in chapters])
-    ```
-
-- **source_ref 注入**：校验通过后，为每个 Element 强制填充 `source_ref = {chapter_id, offset}`
+- **source_ref 注入**：转换后通过 `_inject_source_refs()` 按内容匹配（精确→前缀→估算三级回退）为每个 Element 强制填充 `source_ref = {chapter_id, offset, confidence}`。优化阶段通过**位置索引**恢复溯源锚点（而非 scene_id 匹配，因 LLM 可能修改 ID）。
 
 ### 7.4 AI 编辑与 Patch 模块
 
@@ -1168,7 +1174,7 @@ services:
     backend:
         build: ./backend
         environment:
-            DATABASE_URL: postgresql+asyncpg://novelscript:${DB_PASSWORD}@db:5432/novelscript
+            DATABASE_URL: postgresql://novelscript:${DB_PASSWORD}@db:5432/novelscript
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         depends_on:
             - db
@@ -1265,7 +1271,7 @@ server {
 | 1   | PostgreSQL All-in-One           | 72h 内降低运维心智负担，ACID 保证数据一致性                                                                                                                     | MySQL + FAISS + Neo4j   |
 | 2   | YAML 快照 + JSON Patch 混合模型 | 兼顾高频编辑（低延迟 Patch）与安全回溯（快照锚点）                                                                                                              | 纯快照或纯增量          |
 | 3   | Pydantic V2 强校验 + Auto-Fix   | 确保 LLM 不确定输出不污染数据层，闭环修复机制提升可靠性                                                                                                         | 不做校验或仅软提示      |
-| 4   | 三阶段管道 (Pro→Flash→Pro)      | 按任务复杂度匹配模型能力，最大化成本效益比                                                                                                                      | 全用 Pro 或全用 Flash   |
+| 4   | 7 阶段管道 + 双模型路由            | 按任务类型匹配模型能力（Pro 用于 KG/优化，Flash 用于摘要/转换/对话），每阶段独立回退，最大化成本效益比                                                         | 全用 Pro 或全用 Flash   |
 | 5   | SSE 进度推送                    | 轻量级单向数据流，比 WebSocket 实现更简单且对代理友好                                                                                                           | WebSocket / 轮询        |
 | 6   | Zustand (4 stores)              | 轻量（<1KB）、无 boilerplate，4 个独立 store 避免单 store 膨胀                                                                                                  | Redux Toolkit / Context |
 | 7   | 滑动窗口分片 (8000字阈值)       | 单次 LLM 调用 Token 可控，窗口重叠保证语义连续性                                                                                                                | 全文一次性送入          |

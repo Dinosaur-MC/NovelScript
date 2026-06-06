@@ -45,7 +45,7 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 
 ### LLM Architecture
 
-- **Models**: DeepSeek V4 Pro (1M context, 32K output) / Flash (1M context, 32K output)
+- **Models**: DeepSeek V4 Pro (1M context, 384K output) / Flash (1M context, 384K output)
 - **JSON mode**: `response_format: {type: json_object}`, NOT OpenAI json_schema
 - **Retry**: Application-layer exponential backoff with jitter (per-stage: 1-3 retries)
 - **Context budget**: Auto-detected from model name + `.env` overrides (`LLM_CONTEXT_WINDOW`, `LLM_MAX_OUTPUT_TOKENS`)

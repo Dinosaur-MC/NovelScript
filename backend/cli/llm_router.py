@@ -88,8 +88,8 @@ _RETRY_BACKOFF_FACTOR = 2.0
 # ---------------------------------------------------------------------------
 
 _MODEL_LIMITS: dict[str, dict[str, int]] = {
-    "deepseek-v4-pro":   {"context": 1_000_000, "max_output": 32_768},
-    "deepseek-v4-flash": {"context": 1_000_000, "max_output": 32_768},
+    "deepseek-v4-pro":   {"context": 1_000_000, "max_output": 384_000},
+    "deepseek-v4-flash": {"context": 1_000_000, "max_output": 384_000},
 }
 
 # CJK characters-per-token ≈ 0.6–0.8.  We use 0.6 as a conservative estimate
