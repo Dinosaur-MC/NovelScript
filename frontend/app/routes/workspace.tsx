@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Skeleton, Spin } from "antd";
+import { Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
@@ -132,43 +132,28 @@ export default function Workspace() {
       <TaskBar loading={loading} />
       <div style={{ flex: 1, overflow: "hidden" }}>
         {loading ? (
-          /* Skeleton shell + loading indicator while data loads */
-          <div style={{ height: "100%", display: "flex", gap: 4, padding: 4, position: "relative" }}>
-            {/* Left skeleton */}
-            <div style={{ width: `${leftW}%`, padding: 16 }}>
-              <Skeleton active paragraph={{ rows: 12 }} />
-            </div>
-            <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
-            {/* Center + Right skeleton */}
-            <div style={{ flex: 1, display: "flex", gap: 4 }}>
-              <div style={{ flex: 1, padding: 16 }}>
-                <Skeleton active paragraph={{ rows: 20 }} />
-              </div>
-              <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
-              <div style={{ width: "28%", padding: 16 }}>
-                <Skeleton active paragraph={{ rows: 8 }} />
-              </div>
-            </div>
-            {/* Central loading overlay */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 16,
-                background: "rgba(10, 10, 15, 0.6)",
-                backdropFilter: "blur(2px)",
-                zIndex: 10,
-              }}
-            >
-              <Spin
-                indicator={<LoadingOutlined style={{ fontSize: 36, color: "var(--color-accent-primary)" }} spin />}
-              />
-              <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>加载中...</span>
-            </div>
+          <div
+            style={{
+              height: "100%",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 16,
+            }}
+          >
+            <Spin
+              size="large"
+              indicator={
+                <LoadingOutlined
+                  style={{ fontSize: 48, color: "var(--color-accent-primary)" }}
+                  spin
+                />
+              }
+            />
+            <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+              加载中...
+            </span>
           </div>
         ) : (
           <Splitter
