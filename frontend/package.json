@@ -9,6 +9,7 @@
     "typecheck": "react-router typegen && tsc"
   },
   "dependencies": {
+    "@ant-design/cssinjs": "^2.1.2",
     "@ant-design/icons": "^6.2.5",
     "@monaco-editor/react": "^4.7.0",
     "@react-router/node": "7.16.0",
