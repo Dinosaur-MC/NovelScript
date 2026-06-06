@@ -47,6 +47,7 @@ export default function App() {
   return (
     <ConfigProvider
       theme={{
+        cssVar: { prefix: "ns" },
         algorithm: theme.darkAlgorithm,
         token: {
           colorPrimary: "#6c5ce7",
