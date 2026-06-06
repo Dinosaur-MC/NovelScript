@@ -125,11 +125,16 @@ async def run_from_text(
     faiss_index = build_index(chapters)
     _call_cb(cb, 25, "rag")
 
+    # Pre-compute chapter texts list for RAG fallback (used by both
+    # GraphRAG and Conversion stages)
+    all_chapter_texts = [c.text for c in chapters]
+
     # ------------------------------------------------------------------
-    # 3. GraphRAG — knowledge graph extraction
+    # 3. GraphRAG — knowledge graph extraction (with RAG context)
     # ------------------------------------------------------------------
     logger.info("=== Stage 3: Knowledge Graph Extraction ===")
-    kg = extract_graph(chapters)
+    kg = extract_graph(chapters, faiss_index=faiss_index,
+                       all_chapter_texts=all_chapter_texts)
     logger.info(
         "KG: %d node(s), %d edge(s).",
         len(kg.nodes),
@@ -145,8 +150,6 @@ async def run_from_text(
     all_scenes: list[Scene] = []
     chapter_count = len(chapters)
     completed_count = 0
-    # Pre-compute fallback texts for keyword search when FAISS is unavailable
-    all_chapter_texts = [c.text for c in chapters]
 
     async def convert_one(ch: Chapter) -> list[Scene]:
         nonlocal completed_count
