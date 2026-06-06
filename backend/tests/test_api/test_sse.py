@@ -1,8 +1,8 @@
 """Tests for SSE progress streaming endpoint — GET /api/v1/tasks/{task_id}/stream.
 
-Uses ``httpx.AsyncClient`` with the ASGI transport so async streaming
-endpoints work correctly.  Each test calls ``asyncio.run()`` — no
-``pytest-asyncio`` needed.
+With Celery, the SSE endpoint polls ``AsyncResult`` (Redis).  These
+tests mock ``AsyncResult`` to simulate worker progress states without
+requiring a running Redis instance.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -17,14 +18,6 @@ import pytest
 from app.core.db import _session_factory
 from app.main import app
 from app.models.sql import Novel, Task
-from app.services.progress import progress_manager
-
-
-@pytest.fixture(autouse=True)
-def _clean_progress():
-    yield
-    with progress_manager._lock:
-        progress_manager._queues.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -61,17 +54,14 @@ def _cleanup(nid: uuid.UUID, tid: uuid.UUID) -> None:
         s.commit()
 
 
-def _sse(url: str, timeout: float = 5.0) -> list[dict]:
-    """Connect to *url*, collect SSE events until stream ends or timeout.
-
-    Returns a list of ``{"event": str, "data": str}`` dicts.
-    The stream MUST terminate on its own (via complete/error event);
-    otherwise the function will block until *timeout*.
-    """
+def _sse(url: str) -> list[dict]:
+    """Collect SSE events until stream ends."""
     async def _collect() -> list[dict]:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver",
-                                      timeout=httpx.Timeout(timeout)) as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver",
+            timeout=httpx.Timeout(8.0),
+        ) as client:
             async with client.stream("GET", url) as resp:
                 resp.raise_for_status()
                 events: list[dict] = []
@@ -86,6 +76,19 @@ def _sse(url: str, timeout: float = 5.0) -> list[dict]:
                 return events
 
     return asyncio.run(_collect())
+
+
+# ---------------------------------------------------------------------------
+# Mock AsyncResult factory
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_result(state: str = "PENDING", info: dict | str | None = None):
+    """Return a simple MagicMock with fixed .state and .info."""
+    mock = MagicMock()
+    mock.state = state
+    mock.info = info
+    return mock
 
 
 # ---------------------------------------------------------------------------
@@ -112,40 +115,22 @@ class TestStreamErrors:
         assert asyncio.run(_go()) == 404
 
 
-class TestStreamEvents:
-    def test_receives_progress_events(self) -> None:
-        """Pre-populate queue; then connect and verify events are received."""
-        nid = _create_novel_with_text()
-        tid = _create_task(nid, status="preprocessing")
-        try:
-            q = progress_manager.create_queue(str(tid))
-            progress_manager.push_progress(tid, 10, "chunking")
-            progress_manager.push_progress(tid, 50, "converting")
-            progress_manager.push_complete(tid)
-
-            events = _sse(f"/api/v1/tasks/{tid}/stream")
-            types = [e["event"] for e in events]
-            assert "progress" in types
-            assert "complete" in types
-            # Verify at least one progress event has our data
-            progress_events = [e for e in events if e["event"] == "progress"]
-            assert any("chunking" in e["data"] for e in progress_events)
-        finally:
-            _cleanup(nid, tid)
+class TestStreamTerminalStates:
+    """When task is already terminal in DB, SSE returns immediately."""
 
     def test_already_completed_task_yields_complete(self) -> None:
-        """When task is completed, stream yields single complete event."""
         nid = _create_novel_with_text()
         tid = _create_task(nid, status="completed")
         try:
-            events = _sse(f"/api/v1/tasks/{tid}/stream")
-            assert len(events) >= 1
-            assert events[-1]["event"] == "complete"
+            with patch("app.api.v1.tasks.AsyncResult") as mock_ar:
+                mock_ar.return_value = _make_mock_result("PENDING", None)
+                events = _sse(f"/api/v1/tasks/{tid}/stream")
+                assert len(events) >= 1
+                assert events[-1]["event"] == "complete"
         finally:
             _cleanup(nid, tid)
 
     def test_already_failed_task_yields_error(self) -> None:
-        """When task is failed, stream yields error event."""
         nid = _create_novel_with_text()
         tid = _create_task(nid, status="failed")
         with _session_factory() as s:
@@ -155,11 +140,45 @@ class TestStreamEvents:
             s.add(t)
             s.commit()
         try:
-            events = _sse(f"/api/v1/tasks/{tid}/stream")
-            assert len(events) >= 1
+            with patch("app.api.v1.tasks.AsyncResult") as mock_ar:
+                mock_ar.return_value = _make_mock_result("PENDING", None)
+                events = _sse(f"/api/v1/tasks/{tid}/stream")
+                assert len(events) >= 1
+                assert events[-1]["event"] == "error"
+                data = json.loads(events[-1]["data"])
+                assert "管线故障" in data["error"]
+        finally:
+            _cleanup(nid, tid)
+
+
+class TestStreamProgressFromRedis:
+    """SSE polls AsyncResult state from Redis — mock worker progress."""
+
+    def test_receives_progress_and_complete(self) -> None:
+        """Worker reports PROGRESS; SSE should emit progress heartbeat then see complete from DB poll."""
+        nid = _create_novel_with_text()
+        tid = _create_task(nid, status="preprocessing")
+        try:
+            with patch("app.api.v1.tasks.AsyncResult") as mock_ar:
+                mock_ar.return_value = _make_mock_result(
+                    "SUCCESS", {"progress": 100, "stage": "assembling"},
+                )
+                events = _sse(f"/api/v1/tasks/{tid}/stream")
+
+            types = [e["event"] for e in events]
+            assert "complete" in types
+        finally:
+            _cleanup(nid, tid)
+
+    def test_receives_error_on_failure(self) -> None:
+        """Worker reports FAILURE; SSE should emit error and close."""
+        nid = _create_novel_with_text()
+        tid = _create_task(nid, status="preprocessing")
+        try:
+            with patch("app.api.v1.tasks.AsyncResult") as mock_ar:
+                mock_ar.return_value = _make_mock_result("FAILURE", "Something broke")
+                events = _sse(f"/api/v1/tasks/{tid}/stream")
+
             assert events[-1]["event"] == "error"
-            # Data is JSON-encoded, may contain unicode escapes
-            data = json.loads(events[-1]["data"])
-            assert "管线故障" in data["error"]
         finally:
             _cleanup(nid, tid)

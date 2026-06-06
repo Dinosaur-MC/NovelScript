@@ -18,9 +18,8 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import Novel, User
+from app.models.sql import Novel, Task, User
 from app.services.base import BaseCRUD
-from cli.chunker import split_chapters
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +63,17 @@ def _create_novel_from_text(
     db: Session,
     *,
     user_id: uuid.UUID,
+    auto_convert: bool = True,
 ) -> BaseResponse:
-    """Core logic: persist a Novel and regex-split Chapters from raw text."""
+    """Core logic: persist a Novel and optionally start a conversion Task.
+
+    Chapter splitting is deferred to the background pipeline thread so the
+    upload response returns immediately (no blocking LLM call).  When
+    *auto_convert* is True (the default), a Task is created and the
+    pipeline is spawned in a background daemon thread.  The response
+    includes ``task_id`` so the frontend can immediately subscribe to SSE
+    progress events without a second API call.
+    """
     # -- Validation -----------------------------------------------------------
     stripped = content.strip()
     if not stripped:
@@ -73,13 +81,13 @@ def _create_novel_from_text(
     if len(content.encode("utf-8")) > MAX_CONTENT_SIZE:
         raise HTTPException(status_code=413, detail="Content exceeds 5 MB limit")
 
-    # -- Chapter splitting ----------------------------------------------------
-    cli_chapters = split_chapters(stripped)
-
-    # -- Auto-title from first chapter heading --------------------------------
+    # -- Auto-title -----------------------------------------------------------
     resolved_title = title
-    if not resolved_title and cli_chapters:
-        resolved_title = cli_chapters[0].title or "Untitled"
+    if not resolved_title:
+        # Quick regex scan for the first chapter heading (no LLM — fast)
+        import re
+        m = re.search(r"第[零一二三四五六七八九十百千\d]+章\s*[^\n]*", stripped)
+        resolved_title = m.group().strip() if m else "Untitled"
     if not resolved_title:
         resolved_title = "Untitled"
 
@@ -95,33 +103,43 @@ def _create_novel_from_text(
     )
     novel_crud.create(db, novel)
 
-    # -- Persist Chapters -----------------------------------------------------
-    chapter_records: list[ChapterModel] = []
-    for cli_ch in cli_chapters:
-        ch = ChapterModel(
-            novel_id=novel.id,
-            chapter_index=cli_ch.index,
-            title=cli_ch.title,
-            content=cli_ch.text,
-        )
-        chapter_crud.create(db, ch)
-        chapter_records.append(ch)
+    logger.info("Novel %s created (%d chars).", novel.id, len(stripped))
 
-    logger.info(
-        "Novel %s created with %d chapters.", novel.id, len(chapter_records)
-    )
+    # -- Response payload (chapters empty — deferred to pipeline) --------------
+    data: dict = {
+        "novel_id": str(novel.id),
+        "title": novel.title,
+        "chapters": [],
+    }
+
+    # -- Auto-create Task & dispatch to Celery worker -------------------
+    if auto_convert:
+        task = Task(
+            novel_id=novel.id,
+            user_id=user_id,
+            status="pending",
+            progress=0,
+        )
+        db.add(task)
+        db.flush()
+        db.commit()
+
+        data["task_id"] = str(task.id)
+        data["task_status"] = task.status
+
+        from app.tasks.pipeline import run_pipeline
+
+        run_pipeline.apply_async(
+            args=(str(task.id), str(novel.id)),
+            task_id=str(task.id),
+        )
+    else:
+        db.commit()
 
     return BaseResponse(
         code=200,
         message="Upload successful",
-        data={
-            "novel_id": str(novel.id),
-            "title": novel.title,
-            "chapters": [
-                {"index": ch.chapter_index, "title": ch.title}
-                for ch in chapter_records
-            ],
-        },
+        data=data,
     )
 
 

@@ -1,7 +1,8 @@
 """Task lifecycle manager API — CRUD, state machine, SSE progress streaming.
 
-POST / creates a task and spawns a background daemon thread that runs the
-pipeline.  GET /{task_id}/stream provides real-time SSE progress events.
+POST / dispatches a Celery task that runs the pipeline in a background
+worker.  GET /{task_id}/stream provides real-time SSE progress events by
+polling Celery's ``AsyncResult`` (Redis-backed, no DB writes for ticks).
 """
 
 from __future__ import annotations
@@ -9,21 +10,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import queue
 import uuid
 from typing import Optional
 
+from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.auth_middleware import get_current_user, require_ownership
+from app.core.celery_app import celery_app
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import AuditLog, Novel, Task, User
 from app.services.base import BaseCRUD
-from app.services.progress import progress_manager
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def create_task(
     """Create a new conversion task for a novel.
 
     Returns ``{task_id, status: "pending"}`` on success.
-    Immediately spawns a background daemon thread that runs the pipeline.
+    Immediately dispatches the pipeline to a Celery background worker.
     """
     try:
         novel_id = uuid.UUID(body.novel_id)
@@ -125,16 +126,17 @@ def create_task(
 
     logger.info("Task %s created for novel %s", task.id, novel_id)
 
-    # ── commit BEFORE spawning background thread ──────────────────────
-    # The background thread opens its own independent session.  Without
-    # an explicit commit, the thread may not see the new Task row (race
-    # with the outer get_db() commit).
+    # ── commit BEFORE dispatching Celery task ─────────────────────────
+    # The Celery worker opens its own independent DB session.
     db.commit()
 
-    # ── kick off pipeline in background thread ────────────────────────
-    from app.services.pipeline_executor import execute_pipeline
+    # ── dispatch pipeline to Celery worker ────────────────────────────
+    from app.tasks.pipeline import run_pipeline
 
-    execute_pipeline(task.id, novel_id)
+    run_pipeline.apply_async(
+        args=(str(task.id), str(novel_id)),
+        task_id=str(task.id),  # so AsyncResult(task_id) works
+    )
 
     return BaseResponse(
         code=200,
@@ -203,6 +205,10 @@ def list_tasks(
 async def stream_progress(task_id: str, db: Session = Depends(get_db)):
     """SSE endpoint — streams pipeline progress events in real time.
 
+    Polls Celery's ``AsyncResult`` (Redis) for progress.  No DB writes
+    are triggered for incremental progress ticks — only the final state
+    (completed / failed) lands in the database.
+
     Returns ``text/event-stream``.  Events:
 
     * ``progress`` — ``{progress: int, stage: str}``
@@ -218,56 +224,64 @@ async def stream_progress(task_id: str, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid task_id: {task_id!r}")
 
-    # ── quick sync check: task exists? ──────────────────────────────────
+    # ── quick sync check: task exists in DB? ────────────────────────────
     task = db.get(Task, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    q = progress_manager.create_queue(str(tid))
+    # Celery AsyncResult — reads state from Redis (same broker as worker)
+    result = AsyncResult(str(tid), app=celery_app)
 
     async def _event_generator():
-        try:
-            # If the task already reached a terminal state before the SSE
-            # client connected, push one final event and exit immediately.
-            if task.status == "completed":
-                yield {"event": "complete", "data": json.dumps({"progress": 100}, ensure_ascii=False)}
-                return
-            if task.status == "failed":
-                err = task.error_message or "Unknown error"
-                yield {"event": "error", "data": json.dumps({"error": str(err)}, ensure_ascii=False)}
-                return
+        # If already terminal in DB, exit immediately (worker done before SSE connected)
+        if task.status == "completed":
+            yield {"event": "complete", "data": json.dumps({"progress": 100}, ensure_ascii=False)}
+            return
+        if task.status == "failed":
+            err = task.error_message or "Unknown error"
+            yield {"event": "error", "data": json.dumps({"error": str(err)}, ensure_ascii=False)}
+            return
 
-            # Main poll loop
-            while True:
-                try:
-                    event = q.get_nowait()
-                except queue.Empty:
-                    await asyncio.sleep(0.5)
-                    yield {"event": "heartbeat", "data": ""}
-                    continue
+        last_progress = -1
+        last_stage = ""
 
-                event_type = event.get("type", "")
-                data = event.get("data", {})
+        while True:
+            try:
+                state = result.state
+                info = result.info if result.info else {}
+            except Exception:
+                # Redis temporarily unavailable — heartbeat + retry
+                await asyncio.sleep(1.0)
+                yield {"event": "heartbeat", "data": ""}
+                continue
 
-                if event_type == "progress":
+            if state == "PROGRESS":
+                p = info.get("progress", last_progress)
+                s = info.get("stage", last_stage)
+                # Only emit if something changed (avoid redundant events)
+                if p != last_progress or s != last_stage:
+                    last_progress = p
+                    last_stage = s
                     yield {
                         "event": "progress",
-                        "data": json.dumps(data, ensure_ascii=False),
+                        "data": json.dumps({"progress": p, "stage": s}, ensure_ascii=False),
                     }
-                elif event_type == "complete":
-                    yield {
-                        "event": "complete",
-                        "data": json.dumps(data, ensure_ascii=False),
-                    }
-                    return
-                elif event_type == "error":
-                    yield {
-                        "event": "error",
-                        "data": json.dumps(data, ensure_ascii=False),
-                    }
-                    return
-        finally:
-            progress_manager.remove_queue(str(tid))
+            elif state == "SUCCESS":
+                yield {"event": "complete", "data": json.dumps({"progress": 100}, ensure_ascii=False)}
+                return
+            elif state == "FAILURE":
+                err_msg = str(info) if info else "Pipeline failed"
+                yield {"event": "error", "data": json.dumps({"error": err_msg}, ensure_ascii=False)}
+                return
+            elif state == "REVOKED":
+                yield {"event": "error", "data": json.dumps({"error": "Task was revoked"}, ensure_ascii=False)}
+                return
+            else:
+                # PENDING / STARTED — waiting for worker to pick up
+                pass
+
+            await asyncio.sleep(0.5)
+            yield {"event": "heartbeat", "data": ""}
 
     return EventSourceResponse(_event_generator())
 
@@ -428,13 +442,16 @@ def resume_task(
         detail={"from": "failed", "to": "converting"},
     )
 
-    # ── commit BEFORE spawning background thread (race-condition fix) ──
+    # ── commit BEFORE dispatching Celery task ─────────────────────────
     db.commit()
 
-    # ── re-spawn the pipeline ─────────────────────────────────────────
-    from app.services.pipeline_executor import execute_pipeline
+    # ── re-dispatch pipeline to Celery worker ─────────────────────────
+    from app.tasks.pipeline import run_pipeline
 
-    execute_pipeline(task.id, task.novel_id)
+    run_pipeline.apply_async(
+        args=(str(task.id), str(task.novel_id)),
+        task_id=str(task.id),
+    )
 
     return BaseResponse(
         code=200,
