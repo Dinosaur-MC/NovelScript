@@ -1,0 +1,152 @@
+# ============================================================================
+# NovelScript (析幕) — Full-stack Docker Compose
+# ============================================================================
+# Prerequisites:
+#   - Docker Engine 24+ / Docker Desktop
+#   - Copy backend/.env.example → backend/.env, fill in API keys
+#
+# Quick start:
+#   docker compose up -d                        # production (only frontend exposed)
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d  # dev
+#   docker compose logs -f api worker           # tail logs
+#   docker compose down -v                      # teardown + remove volumes
+#
+# Network:
+#   All services communicate over the internal `novelscript` bridge network.
+#   Only the frontend port (3000) is exposed to the host in production.
+#   For local development, merge with docker-compose.dev.yml to expose
+#   backend ports (API 8000, DB 5432, Redis 6379).
+# ============================================================================
+
+# --------------------------------------------------------------------------
+# Internal network
+# --------------------------------------------------------------------------
+networks:
+  novelscript:
+    driver: bridge
+    name: novelscript
+
+services:
+  # --------------------------------------------------------------------------
+  # Database — PostgreSQL 18 with pgvector extension
+  # --------------------------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg18
+    container_name: novelscript-db
+    restart: unless-stopped
+    networks:
+      - novelscript
+    environment:
+      POSTGRES_USER: novelscript
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-novelscript}
+      POSTGRES_DB: novelscript
+    # No ports — internal network only.  Devs connect via:
+    #   docker compose exec db psql -U novelscript novelscript
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/app/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novelscript -d novelscript"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Message Broker — Redis 7
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: novelscript-redis
+    restart: unless-stopped
+    networks:
+      - novelscript
+    # No ports — internal network only.  Devs connect via:
+    #   docker compose exec redis redis-cli
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+  # --------------------------------------------------------------------------
+  # FastAPI — REST + SSE server
+  # --------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      target: api
+    container_name: novelscript-api
+    restart: unless-stopped
+    networks:
+      - novelscript
+    # No ports — internal network only.  Frontend proxies requests via
+    # the shared novelscript bridge (http://api:8000).
+    # For dev access, use docker-compose.dev.yml to expose port 8000.
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://novelscript:${DB_PASSWORD:-novelscript}@db:5432/novelscript
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/auth/logout || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Celery Worker — background pipeline runner
+  # --------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      target: worker
+    container_name: novelscript-worker
+    restart: unless-stopped
+    networks:
+      - novelscript
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://novelscript:${DB_PASSWORD:-novelscript}@db:5432/novelscript
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No ports — worker is a pure internal consumer.
+    # Scale: docker compose up -d --scale worker=3
+
+  # --------------------------------------------------------------------------
+  # Frontend — React Router SSR  (the only public endpoint)
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+    container_name: novelscript-frontend
+    restart: unless-stopped
+    networks:
+      - novelscript
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      VITE_API_BASE_URL: http://api:8000
+    depends_on:
+      - api
+
+# --------------------------------------------------------------------------
+# Named volumes
+# --------------------------------------------------------------------------
+volumes:
+  pgdata:
+  redisdata:

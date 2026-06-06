@@ -1,0 +1,22 @@
+# ============================================================================
+# NovelScript — Development overrides
+# ============================================================================
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Exposes backend ports to the host for local tooling (curl, psql, redis-cli,
+# browser devtools against localhost:8000).
+# ============================================================================
+
+services:
+  db:
+    ports:
+      - "${DB_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  api:
+    ports:
+      - "${API_PORT:-8000}:8000"
