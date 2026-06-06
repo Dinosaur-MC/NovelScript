@@ -35,25 +35,22 @@ def client(db):
 # ---------------------------------------------------------------------------
 
 
-def test_upload_creates_novel_and_chapters(client, db):
+def test_upload_creates_novel_and_chapters(client, db, auth_headers):
     """Uploading text with Chinese chapter markers creates Novel + Chapters."""
     payload = {
         "content": "第一章 大梦初醒\n清晨的阳光洒在窗台上。\n第二章 远行\n马车缓缓驶出城门。\n第三章 相遇\n他在桥头遇见了她。",
         "title": "测试小说",
         "author": "测试作者",
     }
-    resp = client.post("/api/v1/novels/upload", json=payload)
+    resp = client.post("/api/v1/novels/upload", json=payload, headers=auth_headers)
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
     assert body["code"] == 200
     data = body["data"]
     assert data["title"] == "测试小说"
-    assert len(data["chapters"]) == 3
-    assert data["chapters"][0]["index"] == 0
-    assert "大梦初醒" in data["chapters"][0]["title"]
-    assert data["chapters"][1]["index"] == 1
-    assert data["chapters"][2]["index"] == 2
+    assert "task_id" in data  # auto-create Task for conversion
+    assert data["task_status"] == "pending"
 
     novel_id = data["novel_id"]
     # Verify in DB
@@ -63,32 +60,18 @@ def test_upload_creates_novel_and_chapters(client, db):
     assert novel.author == "测试作者"
     assert novel.word_count > 0
 
-    # Verify chapters in DB
-    from sqlmodel import select
-
-    stmt = (
-        select(ChapterModel)
-        .where(ChapterModel.novel_id == novel.id)
-        .order_by(ChapterModel.chapter_index.asc())
-    )
-    chapters = db.execute(stmt).scalars().all()
-    assert len(chapters) == 3
-    assert chapters[0].chapter_index == 0
-    assert chapters[1].chapter_index == 1
-    assert chapters[2].chapter_index == 2
-
 
 # ---------------------------------------------------------------------------
 # 2. Upload — empty content → 400
 # ---------------------------------------------------------------------------
 
 
-def test_upload_empty_400(client):
+def test_upload_empty_400(client, auth_headers):
     """Empty or whitespace-only content should return HTTP 400."""
-    resp = client.post("/api/v1/novels/upload", json={"content": ""})
+    resp = client.post("/api/v1/novels/upload", json={"content": ""}, headers=auth_headers)
     assert resp.status_code == 400, resp.text
 
-    resp2 = client.post("/api/v1/novels/upload", json={"content": "   "})
+    resp2 = client.post("/api/v1/novels/upload", json={"content": "   "}, headers=auth_headers)
     assert resp2.status_code == 400, resp2.text
 
 
@@ -168,7 +151,7 @@ def test_get_single_novel(client, db):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_cascades(client, db):
+def test_delete_cascades(client, db, auth_headers):
     """DELETE /{novel_id} removes the novel and all its chapters."""
     nid = uuid.uuid4()
     novel = Novel(
@@ -189,7 +172,7 @@ def test_delete_cascades(client, db):
     db.add(ch)
     db.flush()
 
-    resp = client.delete(f"/api/v1/novels/{nid}")
+    resp = client.delete(f"/api/v1/novels/{nid}", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["deleted_id"] == str(nid)
@@ -206,5 +189,5 @@ def test_delete_cascades(client, db):
     assert len(remaining) == 0
 
     # Deleting again → 404
-    resp2 = client.delete(f"/api/v1/novels/{nid}")
+    resp2 = client.delete(f"/api/v1/novels/{nid}", headers=auth_headers)
     assert resp2.status_code == 404, resp2.text

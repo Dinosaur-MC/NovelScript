@@ -10,9 +10,11 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.db import _session_factory
+from app.core.config import settings
+from app.core.db import _session_factory, get_db
+from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models.sql import AuditLog, Novel
+from app.models.sql import AuditLog, Novel, User
 
 
 # ---------------------------------------------------------------------------
@@ -22,11 +24,7 @@ from app.models.sql import AuditLog, Novel
 
 @pytest.fixture(scope="module")
 def test_novel_id(db_engine):
-    """Create a novel for test task operations.
-
-    Module-scoped so all six tests share one novel.  Depends on
-    ``db_engine`` (session-scoped) so ``init_db()`` runs first.
-    """
+    """Create a novel for test task operations."""
     nid: uuid.UUID = uuid.uuid4()
     with _session_factory() as session:
         novel = Novel(
@@ -39,7 +37,6 @@ def test_novel_id(db_engine):
 
     yield str(nid)
 
-    # Cleanup — cascade deletes associated tasks (ON DELETE CASCADE in DDL)
     with _session_factory() as session:
         novel = session.get(Novel, nid)
         if novel is not None:
@@ -47,9 +44,38 @@ def test_novel_id(db_engine):
             session.commit()
 
 
+@pytest.fixture(scope="module")
+def auth_headers(db_engine) -> dict[str, str]:
+    """Return auth headers by creating a test user directly in the real DB.
+
+    Module-scoped so all 6 tests share one user.  Uses a dedicated
+    session (not the rollback fixture) because this test file does
+    not override ``get_db`` — the API reads from real sessions.
+    """
+    _TEST_EMAIL = "task_test@novelscript.test"
+    with _session_factory() as session:
+        user = session.query(User).filter(User.email == _TEST_EMAIL).first()
+        if user is None:
+            user = User(
+                email=_TEST_EMAIL,
+                username="task_tester",
+                password_hash=hash_password("test1234"),
+                display_name="Task Tester",
+                role="admin",
+                is_active=True,
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+
+        token = create_access_token(str(user.id))
+
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture
 def client() -> TestClient:
-    """FastAPI synchronous test client."""
+    """FastAPI synchronous test client (bare — no get_db override)."""
     return TestClient(app)
 
 
@@ -58,9 +84,9 @@ def client() -> TestClient:
 # ===================================================================
 
 
-def test_create_task(client: TestClient, test_novel_id: str) -> None:
+def test_create_task(client: TestClient, test_novel_id: str, auth_headers: dict) -> None:
     """Create a task and verify the response shape."""
-    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id}, headers=auth_headers)
     assert resp.status_code == 200, resp.text
 
     body = resp.json()
@@ -83,11 +109,11 @@ def test_create_task(client: TestClient, test_novel_id: str) -> None:
 
 
 def test_create_task_invalid_novel_404(
-    client: TestClient, test_novel_id: str
+    client: TestClient, auth_headers: dict
 ) -> None:
     """Creating a task for a novel that does not exist returns 404."""
     fake_id = str(uuid.uuid4())
-    resp = client.post("/api/v1/tasks/", json={"novel_id": fake_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": fake_id}, headers=auth_headers)
     assert resp.status_code == 404, resp.text
 
 
@@ -97,11 +123,11 @@ def test_create_task_invalid_novel_404(
 
 
 def test_valid_status_transition(
-    client: TestClient, test_novel_id: str
+    client: TestClient, test_novel_id: str, auth_headers: dict
 ) -> None:
     """Exercise the full happy path: pending→preprocessing→converting→completed."""
     # Create
-    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id}, headers=auth_headers)
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
@@ -109,6 +135,7 @@ def test_valid_status_transition(
     resp = client.put(
         f"/api/v1/tasks/{task_id}/status",
         json={"status": "preprocessing", "progress": 10},
+        headers=auth_headers,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["status"] == "preprocessing"
@@ -116,14 +143,16 @@ def test_valid_status_transition(
 
     # preprocessing → converting
     resp = client.put(
-        f"/api/v1/tasks/{task_id}/status", json={"status": "converting", "progress": 50}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "converting", "progress": 50},
+        headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "converting"
 
     # converting → completed
     resp = client.put(
-        f"/api/v1/tasks/{task_id}/status", json={"status": "completed", "progress": 100}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "completed", "progress": 100},
+        headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "completed"
@@ -142,16 +171,17 @@ def test_valid_status_transition(
 
 
 def test_invalid_skip_transition_422(
-    client: TestClient, test_novel_id: str
+    client: TestClient, test_novel_id: str, auth_headers: dict
 ) -> None:
     """Jumping from pending straight to completed must return 422."""
-    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id}, headers=auth_headers)
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
     # pending → completed is NOT a valid direct transition
     resp = client.put(
-        f"/api/v1/tasks/{task_id}/status", json={"status": "completed"}
+        f"/api/v1/tasks/{task_id}/status", json={"status": "completed"},
+        headers=auth_headers,
     )
     assert resp.status_code == 422, resp.text
 
@@ -166,10 +196,10 @@ def test_invalid_skip_transition_422(
 
 
 def test_resume_from_failed(
-    client: TestClient, test_novel_id: str
+    client: TestClient, test_novel_id: str, auth_headers: dict
 ) -> None:
     """A failed task can be resumed (failed → converting)."""
-    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id}, headers=auth_headers)
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
 
@@ -177,12 +207,13 @@ def test_resume_from_failed(
     resp = client.put(
         f"/api/v1/tasks/{task_id}/status",
         json={"status": "failed", "error_message": "Simulated crash"},
+        headers=auth_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["status"] == "failed"
 
     # Resume
-    resp = client.post(f"/api/v1/tasks/{task_id}/resume")
+    resp = client.post(f"/api/v1/tasks/{task_id}/resume", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["status"] == "converting"
 
@@ -191,7 +222,7 @@ def test_resume_from_failed(
     assert status.json()["data"]["error_message"] is None
 
     # Resume a non-failed task → 422
-    resp2 = client.post(f"/api/v1/tasks/{task_id}/resume")
+    resp2 = client.post(f"/api/v1/tasks/{task_id}/resume", headers=auth_headers)
     assert resp2.status_code == 422
 
 
@@ -201,10 +232,10 @@ def test_resume_from_failed(
 
 
 def test_audit_log_written(
-    client: TestClient, test_novel_id: str
+    client: TestClient, test_novel_id: str, auth_headers: dict
 ) -> None:
     """Every status transition must persist an AuditLog row."""
-    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id})
+    resp = client.post("/api/v1/tasks/", json={"novel_id": test_novel_id}, headers=auth_headers)
     assert resp.status_code == 200
     task_id: str = resp.json()["data"]["task_id"]
     tid: uuid.UUID = uuid.UUID(task_id)
@@ -213,6 +244,7 @@ def test_audit_log_written(
     resp = client.put(
         f"/api/v1/tasks/{task_id}/status",
         json={"status": "failed", "error_message": "Intentional failure"},
+        headers=auth_headers,
     )
     assert resp.status_code == 200
 

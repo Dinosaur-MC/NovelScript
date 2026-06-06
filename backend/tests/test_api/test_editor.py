@@ -90,12 +90,12 @@ def sample_task(db):
 # ---------------------------------------------------------------------------
 
 
-def test_chat_saves_dialogue(client, sample_task, mock_llm, db):
+def test_chat_saves_dialogue(client, sample_task, mock_llm, db, auth_headers):
     """POST /chat/{task_id} persists user + assistant Dialogue rows."""
     task_id = str(sample_task.id)
     payload = {"message": "Can you improve the scene title?"}
 
-    response = client.post(f"/api/v1/editor/chat/{task_id}", json=payload)
+    response = client.post(f"/api/v1/editor/chat/{task_id}", json=payload, headers=auth_headers)
 
     assert response.status_code == 200
     data = response.json()
@@ -121,17 +121,17 @@ def test_chat_saves_dialogue(client, sample_task, mock_llm, db):
     assert dialogues[1].patch_json.get("op") == "replace"
 
 
-def test_chat_task_not_found_404(client, mock_llm):
+def test_chat_task_not_found_404(client, mock_llm, auth_headers):
     """POST /chat/{task_id} returns 404 for a nonexistent task."""
     fake_id = str(uuid.uuid4())
     payload = {"message": "Hello"}
 
-    response = client.post(f"/api/v1/editor/chat/{fake_id}", json=payload)
+    response = client.post(f"/api/v1/editor/chat/{fake_id}", json=payload, headers=auth_headers)
 
     assert response.status_code == 404
 
 
-def test_apply_patch_updates_script(client, sample_task, db):
+def test_apply_patch_updates_script(client, sample_task, db, auth_headers):
     """POST /apply_patch/{task_id} applies a JSON Patch and records an Operation."""
     task_id = str(sample_task.id)
     payload = {
@@ -140,7 +140,7 @@ def test_apply_patch_updates_script(client, sample_task, db):
         "value": "Updated Scene Title",
     }
 
-    response = client.post(f"/api/v1/editor/apply_patch/{task_id}", json=payload)
+    response = client.post(f"/api/v1/editor/apply_patch/{task_id}", json=payload, headers=auth_headers)
 
     assert response.status_code == 200
     data = response.json()
@@ -166,7 +166,7 @@ def test_apply_patch_updates_script(client, sample_task, db):
     assert sample_task.script_json["scenes"][0]["title"] == "Updated Scene Title"
 
 
-def test_undo_rolls_back(client, sample_task, db):
+def test_undo_rolls_back(client, sample_task, db, auth_headers):
     """POST /undo/{task_id} reverses the most recent patch operation."""
     task_id = str(sample_task.id)
 
@@ -176,7 +176,7 @@ def test_undo_rolls_back(client, sample_task, db):
         "path": "/title",
         "value": "Changed Title",
     }
-    r1 = client.post(f"/api/v1/editor/apply_patch/{task_id}", json=patch_payload)
+    r1 = client.post(f"/api/v1/editor/apply_patch/{task_id}", json=patch_payload, headers=auth_headers)
     assert r1.status_code == 200
 
     # Verify the patch was applied
@@ -184,7 +184,7 @@ def test_undo_rolls_back(client, sample_task, db):
     assert sample_task.script_json["title"] == "Changed Title"
 
     # Now undo
-    r2 = client.post(f"/api/v1/editor/undo/{task_id}")
+    r2 = client.post(f"/api/v1/editor/undo/{task_id}", headers=auth_headers)
     assert r2.status_code == 200
     data = r2.json()
     assert data["code"] == 200
@@ -205,11 +205,11 @@ def test_undo_rolls_back(client, sample_task, db):
     assert len(ops) == 1
 
     # Undo with no more operations should return 400
-    r3 = client.post(f"/api/v1/editor/undo/{task_id}")
+    r3 = client.post(f"/api/v1/editor/undo/{task_id}", headers=auth_headers)
     assert r3.status_code == 400
 
 
-def test_chat_with_scene_injects_context(client, sample_task, mock_llm, db):
+def test_chat_with_scene_injects_context(client, sample_task, mock_llm, db, auth_headers):
     """POST /chat/{task_id} with scene_id includes scene context in the prompt."""
     task_id = str(sample_task.id)
     payload = {
@@ -217,7 +217,7 @@ def test_chat_with_scene_injects_context(client, sample_task, mock_llm, db):
         "scene_id": "scene_1",
     }
 
-    response = client.post(f"/api/v1/editor/chat/{task_id}", json=payload)
+    response = client.post(f"/api/v1/editor/chat/{task_id}", json=payload, headers=auth_headers)
 
     assert response.status_code == 200
     data = response.json()
