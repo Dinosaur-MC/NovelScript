@@ -300,9 +300,17 @@ def _parse_uuid(raw: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"Invalid UUID: {raw}")
 
 
-def _serialise_novel(obj: Novel) -> dict:
-    """Convert a Novel ORM instance to a JSON-safe dict."""
-    return obj.model_dump(mode="json")
+def _serialise_novel(obj: Novel, *, include_source: bool = False) -> dict:
+    """Convert a Novel ORM instance to a JSON-safe dict.
+
+    Set ``include_source=True`` for the detail endpoint; the list endpoint
+    should not transfer the full ``source_text`` for every novel.
+    """
+    data = obj.model_dump(mode="json")
+    if not include_source:
+        data.pop("source_text", None)
+        data.pop("meta", None)
+    return data
 
 
 def _serialise_chapter(obj: ChapterModel) -> dict:

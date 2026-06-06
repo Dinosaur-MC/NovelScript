@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Tag } from "antd";
+import { message, Tag } from "antd";
 
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
@@ -56,6 +56,7 @@ export default function Workspace() {
 
     async function load() {
       try {
+        // Phase 1: Fetch task data (critical — must succeed)
         const taskData = await getTask(taskId!);
         if (cancelled) return;
 
@@ -66,17 +67,26 @@ export default function Workspace() {
           characters_json: taskData.characters_json,
         });
 
-        const novelData = await getNovel(taskData.novel_id);
-        if (cancelled) return;
+        // Phase 2: Fetch novel data (non-critical — editor can work without it)
+        try {
+          const novelData = await getNovel(taskData.novel_id);
+          if (cancelled) return;
 
-        setNovel(novelData.novel.id, novelData.novel.title);
-        setChapters(
-          novelData.chapters.map((ch) => ({
-            index: ch.chapter_index,
-            title: ch.title ?? "",
-            content: ch.content,
-          })),
-        );
+          setNovel(novelData.novel.id, novelData.novel.title);
+          setChapters(
+            novelData.chapters.map((ch) => ({
+              index: ch.chapter_index,
+              title: ch.title ?? "",
+              content: ch.content,
+            })),
+          );
+        } catch (novelErr) {
+          // Novel data unavailable — editor still works, just without source text
+          if (!cancelled) {
+            console.warn("Novel data unavailable:", novelErr);
+            message.warning("小说原文加载失败，部分功能不可用");
+          }
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof ApiError && err.status === 404
           ? "任务不存在（可能已被删除）"

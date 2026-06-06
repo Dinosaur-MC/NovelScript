@@ -4,6 +4,7 @@ import { ExportOutlined, HomeOutlined, UserOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { exportScript } from "../../api/scripts";
+import { logout } from "../../api/auth";
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending:       { color: "default", label: "待开始" },
@@ -70,7 +71,7 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
             <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
               {user.username}
             </span>
-            <Button type="link" size="small" onClick={() => { clearUser(); navigate("/login"); }}>
+            <Button type="link" size="small" onClick={() => { logout().catch(() => {}); clearUser(); navigate("/login"); }}>
               退出
             </Button>
           </>

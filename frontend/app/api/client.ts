@@ -40,6 +40,16 @@ export async function request<T>(
 
     const json: ApiResponse<T> = await res.json();
 
+    // Global 401 handling: token expired or invalid → clear & redirect to login.
+    // Only trigger when a token was sent (avoids redirecting unauthenticated browsing).
+    if (res.status === 401 && token) {
+      localStorage.removeItem("auth_token");
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+      throw new ApiError(401, json.code, json.message || "登录已过期，请重新登录");
+    }
+
     if (json.code !== 200 && json.code !== 0) {
       throw new ApiError(res.status, json.code, json.message);
     }

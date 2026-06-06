@@ -42,8 +42,15 @@ export function HomePage() {
   const [pasteText, setPasteText] = useState("");
   const [uploading, setUploading] = useState(false);
   const user = useAuthStore((s) => s.user);
+  const authLoaded = useAuthStore((s) => s.loaded);
 
   const load = useCallback(async () => {
+    // Don't fetch data for unauthenticated users — skip the API calls
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [novelsRes, scriptsRes] = await Promise.all([
@@ -59,7 +66,11 @@ export function HomePage() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Wait for auth check to complete before loading data (prevents racing the token check)
+  useEffect(() => {
+    if (!authLoaded) return;
+    load();
+  }, [authLoaded, load]);
 
   // Group scripts by novel_id
   const scriptsByNovel: Record<string, ScriptLight[]> = {};
