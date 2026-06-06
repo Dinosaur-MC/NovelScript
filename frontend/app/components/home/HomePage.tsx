@@ -1,16 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import {
-  Card,
-  Tag,
-  Button,
-  Modal,
-  Input,
-  Upload,
-  Collapse,
-  message,
-  Spin,
-} from "antd";
+import { Card, Tag, Button, Modal, Input, Upload, Collapse, message } from "antd";
 import {
   PlusOutlined,
   UploadOutlined,
@@ -128,7 +118,7 @@ export function HomePage() {
           backgroundColor: "var(--color-bg-canvas)",
         }}
       >
-        <Spin size="large" />
+        <div className="ns-spinner" />
         <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>加载中...</span>
       </div>
     );

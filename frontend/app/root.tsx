@@ -57,8 +57,8 @@ export default function App() {
           colorInfo: "#74b9ff",
           colorTextBase: "#e8e8f0",
           colorBgBase: "#0a0a0f",
-          colorBgContainer: "#1c1c2a",
-          colorBgElevated: "#14141f",
+          colorBgContainer: "#14141f",
+          colorBgElevated: "#1c1c2a",
           colorBorder: "#2a2a3e",
           colorBorderSecondary: "#2a2a3e",
           borderRadius: 6,
@@ -87,11 +87,37 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   return (
-    <main className="pt-16 p-4 container mx-auto">
-      <h1>{message}</h1>
-      <p>{details}</p>
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#0a0a0f",
+        color: "#e8e8f0",
+        fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif',
+        padding: 32,
+        gap: 12,
+      }}
+    >
+      <h1 style={{ fontSize: 32, fontWeight: 600, margin: 0 }}>{message}</h1>
+      <p style={{ fontSize: 16, color: "#9090a8", margin: 0 }}>{details}</p>
       {stack && (
-        <pre className="w-full p-4 overflow-x-auto">
+        <pre
+          style={{
+            maxWidth: "90vw",
+            padding: 16,
+            overflowX: "auto",
+            backgroundColor: "#1c1c2a",
+            border: "1px solid #2a2a3e",
+            borderRadius: 8,
+            fontSize: 12,
+            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+            color: "#e8e8f0",
+            lineHeight: 1.6,
+          }}
+        >
           <code>{stack}</code>
         </pre>
       )}

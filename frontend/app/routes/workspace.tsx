@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Spin } from "antd";
+
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
 import { useTaskStore } from "../stores/task-store";
@@ -139,7 +139,7 @@ export default function Workspace() {
               gap: 16,
             }}
           >
-            <Spin size="large" />
+            <div className="ns-spinner" />
             <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
               加载中...
             </span>
