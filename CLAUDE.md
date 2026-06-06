@@ -6,6 +6,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NovelScript (析幕) is an AI-driven pipeline that converts long-form novels (3+ chapters) into structured scripts compliant with film industry standards (Fountain 1.1 / YAML). The system emphasizes **deterministic pipelines over probabilistic LLM outputs** — strict validation, bidirectional source tracing, and an All-in-One PostgreSQL data layer anchor the AI's creativity.
 
+## Development Status
+
+See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API modules, 6 Zustand stores, 6 hooks, 52 tests).
+
+### Backend Status Summary
+
+| Layer | Status |
+|-------|--------|
+| Pipeline CLI | ✅ Complete — 7 stages, JSON mode, retry, paragraph splitter, chapter summaries, narrative summary, directory input |
+| Database | ✅ Complete — 8 tables, pgvector HNSW, pg_trgm, sync psycopg2 |
+| API (25 endpoints) | ✅ Complete — auth, novels, scripts, tasks (SSE), editor |
+| Pipeline ↔ DB Integration | ✅ Complete — background daemon thread, SSE streaming, DB chapters preferred |
+| Tests | ✅ 166 passing, 0 skipped |
+
+**API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/` (* no auth middleware — all endpoints public)
+
+### Pipeline Stages (v0.2.0)
+
+```
+1. Chunking      — regex split (第X章), LLM fallback (Flash)
+2. Summarize     — per-chapter objective summary (Flash, parallel)
+3. RAG Index     — FAISS via OpenRouter text-embedding-3-small
+4. GraphRAG      — KG extraction (Pro, with RAG cross-chapter context)
+5. Conversion    — chapter → scenes (Flash, parallel, paragraph-group input)
+6. Optimization  — cross-scene consistency (Pro, batched by scene)
+7. Narrative Summary — story overview from chapter summaries (Flash)
+→ Export (YAML/JSON)
+```
+
+### Pipeline Input Modes
+
+```
+1. Single file   → regex split → LLM fallback → run_from_chapters()
+2. Directory      → each .txt = one chapter (chunking skipped)
+3. DB chapters    → _load_chapters() (chunking skipped)
+```
+
+### LLM Architecture
+
+- **Models**: DeepSeek V4 Pro (1M context, 32K output) / Flash (1M context, 32K output)
+- **JSON mode**: `response_format: {type: json_object}`, NOT OpenAI json_schema
+- **Retry**: Application-layer exponential backoff with jitter (per-stage: 1-3 retries)
+- **Context budget**: Auto-detected from model name + `.env` overrides (`LLM_CONTEXT_WINDOW`, `LLM_MAX_OUTPUT_TOKENS`)
+- **Paragraph splitter**: Boundary-aware (`\n\n+`), short paragraphs (≤32 chars) merged
+- **OpenRouter**: Embeddings only — `openai/text-embedding-3-small` via `https://openrouter.ai/api/v1/embeddings`
+
+### Key CLI Options
+
+```
+uv run python -m cli.pipeline <input> [-o output.yaml] [--json]
+uv run python -m cli.pipeline chapters/ -o out.yaml  # directory mode
+```
+
 ## Package Managers
 
 | Layer    | Tool   | Lock File        |
@@ -21,22 +74,24 @@ Work in the corresponding subdirectory (`backend/` or `frontend/`) before runnin
 
 ```bash
 cd backend
-uv sync                                    # Install dependencies
-uv run main.py                             # Start dev server (uvicorn, port 8000, reload on DEBUG)
-uv run pytest                              # Run tests (pytest-asyncio)
-uv run python -m cli.pipeline <input.txt>  # Test pipeline end-to-end (no DB)
-uv add <package>                           # Add a dependency
+uv sync                                         # Install dependencies
+uv run main.py                                  # Start dev server (uvicorn, port 8000, reload on DEBUG)
+uv run pytest                                   # Run tests (166 passing)
+uv run python -m cli.pipeline <input.txt>       # Pipeline standalone (no DB)
+uv run python -m cli.pipeline chapters/ -o out.yaml  # Directory input
+uv add <package>                                # Add a dependency
 ```
 
 ### Frontend (React 19 + React Router 7, Node 24)
 
 ```bash
 cd frontend
-pnpm install                               # Install dependencies
-pnpm run dev                               # Start dev server (Vite HMR, port 5173)
-pnpm run build                             # Production build (SSR)
-pnpm run start                             # Serve production build
-pnpm run typecheck                         # TypeScript type checking
+pnpm install                                    # Install dependencies
+pnpm run dev                                    # Start dev server (Vite HMR, port 5173)
+pnpm run build                                  # Production build (SSR)
+pnpm run start                                  # Serve production build
+pnpm run typecheck                              # TypeScript type checking
+pnpm run test                                   # Vitest (52 tests)
 ```
 
 ## Architecture
@@ -45,84 +100,93 @@ pnpm run typecheck                         # TypeScript type checking
 
 ```
 app/
-├── main.py          # FastAPI app factory — CORS, exception handlers, route registration
-├── api/             # Route modules: auth.py, novel.py, scripts.py, tasks.py, editor.py
-├── core/            # config.py (pydantic-settings), security.py (JWT+argon2), db.py (asyncpg+SQLModel)
-├── models/          # Pydantic V2 & SQLModel — http.py, sql.py (8 tables), patch.py
-├── services/        # Core business logic: LLM router, RAG, pipeline, patcher, exporter, SSE
-├── db/              # init.sql (8-table DDL), connection.py (asyncpg pool), migrations/
-└── cli/             # Pipeline engine (Agent A): models, chunker, rag_builder, graphrag_builder,
-                     #   converter, optimizer, exporter, pipeline, llm_router
-```
-
-**Entry point**: `backend/main.py` loads `.env` via `python-dotenv`, then starts uvicorn against `app.main:app`.
-
-**Pipeline CLI** (no DB, for standalone testing): `uv run python -m cli.pipeline <input.txt>`
-
-**Key architectural patterns**:
-- **Dual-model routing (ADR #8)**: `DeepSeek-v4-pro` for Stage 1 (planning/knowledge graph) and Stage 3 (optimization/consistency check); `DeepSeek-v4-flash` for Stage 2 (scene generation/dialogue) and lightweight tasks. Both gated behind `asyncio.Semaphore`.
-- **Embedding via OpenRouter**: OpenAI-compatible API at `https://openrouter.ai/api/v1/embeddings`. Auth: `OPENROUTER_API_KEY`. Model: `openai/text-embedding-3-small`. Used in both CLI (in-memory FAISS) and production (pgvector). LLM calls use `DEEPSEEK_API_KEY`.
-- **Auto-Fix loop**: Pydantic V2 validation failure → retry with error-aware prompt (max 2x) → graceful degradation with partial results + warning. Never crashes.
-- **SSE progress streaming**: `sse-starlette` for real-time pipeline progress; frontend uses `EventSource`.
-- **All-in-One DB**: PostgreSQL 18 with 8 tables — `users`, `novels`, `tasks`, `chapters`, `knowledge_nodes`, `knowledge_edges`, `operations`, `dialogues`, `audit_logs`. Extensions: `pgvector` (HNSW vector_cosine_ops), `uuid-ossp`, `pg_trgm`. No separate vector DB or graph DB.
-- **source_ref bidirectional trace**: Every script element carries `{chapter_id, offset}`, enabling click-to-highlight between source text and script in the IDE.
-
-### MVP Implementation Strategy
-
-Two-wave parallel agent execution with git worktree isolation:
-
-**Wave 1** (parallel): Agent A (Pipeline Engine, no DB) + Agent B (Database Foundation, 8 tables + SQLModel + security)
-
-**Wave 2** (parallel, after B merges): Agent C (User System `/api/auth`), Agent D (Novel Management `/api/novel`), Agent E (Script Management `/api/scripts`), Agent F (Task Management `/api/tasks` — lifecycle only, delegates to D/E/G), Agent G (AI Chat `/api/editor`)
-
-Post-Wave-2: Integrate Agent A's pipeline into DB-backed services (FAISS→pgvector, dict graph→knowledge_nodes/edges, CLI→Task scheduler).
-
-Spec: `docs/superpowers/specs/2026-06-06-mvp-implementation-design.md` (47 test cases across 7 agents).
-
-### Frontend (`frontend/app/`)
-
-```
-app/
-├── root.tsx          # Root layout (Inter font, ErrorBoundary)
-├── routes.ts         # Route config → single index route at routes/home.tsx
-├── routes/home.tsx   # Home page (currently renders Welcome component)
-├── welcome/          # Placeholder welcome screen
-└── app.css           # Tailwind CSS v4 import + Inter font theme
+├── main.py                # FastAPI app factory — lifespan, CORS, exception handlers
+├── api/v1/                # 25 endpoints: auth, novels, scripts, tasks, editor
+│   ├── __init__.py        # Single router tree → /api/v1/*
+│   ├── auth.py            # register, login, logout, me (JWT + argon2)
+│   ├── novels.py          # upload (JSON/file), list, get, update, delete
+│   ├── scripts.py         # list, get, update (YAML validate), delete, export
+│   ├── tasks.py           # create, list, stream (SSE), status, update, resume, get
+│   └── editor.py          # chat (LLM), apply_patch (RFC 6901), undo
+├── core/
+│   ├── config.py          # pydantic-settings — DATABASE_URL, API keys, ADMIN_*
+│   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
+│   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
+│   └── security.py        # argon2 hashing, JWT create/decode, configure_jwt()
+├── models/
+│   ├── http.py            # BaseResponse(code, message, data), ErrorResponse
+│   └── sql.py             # 9 SQLModel tables (users…audit_logs)
+├── services/
+│   ├── base.py            # BaseCRUD[T] — create/get/list/update/delete
+│   ├── progress.py        # ProgressManager singleton (queue.Queue per task)
+│   ├── pipeline_executor.py  # Background daemon thread, DB chapters preferred
+│   └── sse.py             # push_progress() → ProgressManager
+├── db/
+│   └── init.sql           # 9-table DDL, 3 extensions, HNSW + GIN indexes
+└── cli/                   # Pipeline engine — 11 modules
+    ├── models.py          # Chapter, ParagraphGroup, Scene, Script, KG, etc.
+    ├── chunker.py         # Regex (第X章) + LLM fallback with JSON mode
+    ├── paragraph_splitter.py  # Boundary-aware paragraph grouping (≤32-char merge)
+    ├── summarizer.py      # Per-chapter objective summary (Flash, 100-200 chars)
+    ├── rag_builder.py     # FAISS index, keyword fallback (with fallback_texts)
+    ├── graphrag_builder.py # KG extraction (Pro, RAG cross-chapter context)
+    ├── converter.py       # Chapter → scenes (Flash, paragraph groups, chapter_summary)
+    ├── optimizer.py       # Batch consistency check (Pro, position-based source_ref restore)
+    ├── llm_router.py      # Model routing, context/output limits, invoke_with_retry()
+    ├── exporter.py        # to_yaml(), to_json()
+    └── pipeline.py        # Orchestrator: run(), run_from_chapters(), run_from_text()
 ```
 
 **Key architectural patterns**:
-- **React Router 7 with SSR**: Server-side rendering enabled, using future v8 flags.
-- **Planned component layout** (per README): Three-panel IDE — TipTap novel reader (left), Monaco YAML editor (center), ReactFlow knowledge graph (right) — with bidirectional trace linking via `source_ref` offsets.
-- **State management**: Zustand stores (planned per README structure).
-- **UI library**: Ant Design 6 + Tailwind CSS 4.
+- **Dual-model routing**: `deepseek-v4-pro` for GraphRAG + optimization; `deepseek-v4-flash` for chunking, summarization, conversion, AI chat
+- **All-in-One DB**: PostgreSQL 18, 9 tables, sync psycopg2 (not asyncpg), no separate vector/graph DB
+- **pgvector HNSW** on `chapters.embedding` and `knowledge_nodes.embedding`; pg_trgm GIN on `knowledge_nodes.name`
+- **source_ref bidirectional trace**: Every script element carries `{chapter_id, offset}`, 3-tier fallback (exact→prefix→estimated)
+- **Application-layer retry**: Exponential backoff with jitter for all LLM calls (per-stage config, `LLM_MAX_RETRIES` env var)
+- **UTF-8 everywhere**: stdin/stdout reconfigured on Windows, logging encoding, file upload encoding fallback (GB18030/GBK/GB2312/Big5)
+- **Engine pool disposal**: `atexit` + FastAPI lifespan + test fixture teardown (3-layer guarantee)
 
-### YAML Schema Design (4-Layer Architecture)
+### Database Tables
 
-1. **Layer 0 — Fountain 1.1 100% isomorphism**: Round-trip fidelity between YAML and Fountain syntax (8 element types, title page, section/synopsis, boneyard).
-2. **Layer 1 — Structural enhancement**: Decomposed `heading` fields (`int_ext`, `location`, `time`), `dialogue_block` logical aggregation, `source_ref` 3D traceability, explicit `character_extension` fields.
-3. **Layer 2 — Narrative extension (`metadata`)**: Markers for flashbacks/flash-forwards, multi-timeline IDs, voice-over subtypes, stream-of-consciousness — covering what Fountain's minimal syntax cannot express for novel adaptation.
-4. **Layer 3 — Rendering & delivery**: Fountain export for toolchain compatibility + direct PDF rendering for industry compliance.
+| Table | Purpose |
+|-------|---------|
+| `users` | Accounts (argon2, JWT, admin seed) |
+| `novels` | Uploaded novels with source_text |
+| `chapters` | Pre-split chapters (preferred over re-chunking) |
+| `tasks` | Script conversion jobs (status machine: pending→preprocessing→converting→completed/failed) |
+| `knowledge_nodes` | KG nodes (character/location/item/event/organization) |
+| `knowledge_edges` | KG edges with relation + weight |
+| `operations` | Editor operation history (JSON Patch + undo) |
+| `dialogues` | AI chat conversation threads |
+| `audit_logs` | System audit trail (status transitions etc.) |
 
-### Data Layer Philosophy
+### Task State Machine
 
-The project explicitly rejects the `MySQL + FAISS + Neo4j` stack in favor of a single PostgreSQL instance:
-- **pgvector** with HNSW index replaces standalone vector DBs for RAG embeddings (`chapters.embedding`, `knowledge_nodes.embedding`).
-- **JSONB + dedicated edge tables** (`knowledge_nodes` / `knowledge_edges`) replace graph databases — supports recursive CTE for GraphRAG traversal.
-- **8 relational tables** (users, novels, tasks, chapters, knowledge_nodes, knowledge_edges, operations, dialogues, audit_logs) cover user auth, novel storage, task pipelines, knowledge graph, edit history, AI conversations, and system auditing.
-- This ensures ACID transactions and reduces Docker orchestration to a single DB container.
+```
+pending → preprocessing → converting → completed
+    │          │              │
+    └──────────┴──────────────┴──→ failed ──→ converting (resume)
+```
 
 ## Key Design Principles
 
-- **Pydantic V2 strict validation everywhere**: Every LLM output must pass a Pydantic model before entering the system. The Auto-Fix loop catches and repairs format drift.
-- **Source anchoring**: Every script element (dialogue, action) carries a `source_ref` with `chapter_id` + `offset` for bidirectional traceability between output script and input novel.
-- **Fountain as strategic bridge**: `.fountain` export is an intermediate interchange format, not the final deliverable. The YAML Schema is the source of truth; Fountain export enables import into Final Draft, Celtx, etc.
-- **Structured fallback**: Every structured field retains both the raw text and parsed sub-fields — if parsing fails, the system degrades gracefully to the raw text.
+- **Pydantic V2 strict validation everywhere**: Every LLM output must pass a Pydantic model before entering the system
+- **Source anchoring**: Every script element carries `source_ref` with `chapter_id` + `offset` for bidirectional traceability
+- **Paragraph-aligned slicing**: Input is split on `\n\n+` boundaries, short paragraphs merged — never mid-sentence
+- **Model-aware context budgets**: Auto-detected from model name, .env overridable, conservative CJK ratio (0.6 chars/token)
+- **Progressive degradation**: Each pipeline stage has a fallback — KG returns empty, converter returns [], optimizer keeps originals
 
 ## Competition Constraints (metadata.md)
 
 This project participates in a judged competition. Important rules:
-- Each PR must do exactly one thing; split large features into multiple small PRs.
-- PR descriptions must include: title summary, feature description, implementation approach, and testing method.
-- The `main` branch must remain runnable at all times — judges may check at any point.
-- All commits must fall within the competition window; no "last-day bulk import."
-- When collaborating, each team member must use their own GitHub account for commits.
+- Each PR must do exactly one thing; split large features into multiple small PRs
+- PR descriptions must include: title summary, feature description, implementation approach, and testing method
+- The `main` branch must remain runnable at all times — judges may check at any point
+- All commits must fall within the competition window; no "last-day bulk import"
+- When collaborating, each team member must use their own GitHub account for commits
+
+## Related Documentation
+
+- `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines
+- `.temp/DEVELOPMENT_STATUS.md` — Frontend development status (files, routes, stores, hooks, tests)
+- `.temp/novel_samples/` — Sample Chinese novel files for testing
