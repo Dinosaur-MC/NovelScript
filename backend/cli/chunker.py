@@ -140,7 +140,7 @@ def _llm_split(text: str) -> list[Chapter]:
     请以 JSON 格式输出。
 
     文本内容：
-    """) + text[:60000]  # Increased from 12000 — DeepSeek has 128K context
+    """) + text[:60000]  # Context budget is 60% of the LLM's window via context_chars()
 
     try:
         resp = llm.invoke(prompt)

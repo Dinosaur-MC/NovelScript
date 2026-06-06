@@ -6,6 +6,9 @@ DeepSeek native JSON mode (``response_format: {type: json_object}``).
 When a FAISS index is provided, each chapter's RAG search results are
 injected as cross-chapter context, helping the LLM discover entities
 and relations that span multiple chapters.
+
+Input text is sliced by paragraph-aligned groups (not raw character
+counts), using the model's context budget from ``context_chars()``.
 """
 
 from __future__ import annotations
@@ -16,8 +19,9 @@ from typing import Optional
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from cli.llm_router import get_llm
+from cli.llm_router import context_chars, get_llm
 from cli.models import Chapter, KnowledgeGraph
+from cli.paragraph_splitter import split_paragraphs
 
 logger = logging.getLogger(__name__)
 
@@ -52,21 +56,27 @@ def extract_graph(
 
     Args:
         chapters:         Ordered chapter list.
-        faiss_index:      Optional FAISS vector store.  When provided,
-                          each chapter's opening text is used as a
-                          query to retrieve related content from other
-                          chapters — this helps the LLM find cross-
-                          chapter entities and relations.
-        all_chapter_texts: Fallback texts for keyword search when the
-                          FAISS index is unavailable.
+        faiss_index:      Optional FAISS vector store for RAG.
+        all_chapter_texts: Fallback texts for keyword search.
     """
     if not chapters:
         logger.warning("No chapters provided — returning empty KnowledgeGraph.")
         return KnowledgeGraph()
 
-    combined = "\n\n".join(
-        f"【{ch.title}】\n{ch.text[:15000]}" for ch in chapters
-    )[:60000]
+    # Build chapter text from paragraph-aligned groups
+    budget = context_chars("global_extraction")
+    per_chapter_budget = max(5000, budget // max(len(chapters), 1))
+    sections: list[str] = []
+    for ch in chapters:
+        groups = split_paragraphs(ch.text, max_chars=per_chapter_budget)
+        section = groups[0].text if groups else ch.text[:per_chapter_budget]
+        sections.append(f"【{ch.title}】\n{section}")
+
+    # Still apply a combined cap in case of extreme chapter count
+    combined = "\n\n".join(sections)
+    if len(combined) > budget:
+        combined = combined[:budget]
+        logger.info("GraphRAG text capped at %d chars (budget for stage).", budget)
 
     # Build cross-chapter RAG context
     rag_context = _build_rag_context(chapters, faiss_index, all_chapter_texts)
@@ -94,12 +104,7 @@ def _build_rag_context(
     faiss_index,
     all_chapter_texts: list[str] | None,
 ) -> str:
-    """Build a cross-chapter context block from RAG search results.
-
-    Each chapter's first ~200 characters are used as a query.  The
-    top 2 related passages from *other* chapters are collected and
-    deduplicated.
-    """
+    """Build a cross-chapter context block from RAG search results."""
     if faiss_index is None and not all_chapter_texts:
         return ""
 
@@ -116,19 +121,16 @@ def _build_rag_context(
             fallback_texts=texts,
         )
         for r in results:
-            # Skip passages that are just the query chapter itself
             if r[:50].strip() == ch.text[:50].strip():
                 continue
-            key = r[:80]  # dedup by first 80 chars
+            key = r[:80]
             if key not in seen:
                 seen.add(key)
-                # Keep each passage reasonably short
                 passages.append(r[:400])
 
     if not passages:
         return ""
 
-    # Limit total context size
     ctx_lines = ["【跨章节语义关联上下文（来自 RAG 检索）】"]
     total = 0
     for p in passages:

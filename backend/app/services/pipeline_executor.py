@@ -86,7 +86,7 @@ def _run_in_thread(task_id: uuid.UUID, novel_id: uuid.UUID) -> None:
                 task.progress = progress
 
                 # Map stage → status via the state machine
-                if stage in ("starting", "chunking", "graphrag", "rag"):
+                if stage in ("starting", "chunking", "summarizing", "graphrag", "rag"):
                     if task.status == "pending":
                         task.status = "preprocessing"
                 elif stage in ("converting",):

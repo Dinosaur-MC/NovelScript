@@ -24,6 +24,18 @@ class Chapter(BaseModel):
     index: int = Field(..., ge=0, description="Zero-based chapter index in the novel")
 
 
+class ParagraphGroup(BaseModel):
+    """A paragraph-aligned block of text that fits within a character budget.
+
+    Short paragraphs (≤32 chars) are merged with neighbours to avoid
+    sending one-liner speech or narration to the LLM in isolation.
+    """
+
+    text: str = Field(..., description="Grouped paragraph text")
+    offset_start: int = Field(0, description="Character offset of first paragraph in the source text")
+    offset_end: int = Field(0, description="Character offset after the last paragraph")
+
+
 # ===========================================================================
 # Element — atomic unit inside a scene (action, dialogue, heading, etc.)
 # ===========================================================================

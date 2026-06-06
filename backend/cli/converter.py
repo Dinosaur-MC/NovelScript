@@ -12,8 +12,9 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from cli.llm_router import get_llm
+from cli.llm_router import context_chars, get_llm
 from cli.models import Chapter, KnowledgeGraph, Scene
+from cli.paragraph_splitter import split_paragraphs
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ elements (元素: action/dialogue/heading/transition/parenthetical/character/not
 请将以下小说章节转换为 JSON 格式的剧本场景。
 
 章节: {chapter_title}
+{summary_section}
 {kg_summary}
 【相关上下文】{rag_context}
 【待转换章节正文】
@@ -50,6 +52,7 @@ def convert_chapter(
     chapter: Chapter,
     kg: KnowledgeGraph,
     rag_context: list[str],
+    chapter_summary: str = "",
     max_retries: int = 1,
 ) -> list[Scene]:
     llm = get_llm("scene_conversion", temperature=0.5, json_mode=True)
@@ -61,15 +64,28 @@ def convert_chapter(
         r[:2000] for r in rag_context[:3]
     ) if rag_context else "（无额外上下文）"
 
+    # Build chapter text from paragraph groups (boundary-aware, no raw truncation)
+    budget = context_chars("converting")
+    para_groups = split_paragraphs(chapter.text, max_chars=budget)
+    chapter_text = para_groups[0].text if para_groups else chapter.text[:budget]
+
+    # Inject chapter summary as "前情提要"
+    summary_section = ""
+    if chapter_summary:
+        summary_section = (
+            f"【前情提要】\n以下是本章之前发生过的事情摘要，供你理解上下文：\n{chapter_summary}\n"
+        )
+
     chain = _PROMPT | llm | _parser
 
     for attempt in range(max_retries + 1):
         try:
             raw = chain.invoke({
                 "chapter_title": chapter.title,
-                "chapter_text": chapter.text[:15000],
+                "chapter_text": chapter_text,
                 "kg_summary": kg_summary,
                 "rag_context": rag_text,
+                "summary_section": summary_section,
                 "format_instructions": _parser.get_format_instructions(),
             })
             result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
