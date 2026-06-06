@@ -52,7 +52,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   const options: editor.IStandaloneEditorConstructionOptions = useMemo(
     () => ({
       fontSize: 14,
-      fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       lineNumbers: "on",
       minimap: { enabled: false },
       wordWrap: "on",

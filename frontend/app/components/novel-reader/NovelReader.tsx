@@ -12,10 +12,22 @@ interface Props {
   traceHook: ReturnType<typeof useTraceLinking>;
 }
 
+/** Stable extensions array — prevents TipTap editor recreation on re-render. */
+function useExtensions() {
+  return useMemo(
+    () => [
+      StarterKit.configure({ bold: false, italic: false }),
+      Placeholder.configure({ placeholder: "请上传小说..." }),
+    ],
+    [],
+  );
+}
+
 export function NovelReader({ readerHook, traceHook }: Props) {
   const chapters = useNovelStore((s) => s.chapters);
   const selectedChapterId = useNovelStore((s) => s.selectedChapterId);
   const selectChapter = useNovelStore((s) => s.selectChapter);
+  const extensions = useExtensions();
 
   const selectedChapter = useMemo(
     () => chapters.find((ch) => String(ch.index) === selectedChapterId) ?? null,
@@ -23,10 +35,7 @@ export function NovelReader({ readerHook, traceHook }: Props) {
   );
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ bold: false, italic: false }),
-      Placeholder.configure({ placeholder: "请上传小说..." }),
-    ],
+    extensions,
     content: selectedChapter?.content ?? "",
     editable: false, // read-only reader
   });

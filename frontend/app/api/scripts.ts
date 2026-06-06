@@ -55,9 +55,13 @@ export function deleteScript(id: string) {
   return request<{ script_id: string }>(`/scripts/${id}`, { method: "DELETE" });
 }
 
-export function exportScript(
+export async function exportScript(
   id: string,
   format: "yaml" | "json" | "fountain",
 ): Promise<string> {
-  return request<string>(`/scripts/${id}/export?format=${format}`);
+  // Backend returns raw text (PlainTextResponse), not JSON — bypass request().
+  const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+  const res = await fetch(`${BASE_URL}/scripts/${id}/export?format=${format}`);
+  if (!res.ok) throw new Error(`导出失败 (${res.status})`);
+  return res.text();
 }

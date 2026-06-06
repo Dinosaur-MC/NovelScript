@@ -18,10 +18,33 @@ import { Splitter } from "../components/splitter/Splitter";
 import { NovelReader } from "../components/novel-reader/NovelReader";
 import { ScriptEditor } from "../components/script-editor/ScriptEditor";
 import { RightPanel } from "../components/right-panel/RightPanel";
+import { ClientOnly } from "../components/ClientOnly";
 import type { Route } from "./+types/workspace";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "NovelScript — 剧本工作台" }];
+}
+
+/** SSR skeleton — pure CSS, no antd dependency. */
+function LoadingShell({ message = "加载中..." }: { message?: string }) {
+  return (
+    <div
+      style={{
+        height: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 16,
+        backgroundColor: "var(--color-bg-canvas)",
+      }}
+    >
+      <div className="ns-spinner" />
+      <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+        {message}
+      </span>
+    </div>
+  );
 }
 
 export default function Workspace() {
@@ -88,50 +111,19 @@ export default function Workspace() {
 
   if (error) {
     return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          backgroundColor: "var(--color-bg-canvas)",
-        }}
-      >
-        <p style={{ color: "var(--color-accent-danger)", fontSize: 16 }}>{error}</p>
-        <button
-          onClick={() => navigate("/")}
+      <ClientOnly fallback={<LoadingShell message="加载中..." />}>
+        <div
           style={{
-            padding: "8px 24px",
-            background: "var(--color-accent-primary)",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
+            height: "100vh",
+            display: "flex",
+            flexDirection: "column",
+            backgroundColor: "var(--color-bg-canvas)",
           }}
         >
-          返回首页
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "var(--color-bg-canvas)",
-      }}
-    >
-      <TaskBar loading={loading} />
-      <div style={{ flex: 1, overflow: "hidden" }}>
-        {loading ? (
+          <TaskBar loading={false} />
           <div
             style={{
-              height: "100%",
+              flex: 1,
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -139,32 +131,77 @@ export default function Workspace() {
               gap: 16,
             }}
           >
-            <div className="ns-spinner" />
-            <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
-              加载中...
-            </span>
+            <p style={{ color: "var(--color-accent-danger)", fontSize: 16 }}>{error}</p>
+            <button
+              onClick={() => navigate("/")}
+              style={{
+                padding: "8px 24px",
+                background: "var(--color-accent-primary)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+              }}
+            >
+              返回首页
+            </button>
           </div>
-        ) : (
-          <Splitter
-            direction="horizontal"
-            initialLeftPercent={leftW}
-            minLeftPx={240}
-            minRightPx={280 + 360}
-          >
-            <NovelReader readerHook={readerHook} traceHook={traceHook} />
+          <StatusBar />
+        </div>
+      </ClientOnly>
+    );
+  }
+
+  return (
+    <ClientOnly fallback={<LoadingShell message="加载中..." />}>
+      <div
+        style={{
+          height: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "var(--color-bg-canvas)",
+        }}
+      >
+        <TaskBar loading={loading} />
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          {loading ? (
+            <div
+              style={{
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 16,
+              }}
+            >
+              <div className="ns-spinner" />
+              <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+                加载中...
+              </span>
+            </div>
+          ) : (
             <Splitter
               direction="horizontal"
-              initialLeftPercent={centerW / (centerW + (100 - leftW - centerW)) * 100}
-              minLeftPx={360}
-              minRightPx={280}
+              initialLeftPercent={leftW}
+              minLeftPx={240}
+              minRightPx={280 + 360}
             >
-              <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
-              <RightPanel traceHook={traceHook} editorHook={editorHook} />
+              <NovelReader readerHook={readerHook} traceHook={traceHook} />
+              <Splitter
+                direction="horizontal"
+                initialLeftPercent={centerW / (centerW + (100 - leftW - centerW)) * 100}
+                minLeftPx={360}
+                minRightPx={280}
+              >
+                <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
+                <RightPanel traceHook={traceHook} editorHook={editorHook} />
+              </Splitter>
             </Splitter>
-          </Splitter>
-        )}
+          )}
+        </div>
+        <StatusBar />
       </div>
-      <StatusBar />
-    </div>
+    </ClientOnly>
   );
 }
