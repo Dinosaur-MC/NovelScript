@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlmodel import select
 
-from app.core.auth_middleware import get_current_user
+from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
@@ -63,7 +63,7 @@ def _create_novel_from_text(
     author: Optional[str],
     db: Session,
     *,
-    user_id: uuid.UUID | None = None,
+    user_id: uuid.UUID,
 ) -> BaseResponse:
     """Core logic: persist a Novel and regex-split Chapters from raw text."""
     # -- Validation -----------------------------------------------------------
@@ -251,8 +251,7 @@ def update_novel(
     novel = novel_crud.get(db, nid)
     if novel is None:
         raise HTTPException(status_code=404, detail="Novel not found")
-    if novel.user_id and novel.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="无权修改此小说")
+    require_ownership(novel, current_user, resource_name="小说", action="修改")
 
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
@@ -284,8 +283,7 @@ def delete_novel(
     novel = novel_crud.get(db, nid)
     if novel is None:
         raise HTTPException(status_code=404, detail="Novel not found")
-    if novel.user_id and novel.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="无权删除此小说")
+    require_ownership(novel, current_user, resource_name="小说", action="删除")
 
     # Cascade-delete chapters manually (FK lacks ON DELETE CASCADE)
     stmt = select(ChapterModel).where(ChapterModel.novel_id == nid)

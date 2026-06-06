@@ -18,7 +18,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel as PydanticBaseModel
 from sqlalchemy.orm import Session
 
-from app.core.auth_middleware import get_current_user
+from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Operation, Task, User
@@ -186,6 +186,8 @@ def delete_script(
     current_user: User = Depends(get_current_user),
 ):
     sid = _parse_script_id(script_id)
+    task = _script_or_404(db, sid)
+    require_ownership(task, current_user, resource_name="剧本", action="删除")
     success = task_crud.delete(db, sid)
     if not success:
         raise HTTPException(status_code=404, detail="Script not found")

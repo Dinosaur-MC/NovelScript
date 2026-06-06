@@ -22,7 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from cli.llm_router import get_llm, invoke_llm_with_retry
 
-from app.core.auth_middleware import get_current_user
+from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Dialogue, Operation, Task, User
@@ -334,6 +334,7 @@ def chat(
     task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+    require_ownership(task, current_user, resource_name="任务", action="编辑")
 
     # 2. Build prompt & call LLM
     messages = _build_chat_messages(task, body.message, body.scene_id)
@@ -404,6 +405,7 @@ def apply_patch(
     task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+    require_ownership(task, current_user, resource_name="任务", action="编辑")
 
     if task.script_json is None:
         task.script_json = {}
@@ -470,6 +472,7 @@ def undo(
     task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+    require_ownership(task, current_user, resource_name="任务", action="编辑")
 
     # 2. Find most recent non-rollback operation
     from sqlalchemy import desc, select

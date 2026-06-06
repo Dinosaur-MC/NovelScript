@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth_middleware import get_current_user
+from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import AuditLog, Novel, Task, User
@@ -331,6 +331,7 @@ def update_task_status(
     task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    require_ownership(task, current_user, resource_name="任务", action="修改")
 
     new_status = body.status
     current_status = task.status
@@ -402,6 +403,7 @@ def resume_task(
     task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    require_ownership(task, current_user, resource_name="任务", action="恢复")
 
     if task.status != "failed":
         raise HTTPException(
