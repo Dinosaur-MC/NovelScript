@@ -29,6 +29,7 @@ export function useAutoSave() {
             );
           } else {
             setValidationErrors([]);
+            message.success("已保存");
           }
         } catch (err) {
           console.error("Auto-save failed:", err);
