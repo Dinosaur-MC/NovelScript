@@ -84,3 +84,34 @@ html, body, #root {
 .react-flow__controls-button:hover { background-color: var(--color-bg-hover) !important; }
 .react-flow__attribution { background: transparent !important; color: var(--color-text-muted) !important; }
 .react-flow__minimap { background-color: var(--color-bg-surface) !important; border: 1px solid var(--color-border-subtle) !important; }
+
+/* ---- Ant Design message/toast dark theme ---- */
+.ant-message .ant-message-notice-content {
+  background: var(--color-bg-elevated) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.5) !important;
+}
+.ant-message .ant-message-success .anticon { color: var(--color-accent-success) !important; }
+.ant-message .ant-message-error .anticon   { color: var(--color-accent-danger) !important; }
+.ant-message .ant-message-warning .anticon { color: var(--color-accent-warning) !important; }
+.ant-message .ant-message-info .anticon    { color: var(--color-accent-info) !important; }
+
+.ant-notification .ant-notification-notice {
+  background: var(--color-bg-elevated) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.5) !important;
+}
+.ant-notification .ant-notification-notice-message { color: var(--color-text-primary) !important; }
+.ant-notification .ant-notification-notice-close   { color: var(--color-text-secondary) !important; }
+
+/* ---- Collapsed reader panel ---- */
+.ns-reader-collapsed {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 12px 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  letter-spacing: 4px;
+}

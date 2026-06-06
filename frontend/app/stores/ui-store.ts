@@ -7,9 +7,11 @@ interface UIState {
   centerWidth: number;
   rightWidth: number;
   activeTab: RightTab;
+  readerCollapsed: boolean;
 
   setPanelWidths: (l: number, c: number, r: number) => void;
   setActiveTab: (tab: RightTab) => void;
+  setReaderCollapsed: (v: boolean) => void;
 }
 
 function loadWidths(): { l: number; c: number; r: number } {

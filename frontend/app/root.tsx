@@ -8,7 +8,7 @@ import {
   ScrollRestoration,
 } from "react-router";
 
-import { ConfigProvider, theme } from "antd";
+import { ConfigProvider, theme, App as AntApp } from "antd";
 import { StyleProvider } from "@ant-design/cssinjs";
 import { getSSRCache } from "./ssr-cache";
 import { useAuthStore } from "./stores/auth-store";
@@ -80,7 +80,9 @@ export default function App() {
           },
         }}
       >
-        <Outlet />
+        <AntApp>
+          <Outlet />
+        </AntApp>
       </ConfigProvider>
     </StyleProvider>
   );
