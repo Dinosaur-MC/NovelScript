@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { ServerRouter } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
-import { extractSSRStyles } from "./lib/ssr-cache";
+import { extractSSRStyles } from "./ssr-cache";
 import type { EntryContext } from "react-router";
 
 export const streamTimeout = 5_000;

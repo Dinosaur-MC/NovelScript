@@ -9,7 +9,7 @@ import {
 
 import { ConfigProvider, theme } from "antd";
 import { StyleProvider } from "@ant-design/cssinjs";
-import { getSSRCache } from "./lib/ssr-cache";
+import { getSSRCache } from "./ssr-cache";
 
 import type { Route } from "./+types/root";
 import "./app.css";
