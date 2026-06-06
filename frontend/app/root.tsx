@@ -7,6 +7,8 @@ import {
   ScrollRestoration,
 } from "react-router";
 
+import { ConfigProvider, theme } from "antd";
+
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -25,7 +27,7 @@ export const links: Route.LinksFunction = () => [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -42,7 +44,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />;
+  return (
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: {
+          colorPrimary: "#6c5ce7",
+          colorSuccess: "#00cec9",
+          colorWarning: "#fdcb6e",
+          colorError: "#e17055",
+          colorInfo: "#74b9ff",
+          colorTextBase: "#e8e8f0",
+          colorBgBase: "#0a0a0f",
+          colorBgContainer: "#1c1c2a",
+          colorBgElevated: "#14141f",
+          colorBorder: "#2a2a3e",
+          colorBorderSecondary: "#2a2a3e",
+          borderRadius: 6,
+        },
+      }}
+    >
+      <Outlet />
+    </ConfigProvider>
+  );
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
