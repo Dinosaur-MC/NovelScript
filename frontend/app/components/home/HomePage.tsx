@@ -161,7 +161,7 @@ export function HomePage() {
           open={uploadOpen}
           onCancel={() => setUploadOpen(false)}
           footer={null}
-          destroyOnClose
+          destroyOnHidden
         >
           <div style={{ marginBottom: 16 }}>
             <Input.TextArea
@@ -324,7 +324,7 @@ export function HomePage() {
         open={uploadOpen}
         onCancel={() => setUploadOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <div style={{ marginBottom: 16 }}>
           <Input.TextArea

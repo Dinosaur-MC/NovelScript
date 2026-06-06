@@ -45,36 +45,46 @@ export function KnowledgeGraph() {
   const characters = useScriptStore((s) => s.characters);
   const scenes = useScriptStore((s) => s.scenes);
 
-  // Extract nodes from characters + locations found in scenes
+  // Extract nodes from characters + locations found in scenes.
+  // Positions are deterministic (index-based circle layout) to avoid
+  // SSR hydration mismatch from Math.random().
   const initialNodes = useMemo(() => {
     const nodes: Node[] = [];
 
-    // Character nodes
-    for (const ch of characters) {
+    // Character nodes — arrange in a circle
+    const chCount = characters.length;
+    for (let i = 0; i < chCount; i++) {
+      const ch = characters[i];
+      const angle = (2 * Math.PI * i) / Math.max(chCount, 1);
       nodes.push({
         id: ch.id as string,
         type: "default",
         data: { label: (ch.name as string) || (ch.id as string) },
-        position: { x: Math.random() * 400 - 200, y: Math.random() * 300 - 150 },
+        position: { x: Math.cos(angle) * 180, y: Math.sin(angle) * 180 },
         style: NODE_STYLE.character,
       });
     }
 
-    // Location nodes from scene headings
+    // Location nodes from scene headings — arrange in a second ring
     const seenLocations = new Set<string>();
+    const locs: string[] = [];
     for (const scene of scenes) {
       const heading = scene.heading as Record<string, string> | undefined;
       const loc = heading?.location;
       if (loc && !seenLocations.has(loc)) {
         seenLocations.add(loc);
-        nodes.push({
-          id: `loc_${loc}`,
-          type: "default",
-          data: { label: loc },
-          position: { x: Math.random() * 400 - 200, y: Math.random() * 300 - 150 },
-          style: NODE_STYLE.location,
-        });
+        locs.push(loc);
       }
+    }
+    for (let i = 0; i < locs.length; i++) {
+      const angle = (2 * Math.PI * i) / Math.max(locs.length, 1);
+      nodes.push({
+        id: `loc_${locs[i]}`,
+        type: "default",
+        data: { label: locs[i] },
+        position: { x: Math.cos(angle) * 300 + 50, y: Math.sin(angle) * 300 },
+        style: NODE_STYLE.location,
+      });
     }
 
     return nodes;
