@@ -23,6 +23,8 @@ describe("useTraceLinking", () => {
       clearHighlights: vi.fn(),
       triggerUndo: vi.fn(),
       triggerRedo: vi.fn(),
+      revealLineNearTop: vi.fn(),
+      selectLines: vi.fn(),
     };
   }
 

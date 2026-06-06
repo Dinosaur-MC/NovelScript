@@ -73,5 +73,22 @@ export function useScriptEditor() {
     editorRef.current?.trigger("keyboard", "redo", null);
   }, []);
 
-  return { bindEditor, getValue, setValue, applyExternalEdit, highlightLines, clearHighlights, triggerUndo, triggerRedo };
+  /** Scroll to a line in the editor (1-based), positioning it near the top. */
+  const revealLineNearTop = useCallback((line: number) => {
+    const ed = editorRef.current;
+    if (ed) ed.revealLineNearTop(line);
+  }, []);
+
+  /** Select a range of lines (1-based, inclusive). */
+  const selectLines = useCallback((startLine: number, endLine: number) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const model = ed.getModel();
+    if (!model) return;
+    const m = (window as unknown as Record<string, unknown>).monaco as typeof import("monaco-editor") | undefined;
+    if (!m) return;
+    ed.setSelection(new m.Range(startLine, 1, endLine, model.getLineMaxColumn(endLine)));
+  }, []);
+
+  return { bindEditor, getValue, setValue, applyExternalEdit, highlightLines, clearHighlights, triggerUndo, triggerRedo, revealLineNearTop, selectLines };
 }

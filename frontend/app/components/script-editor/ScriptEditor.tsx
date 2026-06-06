@@ -66,7 +66,6 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   // Parse initial yaml for preview on mount
   useEffect(() => {
     if (initialYaml) updateYaml(initialYaml);
-    // Only run once on mount — the ref keeps latest editor state thereafter
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -102,7 +101,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   const options: editor.IStandaloneEditorConstructionOptions = useMemo(
     () => ({
       fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
       lineNumbers: "on",
       minimap: { enabled: false },
       wordWrap: "on",

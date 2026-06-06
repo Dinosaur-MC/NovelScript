@@ -174,7 +174,7 @@ export default function Workspace() {
           </div>
         ) : (
           <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-            {/* Collapse tab */}
+            {/* Collapse tab — instant appearance */}
             <div
               className="ns-reader-collapse-tab"
               onClick={() => setReaderCollapsed(false)}
@@ -183,12 +183,11 @@ export default function Workspace() {
                 flexShrink: 0, overflow: "hidden",
                 width: readerCollapsed ? 28 : 0,
                 minWidth: readerCollapsed ? 28 : 0,
-                transition: "width 0.25s ease, min-width 0.25s ease",
               }}
             >
               小说原文
             </div>
-            {/* Reader panel */}
+            {/* Reader panel — smooth collapse animation */}
             <div style={{
               flexShrink: 0, overflow: "hidden",
               width: readerCollapsed ? 0 : `${leftW}%`,
@@ -197,6 +196,41 @@ export default function Workspace() {
             }}>
               <NovelReader readerHook={readerHook} traceHook={traceHook} />
             </div>
+            {/* Splitter handle — always present for resizing */}
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startW = leftW;
+                const onMove = (ev: MouseEvent) => {
+                  const container = (e.target as HTMLElement).parentElement;
+                  if (!container) return;
+                  const total = container.getBoundingClientRect().width;
+                  const delta = ev.clientX - startX;
+                  const newPct = Math.max(15, Math.min(70, startW + (delta / total) * 100));
+                  const rem = 100 - newPct;
+                  const innerRatio = centerW / (centerW + rightW || 1);
+                  setPanelWidths(newPct, innerRatio * rem, rem - innerRatio * rem);
+                };
+                const onUp = () => {
+                  document.removeEventListener("mousemove", onMove);
+                  document.removeEventListener("mouseup", onUp);
+                  document.body.style.cursor = "";
+                  document.body.style.userSelect = "";
+                };
+                document.body.style.cursor = "col-resize";
+                document.body.style.userSelect = "none";
+                document.addEventListener("mousemove", onMove);
+                document.addEventListener("mouseup", onUp);
+              }}
+              style={{
+                width: 4, flexShrink: 0, cursor: "col-resize",
+                backgroundColor: "var(--color-border-subtle)",
+                transition: "background-color 0.15s",
+              }}
+              onMouseEnter={(el) => { (el.target as HTMLElement).style.backgroundColor = "var(--color-accent-primary)"; }}
+              onMouseLeave={(el) => { (el.target as HTMLElement).style.backgroundColor = "var(--color-border-subtle)"; }}
+            />
             {/* Editor + RightPanel */}
             <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
               <Splitter
