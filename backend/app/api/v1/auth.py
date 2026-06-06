@@ -6,18 +6,17 @@ All endpoints are synchronous (no async/await).
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
 from app.core.security import (
     create_access_token,
-    decode_access_token,
     hash_password,
     verify_password,
 )
@@ -45,25 +44,6 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=320)
     password: str = Field(..., min_length=1, max_length=128)
-
-
-# ---------------------------------------------------------------------------
-# Helper — extract current user from Bearer token
-# ---------------------------------------------------------------------------
-
-def _get_user_from_token(token: str, db: Session) -> User | None:
-    """Decode JWT and return the matching User, or None on failure."""
-    payload = decode_access_token(token)
-    if payload is None:
-        return None
-    user_id = payload.get("sub")
-    if user_id is None:
-        return None
-    try:
-        uid = uuid.UUID(user_id)
-    except (ValueError, TypeError):
-        return None
-    return db.get(User, uid)
 
 
 # ---------------------------------------------------------------------------
@@ -152,30 +132,15 @@ def logout():
 # ---------------------------------------------------------------------------
 
 @router.get("/me")
-def me(
-    db: Session = Depends(get_db),
-    authorization: str | None = Header(None),
-):
+def me(current_user: User = Depends(get_current_user)):
     """Return the current authenticated user's profile."""
-    if authorization is None:
-        raise HTTPException(status_code=401, detail="缺少认证令牌")
-
-    # Strip "Bearer " prefix
-    token = authorization.removeprefix("Bearer ").strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="无效的认证令牌")
-
-    user = _get_user_from_token(token, db)
-    if user is None:
-        raise HTTPException(status_code=401, detail="认证令牌无效或已过期")
-
     return BaseResponse(
         code=200,
         message="请求成功",
         data={
-            "id": str(user.id),
-            "username": user.username,
-            "email": user.email,
-            "role": user.role,
+            "id": str(current_user.id),
+            "username": current_user.username,
+            "email": current_user.email,
+            "role": current_user.role,
         },
     )

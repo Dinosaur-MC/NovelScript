@@ -18,9 +18,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import AuditLog, Novel, Task
+from app.models.sql import AuditLog, Novel, Task, User
 from app.services.base import BaseCRUD
 from app.services.progress import progress_manager
 
@@ -93,7 +94,11 @@ def _write_audit(
 
 
 @router.post("/")
-def create_task(body: CreateTaskRequest, db: Session = Depends(get_db)):
+def create_task(
+    body: CreateTaskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Create a new conversion task for a novel.
 
     Returns ``{task_id, status: "pending"}`` on success.
@@ -111,6 +116,7 @@ def create_task(body: CreateTaskRequest, db: Session = Depends(get_db)):
 
     task = Task(
         novel_id=novel_id,
+        user_id=current_user.id,
         status="pending",
         progress=0,
         pipeline_config=body.pipeline_config,
@@ -302,7 +308,12 @@ def get_task_status(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{task_id}/status")
-def update_task_status(task_id: str, body: UpdateTaskStatusRequest, db: Session = Depends(get_db)):
+def update_task_status(
+    task_id: str,
+    body: UpdateTaskStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Update task status with state-machine enforcement.
 
     Valid transitions (skip-stage transitions return 422):
@@ -374,7 +385,11 @@ def update_task_status(task_id: str, body: UpdateTaskStatusRequest, db: Session 
 
 
 @router.post("/{task_id}/resume")
-def resume_task(task_id: str, db: Session = Depends(get_db)):
+def resume_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Resume a failed task (failed -> converting).
 
     Returns 422 if the task is not in ``failed`` status.

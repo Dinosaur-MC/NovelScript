@@ -14,10 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlmodel import select
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import Novel
+from app.models.sql import Novel, User
 from app.services.base import BaseCRUD
 from cli.chunker import split_chapters
 
@@ -61,6 +62,8 @@ def _create_novel_from_text(
     title: Optional[str],
     author: Optional[str],
     db: Session,
+    *,
+    user_id: uuid.UUID | None = None,
 ) -> BaseResponse:
     """Core logic: persist a Novel and regex-split Chapters from raw text."""
     # -- Validation -----------------------------------------------------------
@@ -82,6 +85,7 @@ def _create_novel_from_text(
 
     # -- Persist Novel --------------------------------------------------------
     novel = Novel(
+        user_id=user_id,
         title=resolved_title,
         author=author,
         source_text=stripped,
@@ -130,9 +134,10 @@ def _create_novel_from_text(
 def upload_novel(
     body: UploadRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload novel text as a JSON body — split into chapters via regex."""
-    return _create_novel_from_text(body.content, body.title, body.author, db)
+    return _create_novel_from_text(body.content, body.title, body.author, db, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +151,7 @@ def upload_novel_file(
     title: str = Form("Untitled"),
     author: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload novel text as a multipart file — split into chapters via regex.
 
@@ -170,7 +176,7 @@ def upload_novel_file(
                 status_code=400,
                 detail="Could not decode file — expected UTF-8 or GBK encoding.",
             )
-    return _create_novel_from_text(content, title, author, db)
+    return _create_novel_from_text(content, title, author, db, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -238,17 +244,21 @@ def update_novel(
     novel_id: str,
     body: UpdateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Update title and/or author of an existing novel."""
     nid = _parse_uuid(novel_id)
+    novel = novel_crud.get(db, nid)
+    if novel is None:
+        raise HTTPException(status_code=404, detail="Novel not found")
+    if novel.user_id and novel.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权修改此小说")
 
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
     updated = novel_crud.update(db, nid, updates)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="Novel not found")
 
     return BaseResponse(
         code=200,
@@ -263,13 +273,19 @@ def update_novel(
 
 
 @router.delete("/{novel_id}", response_model=BaseResponse)
-def delete_novel(novel_id: str, db: Session = Depends(get_db)):
+def delete_novel(
+    novel_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Delete a novel and all its chapters (cascade)."""
     nid = _parse_uuid(novel_id)
 
     novel = novel_crud.get(db, nid)
     if novel is None:
         raise HTTPException(status_code=404, detail="Novel not found")
+    if novel.user_id and novel.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权删除此小说")
 
     # Cascade-delete chapters manually (FK lacks ON DELETE CASCADE)
     stmt = select(ChapterModel).where(ChapterModel.novel_id == nid)

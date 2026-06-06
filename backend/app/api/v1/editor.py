@@ -22,9 +22,10 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from cli.llm_router import get_llm, invoke_llm_with_retry
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import Dialogue, Operation, Task
+from app.models.sql import Dialogue, Operation, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,7 @@ def chat(
     task_id: str,
     body: ChatRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Send a message to the AI editor for a given task.
 
@@ -350,6 +352,7 @@ def chat(
     # 3. Persist dialogue rows
     user_dialogue = Dialogue(
         task_id=task.id,
+        user_id=current_user.id,
         role="user",
         content=body.message,
         meta={"scene_id": body.scene_id} if body.scene_id else {},
@@ -358,6 +361,7 @@ def chat(
 
     assistant_dialogue = Dialogue(
         task_id=task.id,
+        user_id=current_user.id,
         role="assistant",
         content=reply_text,
     )
@@ -387,6 +391,7 @@ def apply_patch(
     task_id: str,
     body: PatchRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Apply a JSON Patch operation to the task's ``script_json``.
 
@@ -429,6 +434,7 @@ def apply_patch(
     # 4. Record the operation
     operation = Operation(
         task_id=task.id,
+        user_id=current_user.id,
         type="ai_patch",
         target_path=body.path,
         diff_json={"op": body.op, "path": body.path, "value": body.value},
@@ -450,6 +456,7 @@ def apply_patch(
 def undo(
     task_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Roll back the most recent non-rollback operation for a task.
 
@@ -544,6 +551,7 @@ def undo(
     # 6. Record the rollback
     rollback = Operation(
         task_id=task.id,
+        user_id=current_user.id,
         type="rollback",
         target_path=orig_path,
         diff_json={

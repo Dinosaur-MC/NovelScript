@@ -18,9 +18,10 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel as PydanticBaseModel
 from sqlalchemy.orm import Session
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import Operation, Task
+from app.models.sql import Operation, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ def update_script(
     script_id: str,
     body: ScriptUpdateRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     sid = _parse_script_id(script_id)
     task = _script_or_404(db, sid)
@@ -156,7 +158,12 @@ def update_script(
     db.flush()
     db.refresh(task)
 
-    op = Operation(task_id=sid, type="manual_edit", target_path="/script_yaml")
+    op = Operation(
+        task_id=sid,
+        user_id=current_user.id,
+        type="manual_edit",
+        target_path="/script_yaml",
+    )
     db.add(op)
     db.flush()
 
@@ -173,7 +180,11 @@ def update_script(
 
 
 @router.delete("/{script_id}")
-def delete_script(script_id: str, db: Session = Depends(get_db)):
+def delete_script(
+    script_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     sid = _parse_script_id(script_id)
     success = task_crud.delete(db, sid)
     if not success:
