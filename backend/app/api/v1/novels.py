@@ -147,8 +147,29 @@ def upload_novel_file(
     author: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """Upload novel text as a multipart file — split into chapters via regex."""
-    content = file.file.read().decode("utf-8")
+    """Upload novel text as a multipart file — split into chapters via regex.
+
+    Accepts UTF-8 encoded files.  Falls back to common CJK encodings
+    (GBK, GB2312, GB18030) if UTF-8 decoding fails, since Chinese
+    novels are often authored on Windows with legacy encodings.
+    """
+    raw = file.file.read()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        # Try common CJK encodings
+        for enc in ("gb18030", "gbk", "gb2312", "big5"):
+            try:
+                content = raw.decode(enc)
+                logger.info("Uploaded file decoded as %s (not UTF-8).", enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not decode file — expected UTF-8 or GBK encoding.",
+            )
     return _create_novel_from_text(content, title, author, db)
 
 

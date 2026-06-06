@@ -2,6 +2,10 @@
 
 Uses LangChain-native ChatPromptTemplate + JsonOutputParser with
 DeepSeek native JSON mode (``response_format: {type: json_object}``).
+
+When the serialized scene list exceeds the per-call budget, scenes are
+split into batches and each batch is processed independently.  This
+avoids silent truncation (which previously dropped up to 74% of scenes).
 """
 
 from __future__ import annotations
@@ -17,6 +21,11 @@ from cli.llm_router import get_llm
 from cli.models import KnowledgeGraph, Scene
 
 logger = logging.getLogger(__name__)
+
+# Per-batch serialized size budget (chars).  DeepSeek's context window
+# is large enough that we can go higher, but staying conservative keeps
+# the LLM focused on each batch's internal consistency.
+_BATCH_BUDGET = 10_000
 
 
 class SceneList(BaseModel):
@@ -36,40 +45,85 @@ _PROMPT = ChatPromptTemplate.from_messages([
 请检查以下剧本场景的一致性并以 JSON 格式输出修正结果：
 
 {kg_summary}
+{context_note}
 【场景列表】
 {scenes_json}"""),
 ])
 
 
 def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
+    """Check and improve cross-scene consistency.
+
+    Scenes are processed in batches so the per-call JSON payload stays
+    within ``_BATCH_BUDGET`` characters — no scenes are silently dropped.
+    """
     if not scenes:
         return []
 
-    llm = get_llm("consistency_check", temperature=0.2, json_mode=True)
-    chain = _PROMPT | llm | _parser
+    kg_summary = _summarize_kg(kg)
+    format_instructions = _parser.get_format_instructions()
+    batches = _batch_scenes(scenes)
 
-    serialized = _serialize_scenes(scenes)
-    if len(serialized) > 12000:
-        logger.warning(
-            "Scenes JSON is %d chars — truncating to 12000. "
-            "%d of %d scenes may be dropped by the LLM.",
-            len(serialized), max(0, len(scenes) - int(len(scenes) * 12000 / max(len(serialized), 1))), len(scenes),
+    if len(batches) == 1:
+        logger.info("Optimizer: 1 batch (%d scenes).", len(scenes))
+    else:
+        logger.info(
+            "Optimizer: %d scenes split into %d batches.",
+            len(scenes), len(batches),
         )
 
-    try:
-        raw = chain.invoke({
-            "scenes_json": serialized[:12000],
-            "kg_summary": _summarize_kg(kg),
-            "format_instructions": _parser.get_format_instructions(),
-        })
-        result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
-        # Restore source_ref tracing lost during serialization/LLM round-trip
-        result.scenes = _restore_source_refs(scenes, result.scenes)
-        logger.info("Optimizer: %d scene(s) processed.", len(result.scenes))
-        return result.scenes
-    except Exception as exc:
-        logger.exception("Optimizer failed — returning original scenes: %s", exc)
-        return scenes
+    optimized: list[Scene] = []
+    for bi, batch in enumerate(batches):
+        batch_json = _serialize_scenes(batch)
+        context_note = ""
+        if len(batches) > 1:
+            context_note = (
+                f"（这是第 {bi + 1}/{len(batches)} 批场景。"
+                f"共 {len(scenes)} 个场景，本批 {len(batch)} 个。）"
+            )
+
+        try:
+            raw = _invoke_chain(batch_json, kg_summary, format_instructions, context_note)
+            result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
+            optimized.extend(result.scenes)
+            logger.info(
+                "  Batch %d/%d: %d → %d scenes.",
+                bi + 1, len(batches), len(batch), len(result.scenes),
+            )
+        except Exception:
+            logger.exception(
+                "Batch %d/%d failed — keeping original scenes for this batch.",
+                bi + 1, len(batches),
+            )
+            optimized.extend(batch)
+
+    # Restore source_ref tracing lost during serialization/LLM round-trips
+    optimized = _restore_source_refs(scenes, optimized)
+
+    if len(optimized) != len(scenes):
+        logger.warning(
+            "Scene count changed during optimization: %d → %d.",
+            len(scenes), len(optimized),
+        )
+
+    return optimized
+
+
+def _invoke_chain(
+    scenes_json: str,
+    kg_summary: str,
+    format_instructions: str,
+    context_note: str,
+) -> dict:
+    """Shared LLM invocation — extracted so tests can patch it easily."""
+    llm = get_llm("consistency_check", temperature=0.2, json_mode=True)
+    chain = _PROMPT | llm | _parser
+    return chain.invoke({
+        "scenes_json": scenes_json,
+        "kg_summary": kg_summary,
+        "format_instructions": format_instructions,
+        "context_note": context_note,
+    })
 
 
 def _serialize_scenes(scenes: list[Scene]) -> str:
@@ -80,6 +134,31 @@ def _serialize_scenes(scenes: list[Scene]) -> str:
           "characters_present": s.characters_present} for s in scenes],
         ensure_ascii=False, indent=2,
     )
+
+
+def _batch_scenes(scenes: list[Scene]) -> list[list[Scene]]:
+    """Split *scenes* so each batch's serialization fits ``_BATCH_BUDGET``.
+
+    Single-scene batches are emitted as-is even when they exceed the
+    budget (one huge scene is better than dropping it).
+    """
+    batches: list[list[Scene]] = []
+    current: list[Scene] = []
+    current_size = 0
+
+    for s in scenes:
+        s_size = len(_serialize_scenes([s]))
+        if current and current_size + s_size > _BATCH_BUDGET:
+            batches.append(current)
+            current = []
+            current_size = 0
+        current.append(s)
+        current_size += s_size
+
+    if current:
+        batches.append(current)
+
+    return batches
 
 
 def _summarize_kg(kg: KnowledgeGraph) -> str:

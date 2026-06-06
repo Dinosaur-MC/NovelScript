@@ -224,11 +224,11 @@ async def stream_progress(task_id: str, db: Session = Depends(get_db)):
             # If the task already reached a terminal state before the SSE
             # client connected, push one final event and exit immediately.
             if task.status == "completed":
-                yield {"event": "complete", "data": json.dumps({"progress": 100})}
+                yield {"event": "complete", "data": json.dumps({"progress": 100}, ensure_ascii=False)}
                 return
             if task.status == "failed":
                 err = task.error_message or "Unknown error"
-                yield {"event": "error", "data": json.dumps({"error": str(err)})}
+                yield {"event": "error", "data": json.dumps({"error": str(err)}, ensure_ascii=False)}
                 return
 
             # Main poll loop

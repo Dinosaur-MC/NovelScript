@@ -10,7 +10,9 @@ from app.models.http import BaseResponse, ErrorResponse
 
 # 配置日志
 logging.basicConfig(
-    level=logging.DEBUG, format="[%(asctime)s] %(name)s - %(levelname)s: %(message)s"
+    level=logging.DEBUG,
+    format="[%(asctime)s] %(name)s - %(levelname)s: %(message)s",
+    encoding="utf-8",
 )
 logger = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ Usage:
 
 Stages:
     1. Chunking    — split raw novel into chapters
-    2. GraphRAG    — extract knowledge graph (characters, locations, relations)
-    3. RAG Index   — build FAISS index for cross-chapter context
+    2. RAG Index   — build FAISS index for cross-chapter context
+    3. GraphRAG    — extract knowledge graph (characters, locations, relations)
     4. Conversion  — convert each chapter to script scenes (Flash)
     5. Optimization — cross-scene consistency check (Pro)
     6. Export       — YAML to stdout
@@ -44,6 +44,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(name)s - %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
+    encoding="utf-8",
 )
 logger = logging.getLogger("pipeline")
 
@@ -118,23 +119,23 @@ async def run_from_text(
     _call_cb(cb, 10, "chunking")
 
     # ------------------------------------------------------------------
-    # 2. GraphRAG — knowledge graph extraction
+    # 2. RAG — build FAISS index
     # ------------------------------------------------------------------
-    logger.info("=== Stage 2: Knowledge Graph Extraction ===")
+    logger.info("=== Stage 2: RAG Index Building ===")
+    faiss_index = build_index(chapters)
+    _call_cb(cb, 25, "rag")
+
+    # ------------------------------------------------------------------
+    # 3. GraphRAG — knowledge graph extraction
+    # ------------------------------------------------------------------
+    logger.info("=== Stage 3: Knowledge Graph Extraction ===")
     kg = extract_graph(chapters)
     logger.info(
         "KG: %d node(s), %d edge(s).",
         len(kg.nodes),
         len(kg.edges),
     )
-    _call_cb(cb, 25, "graphrag")
-
-    # ------------------------------------------------------------------
-    # 3. RAG — build FAISS index
-    # ------------------------------------------------------------------
-    logger.info("=== Stage 3: RAG Index Building ===")
-    faiss_index = build_index(chapters)
-    _call_cb(cb, 35, "rag")
+    _call_cb(cb, 35, "graphrag")
 
     # ------------------------------------------------------------------
     # 4. Conversion — chapter → scenes (concurrent)
@@ -240,6 +241,12 @@ def _generate_summary(scenes: list[Scene], kg: KnowledgeGraph) -> str:
 
 def main():
     """CLI entry: uv run python -m cli.pipeline <input_file>"""
+    # On Windows the default console codepage cannot encode CJK characters.
+    # Reconfigure stdout for UTF-8 so the YAML output doesn't crash.
+    if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if len(sys.argv) < 2:
         print("Usage: uv run python -m cli.pipeline <input_file>", file=sys.stderr)
         sys.exit(2)
