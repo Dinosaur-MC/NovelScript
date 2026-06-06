@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { Button, Form, Input, message, Skeleton, Tabs } from "antd";
+import { Button, Form, Input, message, Tabs } from "antd";
 import { UserOutlined, LockOutlined, MailOutlined } from "@ant-design/icons";
 import { login, register } from "../api/auth";
-import { ClientOnly } from "../components/ClientOnly";
 import type { Route } from "./+types/login";
 
 export function meta({}: Route.MetaArgs) {
@@ -61,150 +60,134 @@ export default function LoginPage() {
         backgroundColor: "var(--color-bg-canvas)",
       }}
     >
-      <ClientOnly
-        fallback={
-          <div
-            style={{
-              width: 400,
-              padding: "40px 32px",
-              backgroundColor: "var(--color-bg-elevated)",
-              border: "1px solid var(--color-border-subtle)",
-              borderRadius: 12,
-            }}
-          >
-            <Skeleton active paragraph={{ rows: 6 }} />
-          </div>
-        }
+      <div
+        style={{
+          width: 400,
+          padding: "40px 32px",
+          backgroundColor: "var(--color-bg-elevated)",
+          border: "1px solid var(--color-border-subtle)",
+          borderRadius: 12,
+        }}
       >
-        <div
-          style={{
-            width: 400,
-            padding: "40px 32px",
-            backgroundColor: "var(--color-bg-elevated)",
-            border: "1px solid var(--color-border-subtle)",
-            borderRadius: 12,
-          }}
-        >
-          <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <h1 style={{ fontSize: 28, fontWeight: 600, color: "var(--color-text-primary)", margin: 0 }}>
-              NovelScript
-            </h1>
-            <p style={{ color: "var(--color-text-secondary)", fontSize: 14, marginTop: 4 }}>
-              析幕 — AI 驱动的剧本转换系统
-            </p>
-          </div>
-
-          <Tabs
-            activeKey={activeTab}
-            onChange={(k) => setActiveTab(k as "login" | "register")}
-            centered
-            size="large"
-            items={[
-              {
-                key: "login",
-                label: "登录",
-                children: (
-                  <Form layout="vertical" onFinish={handleLogin} size="large" style={{ marginTop: 8 }}>
-                    <Form.Item
-                      name="email"
-                      rules={[
-                        { required: true, message: "请输入邮箱" },
-                        { type: "email", message: "邮箱格式不正确" },
-                      ]}
-                    >
-                      <Input
-                        prefix={<MailOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="邮箱"
-                        autoComplete="email"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="password"
-                      rules={[{ required: true, message: "请输入密码" }]}
-                    >
-                      <Input.Password
-                        prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="密码"
-                        autoComplete="current-password"
-                      />
-                    </Form.Item>
-                    <Form.Item>
-                      <Button type="primary" htmlType="submit" loading={submitting} block>
-                        登录
-                      </Button>
-                    </Form.Item>
-                  </Form>
-                ),
-              },
-              {
-                key: "register",
-                label: "注册",
-                children: (
-                  <Form layout="vertical" onFinish={handleRegister} size="large" style={{ marginTop: 8 }}>
-                    <Form.Item
-                      name="username"
-                      rules={[
-                        { required: true, message: "请输入用户名" },
-                        { min: 2, message: "用户名至少 2 个字符" },
-                      ]}
-                    >
-                      <Input
-                        prefix={<UserOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="用户名"
-                        autoComplete="username"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="email"
-                      rules={[
-                        { required: true, message: "请输入邮箱" },
-                        { type: "email", message: "邮箱格式不正确" },
-                      ]}
-                    >
-                      <Input
-                        prefix={<MailOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="邮箱"
-                        autoComplete="email"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="password"
-                      rules={[{ required: true, min: 6, message: "密码至少 6 位" }]}
-                    >
-                      <Input.Password
-                        prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="密码"
-                        autoComplete="new-password"
-                      />
-                    </Form.Item>
-                    <Form.Item
-                      name="passwordConfirm"
-                      rules={[{ required: true, message: "请确认密码" }]}
-                    >
-                      <Input.Password
-                        prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
-                        placeholder="确认密码"
-                        autoComplete="new-password"
-                      />
-                    </Form.Item>
-                    <Form.Item>
-                      <Button type="primary" htmlType="submit" loading={submitting} block>
-                        注册
-                      </Button>
-                    </Form.Item>
-                  </Form>
-                ),
-              },
-            ]}
-          />
-
-          <div style={{ textAlign: "center", marginTop: -8 }}>
-            <Button type="link" size="small" onClick={() => navigate("/")}>
-              跳过，直接进入
-            </Button>
-          </div>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <h1 style={{ fontSize: 28, fontWeight: 600, color: "var(--color-text-primary)", margin: 0 }}>
+            NovelScript
+          </h1>
+          <p style={{ color: "var(--color-text-secondary)", fontSize: 14, marginTop: 4 }}>
+            析幕 — AI 驱动的剧本转换系统
+          </p>
         </div>
-      </ClientOnly>
+
+        <Tabs
+          activeKey={activeTab}
+          onChange={(k) => setActiveTab(k as "login" | "register")}
+          centered
+          size="large"
+          items={[
+            {
+              key: "login",
+              label: "登录",
+              children: (
+                <Form layout="vertical" onFinish={handleLogin} size="large" style={{ marginTop: 8 }}>
+                  <Form.Item
+                    name="email"
+                    rules={[
+                      { required: true, message: "请输入邮箱" },
+                      { type: "email", message: "邮箱格式不正确" },
+                    ]}
+                  >
+                    <Input
+                      prefix={<MailOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="邮箱"
+                      autoComplete="email"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="password"
+                    rules={[{ required: true, message: "请输入密码" }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="密码"
+                      autoComplete="current-password"
+                    />
+                  </Form.Item>
+                  <Form.Item>
+                    <Button type="primary" htmlType="submit" loading={submitting} block>
+                      登录
+                    </Button>
+                  </Form.Item>
+                </Form>
+              ),
+            },
+            {
+              key: "register",
+              label: "注册",
+              children: (
+                <Form layout="vertical" onFinish={handleRegister} size="large" style={{ marginTop: 8 }}>
+                  <Form.Item
+                    name="username"
+                    rules={[
+                      { required: true, message: "请输入用户名" },
+                      { min: 2, message: "用户名至少 2 个字符" },
+                    ]}
+                  >
+                    <Input
+                      prefix={<UserOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="用户名"
+                      autoComplete="username"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="email"
+                    rules={[
+                      { required: true, message: "请输入邮箱" },
+                      { type: "email", message: "邮箱格式不正确" },
+                    ]}
+                  >
+                    <Input
+                      prefix={<MailOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="邮箱"
+                      autoComplete="email"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="password"
+                    rules={[{ required: true, min: 6, message: "密码至少 6 位" }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="密码"
+                      autoComplete="new-password"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="passwordConfirm"
+                    rules={[{ required: true, message: "请确认密码" }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: "var(--color-text-muted)" }} />}
+                      placeholder="确认密码"
+                      autoComplete="new-password"
+                    />
+                  </Form.Item>
+                  <Form.Item>
+                    <Button type="primary" htmlType="submit" loading={submitting} block>
+                      注册
+                    </Button>
+                  </Form.Item>
+                </Form>
+              ),
+            },
+          ]}
+        />
+
+        <div style={{ textAlign: "center", marginTop: -8 }}>
+          <Button type="link" size="small" onClick={() => navigate("/")}>
+            跳过，直接进入
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
