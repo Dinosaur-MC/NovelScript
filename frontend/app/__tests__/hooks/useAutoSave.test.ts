@@ -19,13 +19,15 @@ beforeEach(() => {
     novelId: null,
     status: null,
     progress: 0,
+    stage: null,
     errorMessage: null,
   });
   useEditorStore.getState().setValidationErrors([]);
+  useEditorStore.getState().markDirty(false);
 });
 
 describe("useAutoSave", () => {
-  it("debounces 2s before calling updateScript", async () => {
+  it("debounces 8s before calling updateScript", async () => {
     vi.useFakeTimers();
     useTaskStore.getState().setTask("task-1", "novel-1", "completed", 100);
 
@@ -37,12 +39,10 @@ describe("useAutoSave", () => {
 
     const { result } = renderHook(() => useAutoSave());
 
-    act(() => {
-      result.current.triggerSave("scenes:\n  - test");
-    });
+    act(() => { result.current.triggerSave("scenes:\n  - test"); });
     expect(mockUpdateScript).not.toHaveBeenCalled();
 
-    await act(() => vi.advanceTimersByTimeAsync(2000));
+    await act(() => vi.advanceTimersByTimeAsync(8000));
     expect(mockUpdateScript).toHaveBeenCalledTimes(1);
     expect(mockUpdateScript).toHaveBeenCalledWith("task-1", "scenes:\n  - test");
 
@@ -53,7 +53,7 @@ describe("useAutoSave", () => {
     vi.useFakeTimers();
     const { result } = renderHook(() => useAutoSave());
     act(() => result.current.triggerSave("content"));
-    await act(() => vi.advanceTimersByTimeAsync(3000));
+    await act(() => vi.advanceTimersByTimeAsync(10000));
     expect(mockUpdateScript).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -65,13 +65,13 @@ describe("useAutoSave", () => {
     const { result } = renderHook(() => useAutoSave());
 
     act(() => result.current.triggerSave("first version"));
-    await act(() => vi.advanceTimersByTimeAsync(1000));
+    await act(() => vi.advanceTimersByTimeAsync(4000));
     act(() => result.current.triggerSave("second version"));
 
-    await act(() => vi.advanceTimersByTimeAsync(1000));
+    await act(() => vi.advanceTimersByTimeAsync(4000));
     expect(mockUpdateScript).not.toHaveBeenCalled();
 
-    await act(() => vi.advanceTimersByTimeAsync(1000));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     expect(mockUpdateScript).toHaveBeenCalledTimes(1);
     expect(mockUpdateScript).toHaveBeenCalledWith("task-1", "second version");
 
@@ -90,7 +90,7 @@ describe("useAutoSave", () => {
 
     const { result } = renderHook(() => useAutoSave());
     act(() => result.current.triggerSave("invalid:: yaml"));
-    await act(() => vi.advanceTimersByTimeAsync(2000));
+    await act(() => vi.advanceTimersByTimeAsync(8000));
 
     expect(useEditorStore.getState().validationErrors).toEqual([
       "mapping values are not allowed here",

@@ -54,27 +54,25 @@ scenes:
 `.trimStart();
 
 export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
-  const yaml = useScriptStore((s) => s.yaml);
+  const initialYaml = useScriptStore((s) => s.yaml);
   const validationErrors = useEditorStore((s) => s.validationErrors);
   const dirty = useEditorStore((s) => s.dirty);
-  const markDirty = useEditorStore((s) => s.markDirty);
 
-  const latestValueRef = useRef(yaml ?? "");
-  const loadedRef = useRef(false);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const latestValueRef = useRef(initialYaml ?? "");
 
   const updateYaml = useScriptStore((s) => s.updateYaml);
 
-  // Trigger preview parse when yaml data arrives from initial load
-  // (Monaco's onChange only fires on user edits, not prop changes)
+  // Parse initial yaml for preview on mount
   useEffect(() => {
-    if (yaml && !loadedRef.current) {
-      loadedRef.current = true;
-      updateYaml(yaml);
-    }
-  }, [yaml, updateYaml]);
+    if (initialYaml) updateYaml(initialYaml);
+    // Only run once on mount — the ref keeps latest editor state thereafter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleMount: OnMount = useCallback(
     (ed: editor.IStandaloneCodeEditor) => {
+      editorRef.current = ed;
       editorHook.bindEditor(ed);
     },
     [editorHook],
@@ -84,16 +82,15 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
     (value: string | undefined) => {
       const v = value ?? "";
       latestValueRef.current = v;
-      if (!dirty) markDirty(true);
       autoSaveHook.triggerSave(v);
       // Live preview: re-parse YAML → scenes for ScriptPreview + KnowledgeGraph
       updateYaml(v);
     },
-    [autoSaveHook, dirty, markDirty, updateYaml],
+    [autoSaveHook, updateYaml],
   );
 
   const handleSave = useCallback(() => {
-    autoSaveHook.triggerSave(latestValueRef.current);
+    autoSaveHook.saveNow(latestValueRef.current);
   }, [autoSaveHook]);
 
   useKeyboard({
@@ -176,7 +173,12 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
           </Button>
         </div>
         {dirty && (
-          <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+          <span style={{ fontSize: 11, color: "var(--color-text-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{
+              display: "inline-block", width: 9, height: 9, borderRadius: "50%",
+              backgroundColor: "var(--color-accent-warning)",
+              boxShadow: "0 0 6px var(--color-accent-warning)",
+            }} />
             未保存
           </span>
         )}
@@ -187,8 +189,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
         <Editor
           height="100%"
           defaultLanguage="yaml"
-          value={yaml ?? ""}
-          defaultValue={YAML_TEMPLATE}
+          defaultValue={initialYaml || YAML_TEMPLATE}
           onChange={handleChange}
           onMount={handleMount}
           options={options}

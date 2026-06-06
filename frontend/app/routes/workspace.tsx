@@ -173,54 +173,44 @@ export default function Workspace() {
             </span>
           </div>
         ) : (
-          <div style={{ display: "flex", height: "100%" }}>
-            {/* Collapse bar — slides in/out */}
+          <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+            {/* Collapse tab */}
             <div
+              className="ns-reader-collapse-tab"
               onClick={() => setReaderCollapsed(false)}
-              className="ns-reader-collapse-btn"
               title="展开小说原文"
               style={{
-                height: "100%",
+                flexShrink: 0, overflow: "hidden",
                 width: readerCollapsed ? 28 : 0,
-                writingMode: "vertical-rl",
-                backgroundColor: "var(--color-bg-surface)",
-                borderRight: "1px solid var(--color-border-subtle)",
-                opacity: readerCollapsed ? 1 : 0,
-                pointerEvents: readerCollapsed ? "auto" : "none",
-                overflow: "hidden",
-                transition: "width 0.25s ease, opacity 0.2s ease",
+                minWidth: readerCollapsed ? 28 : 0,
+                transition: "width 0.25s ease, min-width 0.25s ease",
               }}
             >
               小说原文
             </div>
-            {/* Reader + main content */}
-            <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+            {/* Reader panel */}
+            <div style={{
+              flexShrink: 0, overflow: "hidden",
+              width: readerCollapsed ? 0 : `${leftW}%`,
+              minWidth: readerCollapsed ? 0 : 240,
+              transition: "width 0.25s ease, min-width 0.25s ease",
+            }}>
+              <NovelReader readerHook={readerHook} traceHook={traceHook} />
+            </div>
+            {/* Editor + RightPanel */}
+            <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
               <Splitter
                 direction="horizontal"
-                initialLeftPercent={readerCollapsed ? 0 : leftW}
-                minLeftPx={readerCollapsed ? 0 : 240}
-                minRightPx={280 + 360}
+                initialLeftPercent={centerW / (centerW + rightW || 1) * 100}
+                minLeftPx={360}
+                minRightPx={280}
                 onResize={(pct) => {
-                  if (readerCollapsed) return;
-                  const rem = 100 - pct;
-                  const innerRatio = centerW / (centerW + rightW || 1);
-                  setPanelWidths(pct, innerRatio * rem, rem - innerRatio * rem);
+                  const rem = 100 - (readerCollapsed ? 0 : leftW);
+                  setPanelWidths(readerCollapsed ? 0 : leftW, (pct / 100) * rem, rem - (pct / 100) * rem);
                 }}
               >
-                <NovelReader readerHook={readerHook} traceHook={traceHook} />
-                <Splitter
-                  direction="horizontal"
-                  initialLeftPercent={centerW / (centerW + rightW || 1) * 100}
-                  minLeftPx={360}
-                  minRightPx={280}
-                  onResize={(pct) => {
-                    const rem = 100 - (readerCollapsed ? 0 : leftW);
-                    setPanelWidths(readerCollapsed ? 0 : leftW, (pct / 100) * rem, rem - (pct / 100) * rem);
-                  }}
-                >
-                  <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
-                  <RightPanel traceHook={traceHook} editorHook={editorHook} />
-                </Splitter>
+                <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
+                <RightPanel traceHook={traceHook} editorHook={editorHook} />
               </Splitter>
             </div>
           </div>
