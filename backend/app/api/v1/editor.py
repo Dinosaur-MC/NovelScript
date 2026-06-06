@@ -25,7 +25,14 @@ from cli.llm_router import get_llm, invoke_llm_with_retry
 from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import Dialogue, Operation, Task, User
+from app.models.sql import (
+    Dialogue,
+    KnowledgeEdge,
+    KnowledgeNode,
+    Operation,
+    Task,
+    User,
+)
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -242,21 +249,111 @@ def _extract_json_patch(text: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _build_graph_context(
+    db: Session,
+    task_id: uuid.UUID,
+    user_message: str,
+) -> str:
+    """Query the knowledge graph for entities mentioned in *user_message*.
+
+    Returns a compact text block listing matched entities and their 1-hop
+    neighbours (via ``knowledge_edges``), or an empty string when no KG
+    data exists for this task.
+    """
+    # Find all node names that appear as substrings in the user message
+    stmt = db.query(KnowledgeNode).filter(
+        KnowledgeNode.task_id == task_id,
+    )
+    all_nodes = stmt.all()
+    if not all_nodes:
+        return ""
+
+    # Match: case-insensitive substring check
+    msg_lower = user_message.lower()
+    matched_ids: set[uuid.UUID] = set()
+    for n in all_nodes:
+        if n.name.lower() in msg_lower:
+            matched_ids.add(n.id)
+        for alias in n.aliases or []:
+            if alias.lower() in msg_lower:
+                matched_ids.add(n.id)
+                break
+
+    if not matched_ids:
+        return ""
+
+    # Gather matched entities + 1-hop neighbours
+    neighbour_ids: set[uuid.UUID] = set()
+    edge_stmt = db.query(KnowledgeEdge).filter(
+        KnowledgeEdge.task_id == task_id,
+        (
+            KnowledgeEdge.source_node_id.in_(matched_ids)
+            | KnowledgeEdge.target_node_id.in_(matched_ids)
+        ),
+    )
+    for edge in edge_stmt.all():
+        neighbour_ids.add(edge.source_node_id)
+        neighbour_ids.add(edge.target_node_id)
+
+    all_relevant_ids = matched_ids | neighbour_ids
+    relevant_nodes = [n for n in all_nodes if n.id in all_relevant_ids]
+    relevant_edges = [
+        e for e in edge_stmt.all()
+        if e.source_node_id in all_relevant_ids
+        and e.target_node_id in all_relevant_ids
+    ]
+
+    # Build compact text block
+    lines = ["【知识图谱上下文（与当前对话相关的实体与关系）】"]
+
+    node_by_id = {n.id: n for n in relevant_nodes}
+    lines.append("实体：")
+    for n in relevant_nodes:
+        alias_str = f" (别名: {', '.join(n.aliases[:5])})" if n.aliases else ""
+        lines.append(f"  - {n.name} [{n.node_type}]{alias_str}")
+
+    if relevant_edges:
+        lines.append("关系：")
+        for e in relevant_edges[:20]:  # cap at 20 edges to keep context compact
+            src = node_by_id.get(e.source_node_id)
+            tgt = node_by_id.get(e.target_node_id)
+            if src and tgt:
+                lines.append(
+                    f"  - {src.name} --[{e.relation}]--> {tgt.name}"
+                    f" (置信度: {e.weight:.1f})"
+                )
+
+    logger.debug(
+        "GraphRAG chat context: %d entity(s), %d relation(s) for task %s.",
+        len(relevant_nodes), len(relevant_edges), task_id,
+    )
+    return "\n".join(lines)
+
+
 def _build_chat_messages(
     task: Task,
     user_message: str,
+    *,
     scene_id: Optional[str] = None,
+    db: Session | None = None,
 ) -> list[dict[str, str]]:
     """Construct the LLM message list for an editor chat turn.
 
     The system prompt includes the current script YAML, character profiles,
-    and optionally the targeted scene data so the model has full context.
+    graph context from the knowledge graph (when available), and optionally
+    the targeted scene data so the model has full context.
     """
     # -- Build context blocks -----------------------------------------------
     context_parts: list[str] = []
 
     if task.summary:
         context_parts.append(f"## Task Summary\n{task.summary}")
+
+    # GraphRAG context: query knowledge_nodes/edges for entity mentions
+    if db is not None and task.id:
+        graph_ctx = _build_graph_context(db, task.id, user_message)
+        if graph_ctx:
+            context_parts.append(graph_ctx)
 
     if task.characters_json:
         context_parts.append(
@@ -337,7 +434,9 @@ def chat(
     require_ownership(task, current_user, resource_name="任务", action="编辑")
 
     # 2. Build prompt & call LLM
-    messages = _build_chat_messages(task, body.message, body.scene_id)
+    messages = _build_chat_messages(
+        task, body.message, scene_id=body.scene_id, db=db,
+    )
 
     try:
         llm = get_llm("ai_chat", 0.7)
