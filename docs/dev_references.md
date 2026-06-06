@@ -11,6 +11,10 @@
 - psycopg2 | https://www.psycopg.org/docs/
 - Pydantic V2 | https://docs.pydantic.dev/
 - sse-starlette | https://github.com/sysid/sse-starlette
+- Redis | https://redis.io/docs/
+- Celery | https://docs.celeryq.dev/
+- Docker | https://docs.docker.com/
+- Docker Compose | https://docs.docker.com/compose/
 
 ### LLM & AI
 - DeepSeek API Docs | https://api-docs.deepseek.com/

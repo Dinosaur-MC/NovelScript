@@ -101,9 +101,9 @@ graph TD
 | :---------- | :------------------------------------------------------------------------- | :----------------------------------- |
 | **前端**    | React 19, TypeScript, Vite, Ant Design 6, TipTap, Monaco Editor, ReactFlow | 构建 Web IDE 级别的三栏协同编辑体验  |
 | **后端**    | Python 3.13, FastAPI (sync psycopg2), Pydantic V2, Uvicorn                 | 同步数据层 + 异步管道引擎并行        |
-| **AI 编排** | LangChain, DeepSeek API (v4-pro / v4-flash)                                | 多阶段 Pipeline 编排与智能模型路由   |
-| **数据库**  | PostgreSQL 18 (`pgvector`, `uuid-ossp`)                                    | 关系型 + 向量检索 + JSONB 多模态融合 |
-| **部署**    | Docker, Docker Compose, Nginx                                              | 一键容器化编排，环境强一致性         |
+| **AI 编排** | LangChain, DeepSeek API (v4-pro / v4-flash), Celery + Redis | 多阶段 Pipeline 编排与智能模型路由，异步任务队列 |
+| **数据库**  | PostgreSQL 18 (`pgvector`, `uuid-ossp`)                    | 关系型 + 向量检索 + JSONB 多模态融合 |
+| **部署**    | Docker, Docker Compose (dev/prod profiles)                 | 一键容器化编排，仅前端端口暴露至宿主机 |
 
 ## 🚀 快速开始 (Quick Start)
 
@@ -120,47 +120,56 @@ graph TD
 ```bash
 git clone https://github.com/your-username/NovelScript.git
 cd NovelScript
-cp .env.example .env
-# 编辑 .env 文件，填入你的 DEEPSEEK_API_KEY
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填入 DEEPSEEK_API_KEY 和 OPENROUTER_API_KEY
 ```
 
 ### 3. 一键启动
 
 ```bash
-docker-compose up -d --build
+# 生产模式（仅前端端口暴露）
+docker compose up -d --build
+
+# 开发模式（暴露所有后端端口用于调试）
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
-- **前端工作台**：访问 [http://localhost:5173](http://localhost:5173)
-- **后端 API 文档**：访问 [http://localhost:8000/docs](http://localhost:8000/docs) (Swagger UI)
+- **前端工作台**：访问 [http://localhost:3000](http://localhost:3000)
+- **后端 API（仅开发模式）**：访问 [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ## 📂 项目结构 (Project Structure)
 
 ```text
 NovelScript/
-├── docker-compose.yml          # 编排 Frontend, Backend, PostgreSQL
-├── .env.example                # 环境变量模板
+├── docker-compose.yml          # 生产编排 (内部网络，仅前端公网)
+├── docker-compose.dev.yml      # 开发覆盖 (暴露 DB/Redis/API 端口)
 │
-├── backend/                    # 🐍 FastAPI 后端核心
+├── backend/                    # 🐍 FastAPI + Celery
 │   ├── app/
 │   │   ├── api/                # RESTful 路由与 SSE 推送
-│   │   ├── core/               # 配置、安全与 DB 连接 (asyncpg)
-│   │   ├── models/             # Pydantic V2 数据模型与 YAML Schema
-│   │   ├── services/           # 核心业务：LLM 路由、RAG 检索、Auto-Fix
-│   │   └── db/                 # PostgreSQL DDL 与初始化脚本
-│   ├── Dockerfile
+│   │   ├── core/               # 配置、安全、DB 连接、Celery App
+│   │   ├── models/             # Pydantic V2 + SQLModel
+│   │   ├── services/           # BaseCRUD, DB 缓存辅助函数
+│   │   ├── tasks/              # Celery 后台任务 (pipeline)
+│   │   └── db/                 # PostgreSQL DDL 初始化脚本
+│   ├── cli/                    # Pipeline 引擎 (7 阶段)
+│   ├── tests/
+│   ├── Dockerfile              # 多阶段构建 (api / worker target)
 │   └── pyproject.toml
 │
-├── frontend/                   # ⚛️ React 前端工作台
-│   ├── src/
-│   │   ├── components/         # Monaco 编辑器、TipTap、溯源高亮逻辑
-│   │   ├── views/              # 三栏布局主视图
+├── frontend/                   # ⚛️ React 19 SSR
+│   ├── app/
+│   │   ├── components/         # Monaco, TipTap, ReactFlow 面板
+│   │   ├── routes/             # 路由与布局
 │   │   └── stores/             # Zustand 状态管理
 │   ├── Dockerfile
 │   └── package.json
 │
-└── docs/                       # 📄 架构白皮书与路演材料
-    ├── SRS 需求规格说明书.md     # 软件需求规格说明书 (含 YAML Schema 设计原理)
-    └── dev_references.md        # 开发参考文档索引
+└── docs/                       # 📄 架构文档与设计说明书
+    ├── business-logic.md       # 完整 API 参考 + 活动图
+    ├── SRS 需求规格说明书.md
+    ├── SDS 软件设计说明书.md
+    └── dev_references.md
 ```
 
 ## 🗺️ 演进路线 (Roadmap)

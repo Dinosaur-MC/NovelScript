@@ -15,12 +15,15 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 | Layer | Status |
 |-------|--------|
 | Pipeline CLI | ✅ Complete — 7 stages, JSON mode, retry, paragraph splitter, chapter summaries, narrative summary, directory input |
-| Database | ✅ Complete — 8 tables, pgvector HNSW, pg_trgm, sync psycopg2 |
-| API (25 endpoints) | ✅ Complete — auth, novels, scripts, tasks (SSE), editor |
-| Pipeline ↔ DB Integration | ✅ Complete — background daemon thread, SSE streaming, DB chapters preferred |
-| Tests | ✅ 166 passing, 0 skipped |
+| Database | ✅ Complete — 9 tables, pgvector HNSW, pg_trgm, sync psycopg2, KG persistence, embedding caching |
+| API (25 endpoints) | ✅ Complete — auth (JWT+argon2, ownership checks), novels, scripts, tasks (SSE), editor (GraphRAG-enhanced) |
+| Pipeline ↔ DB Integration | ✅ Complete — Celery worker (Redis broker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
+| Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; run_pipeline.apply_async() |
+| Auth & Security | ✅ Complete — get_current_user dependency, require_ownership helper on all write endpoints |
+| Tests | ✅ 158 passing, 0 skipped |
+| Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles) |
 
-**API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/` (* no auth middleware — all endpoints public)
+**API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/`  (all write endpoints use auth middleware)
 
 ### Pipeline Stages (v0.2.0)
 
@@ -29,10 +32,13 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 2. Summarize     — per-chapter objective summary (Flash, parallel)
 3. RAG Index     — FAISS via OpenRouter text-embedding-3-small
 4. GraphRAG      — KG extraction (Pro, with RAG cross-chapter context)
-5. Conversion    — chapter → scenes (Flash, parallel, paragraph-group input)
+   • Single-shot  (≤5 chapters): all chapters in one prompt
+   • Incremental  (>5 chapters): chapter-by-chapter with prior-entity context
+5. Conversion    — chapter → scenes (Flash, parallel, paragraph-group input + chapter summaries)
 6. Optimization  — cross-scene consistency (Pro, batched by scene)
 7. Narrative Summary — story overview from chapter summaries (Flash)
 → Export (YAML/JSON)
+→ DB Cache: chapters + embeddings + KG persisted for reuse
 ```
 
 ### Pipeline Input Modes
@@ -76,10 +82,30 @@ Work in the corresponding subdirectory (`backend/` or `frontend/`) before runnin
 cd backend
 uv sync                                         # Install dependencies
 uv run main.py                                  # Start dev server (uvicorn, port 8000, reload on DEBUG)
-uv run pytest                                   # Run tests (166 passing)
+
+# Celery Worker (separate terminal — required for pipeline tasks):
+celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+
+uv run pytest                                   # Run tests (158 passing)
 uv run python -m cli.pipeline <input.txt>       # Pipeline standalone (no DB)
 uv run python -m cli.pipeline chapters/ -o out.yaml  # Directory input
 uv add <package>                                # Add a dependency
+```
+
+### Docker
+
+```bash
+# Production (internal network, only frontend :3000 exposed)
+docker compose up -d --build
+
+# Development (exposes API :8000, DB :5432, Redis :6379)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Scale workers for parallel pipelines
+docker compose up -d --scale worker=3
+
+# Teardown
+docker compose down -v
 ```
 
 ### Frontend (React 19 + React Router 7, Node 24)
@@ -104,40 +130,49 @@ app/
 ├── api/v1/                # 25 endpoints: auth, novels, scripts, tasks, editor
 │   ├── __init__.py        # Single router tree → /api/v1/*
 │   ├── auth.py            # register, login, logout, me (JWT + argon2)
-│   ├── novels.py          # upload (JSON/file), list, get, update, delete
+│   ├── novels.py          # upload (JSON/file, auto-create Task), list, get, update, delete
 │   ├── scripts.py         # list, get, update (YAML validate), delete, export
-│   ├── tasks.py           # create, list, stream (SSE), status, update, resume, get
-│   └── editor.py          # chat (LLM), apply_patch (RFC 6901), undo
+│   ├── tasks.py           # create, list, stream (SSE via AsyncResult), status, update, resume, get
+│   └── editor.py          # chat (LLM + GraphRAG context), apply_patch (RFC 6901), undo
 ├── core/
-│   ├── config.py          # pydantic-settings — DATABASE_URL, API keys, ADMIN_*
+│   ├── config.py          # pydantic-settings — DATABASE_URL, REDIS_URL, API keys, ADMIN_*
 │   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
 │   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
-│   └── security.py        # argon2 hashing, JWT create/decode, configure_jwt()
+│   ├── security.py        # argon2 hashing, JWT create/decode, configure_jwt()
+│   ├── auth_middleware.py # get_current_user dependency, require_ownership helper
+│   └── celery_app.py      # Celery singleton (Redis broker + backend)
+├── tasks/
+│   └── pipeline.py        # Celery task: run_pipeline with self.update_state() for SSE
 ├── models/
 │   ├── http.py            # BaseResponse(code, message, data), ErrorResponse
 │   └── sql.py             # 9 SQLModel tables (users…audit_logs)
 ├── services/
 │   ├── base.py            # BaseCRUD[T] — create/get/list/update/delete
-│   ├── progress.py        # ProgressManager singleton (queue.Queue per task)
-│   ├── pipeline_executor.py  # Background daemon thread, DB chapters preferred
-│   └── sse.py             # push_progress() → ProgressManager
+│   ├── progress.py        # ProgressManager no-op compat stub
+│   ├── pipeline_executor.py  # DB cache helpers (no threading): _load_chapters,
+│   │                      #   _load_cached_kg, _persist_kg, _persist_embeddings, _persist_chapters
+│   └── sse.py             # push_progress() → ProgressManager (deprecated)
 ├── db/
 │   └── init.sql           # 9-table DDL, 3 extensions, HNSW + GIN indexes
 └── cli/                   # Pipeline engine — 11 modules
     ├── models.py          # Chapter, ParagraphGroup, Scene, Script, KG, etc.
     ├── chunker.py         # Regex (第X章) + LLM fallback with JSON mode
     ├── paragraph_splitter.py  # Boundary-aware paragraph grouping (≤32-char merge)
-    ├── summarizer.py      # Per-chapter objective summary (Flash, 100-200 chars)
-    ├── rag_builder.py     # FAISS index, keyword fallback (with fallback_texts)
-    ├── graphrag_builder.py # KG extraction (Pro, RAG cross-chapter context)
+    ├── summarizer.py      # Per-chapter objective summary (Flash, 100-200 chars, anti-markdown)
+    ├── rag_builder.py     # FAISS index, keyword fallback, embed_texts(), build_index_from_db_embeddings()
+    ├── graphrag_builder.py # KG extraction: single-shot + incremental (chapter-by-chapter with entity dedup)
     ├── converter.py       # Chapter → scenes (Flash, paragraph groups, chapter_summary)
     ├── optimizer.py       # Batch consistency check (Pro, position-based source_ref restore)
     ├── llm_router.py      # Model routing, context/output limits, invoke_with_retry()
     ├── exporter.py        # to_yaml(), to_json()
     └── pipeline.py        # Orchestrator: run(), run_from_chapters(), run_from_text()
+                           #   Optional faiss_index + kg params for cached reuse
 ```
 
 **Key architectural patterns**:
+- **Celery + Redis**: Pipeline execution delegated to separate worker processes via `run_pipeline.apply_async()`.  No in-process daemon threads.
+- **SSE via AsyncResult**: SSE endpoint polls `AsyncResult(task_id).state/.info` from Redis (every 500ms).  No in-process `queue.Queue`.
+- **DB Cache**: Chapter embeddings (1536-dim) + KG nodes/edges persisted to DB after first run.  Subsequent pipeline runs skip API calls.
 - **Dual-model routing**: `deepseek-v4-pro` for GraphRAG + optimization; `deepseek-v4-flash` for chunking, summarization, conversion, AI chat
 - **All-in-One DB**: PostgreSQL 18, 9 tables, sync psycopg2 (not asyncpg), no separate vector/graph DB
 - **pgvector HNSW** on `chapters.embedding` and `knowledge_nodes.embedding`; pg_trgm GIN on `knowledge_nodes.name`
@@ -145,6 +180,7 @@ app/
 - **Application-layer retry**: Exponential backoff with jitter for all LLM calls (per-stage config, `LLM_MAX_RETRIES` env var)
 - **UTF-8 everywhere**: stdin/stdout reconfigured on Windows, logging encoding, file upload encoding fallback (GB18030/GBK/GB2312/Big5)
 - **Engine pool disposal**: `atexit` + FastAPI lifespan + test fixture teardown (3-layer guarantee)
+- **Auth middleware**: `get_current_user` enforces Bearer JWT on all write endpoints; `require_ownership()` helper for resource-level access control
 
 ### Database Tables
 
@@ -187,6 +223,10 @@ This project participates in a judged competition. Important rules:
 
 ## Related Documentation
 
-- `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines
+- `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines (v2.1.0)
+- `docs/SRS 需求规格说明书.md` — Software requirements specification
+- `docs/SDS 软件设计说明书.md` — Software design specification
+- `docs/YAML_Schema_设计说明.md` — YAML schema design rationale
+- `docs/dev_references.md` — External documentation index
 - `.temp/DEVELOPMENT_STATUS.md` — Frontend development status (files, routes, stores, hooks, tests)
 - `.temp/novel_samples/` — Sample Chinese novel files for testing
