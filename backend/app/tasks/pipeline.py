@@ -38,13 +38,15 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(bind=True, name="pipeline.run", max_retries=0)
-def run_pipeline(self, task_id: str, novel_id: str) -> dict:
+def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -> dict:
     """Execute the full novel-to-script pipeline for *task_id*.
 
     Args:
         task_id:  Task UUID string (also used as the Celery task id so
                   ``AsyncResult(task_id)`` works from FastAPI).
         novel_id: Novel UUID string.
+        style_direction:  Optional AI scriptwriting / style instruction
+                  injected into Conversion and Optimization prompts.
 
     Returns:
         ``{"status": "completed", "scenes": N}`` on success.
@@ -125,6 +127,7 @@ def run_pipeline(self, task_id: str, novel_id: str) -> dict:
                     source_name=novel.title or str(nid),
                     faiss_index=faiss_index,
                     kg=cached_kg,
+                    style_direction=style_direction,
                 )
             )
         else:
@@ -133,6 +136,7 @@ def run_pipeline(self, task_id: str, novel_id: str) -> dict:
                     source,
                     progress_callback=_on_progress,
                     source_name=novel.title or str(nid),
+                    style_direction=style_direction,
                 )
             )
 

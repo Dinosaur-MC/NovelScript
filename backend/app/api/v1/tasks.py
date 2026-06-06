@@ -38,6 +38,7 @@ class CreateTaskRequest(BaseModel):
     """Body for POST /api/v1/tasks/."""
     novel_id: str = Field(..., description="Novel UUID")
     pipeline_config: dict = Field(default_factory=dict, description="Optional pipeline overrides")
+    style_direction: str = Field("", description="Optional AI scriptwriting direction")
 
 
 class UpdateTaskStatusRequest(BaseModel):
@@ -115,12 +116,17 @@ def create_task(
     if novel is None:
         raise HTTPException(status_code=404, detail=f"Novel {novel_id} not found")
 
+    # Merge style_direction into pipeline_config for DB persistence
+    pipeline_config = dict(body.pipeline_config or {})
+    if body.style_direction:
+        pipeline_config["style_direction"] = body.style_direction
+
     task = Task(
         novel_id=novel_id,
         user_id=current_user.id,
         status="pending",
         progress=0,
-        pipeline_config=body.pipeline_config,
+        pipeline_config=pipeline_config,
     )
     task = task_crud.create(db, task)
 
@@ -133,8 +139,13 @@ def create_task(
     # ── dispatch pipeline to Celery worker ────────────────────────────
     from app.tasks.pipeline import run_pipeline
 
+    celery_kwargs: dict = {}
+    if body.style_direction:
+        celery_kwargs["style_direction"] = body.style_direction
+
     run_pipeline.apply_async(
         args=(str(task.id), str(novel_id)),
+        kwargs=celery_kwargs,
         task_id=str(task.id),  # so AsyncResult(task_id) works
     )
 
@@ -448,8 +459,15 @@ def resume_task(
     # ── re-dispatch pipeline to Celery worker ─────────────────────────
     from app.tasks.pipeline import run_pipeline
 
+    # Restore style_direction from stored pipeline_config
+    celery_kwargs: dict = {}
+    stored_style = (task.pipeline_config or {}).get("style_direction", "")
+    if stored_style:
+        celery_kwargs["style_direction"] = stored_style
+
     run_pipeline.apply_async(
         args=(str(task.id), str(task.novel_id)),
+        kwargs=celery_kwargs,
         task_id=str(task.id),
     )
 

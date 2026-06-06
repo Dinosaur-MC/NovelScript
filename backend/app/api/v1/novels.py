@@ -42,6 +42,7 @@ class UploadRequest(BaseModel):
     content: str = Field(..., description="Full novel text")
     title: Optional[str] = Field(None, max_length=500, description="Novel title")
     author: Optional[str] = Field(None, max_length=300, description="Author name")
+    style_direction: str = Field("", description="Optional AI scriptwriting direction")
 
 
 class UpdateRequest(BaseModel):
@@ -64,6 +65,7 @@ def _create_novel_from_text(
     *,
     user_id: uuid.UUID,
     auto_convert: bool = True,
+    style_direction: str = "",
 ) -> BaseResponse:
     """Core logic: persist a Novel and optionally start a conversion Task.
 
@@ -119,6 +121,7 @@ def _create_novel_from_text(
             user_id=user_id,
             status="pending",
             progress=0,
+            pipeline_config={"style_direction": style_direction} if style_direction else {},
         )
         db.add(task)
         db.flush()
@@ -131,6 +134,7 @@ def _create_novel_from_text(
 
         run_pipeline.apply_async(
             args=(str(task.id), str(novel.id)),
+            kwargs={"style_direction": style_direction},
             task_id=str(task.id),
         )
     else:
@@ -155,7 +159,10 @@ def upload_novel(
     current_user: User = Depends(get_current_user),
 ):
     """Upload novel text as a JSON body — split into chapters via regex."""
-    return _create_novel_from_text(body.content, body.title, body.author, db, user_id=current_user.id)
+    return _create_novel_from_text(
+        body.content, body.title, body.author, db,
+        user_id=current_user.id, style_direction=body.style_direction,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +175,7 @@ def upload_novel_file(
     file: UploadFile = File(...),
     title: str = Form("Untitled"),
     author: Optional[str] = Form(None),
+    style_direction: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -194,7 +202,7 @@ def upload_novel_file(
                 status_code=400,
                 detail="Could not decode file — expected UTF-8 or GBK encoding.",
             )
-    return _create_novel_from_text(content, title, author, db, user_id=current_user.id)
+    return _create_novel_from_text(content, title, author, db, user_id=current_user.id, style_direction=style_direction)
 
 
 # ---------------------------------------------------------------------------
