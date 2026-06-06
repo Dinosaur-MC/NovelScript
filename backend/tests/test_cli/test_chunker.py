@@ -3,13 +3,17 @@
 Covers:
 - Regex-based splitting (Tier 1)
 - Edge cases: empty input, no markers, single chapter
+- LLM fallback path (Tier 2) — mocked so tests don't need a live API key
 """
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from cli.chunker import split_chapters
+from cli.models import Chapter
 
 
 # ===========================================================================
@@ -81,19 +85,27 @@ class TestEdgeCases:
         assert chapters == []
 
     def test_no_markers_returns_one_chapter(self) -> None:
-        """When text has no chapter markers, it returns a single Chapter."""
+        """When text has no chapter markers, the LLM fallback wraps it as
+        a single Chapter.  Mock ``_llm_split`` so the test doesn't hit the
+        real DeepSeek API."""
         text = "这是一段没有任何章节标记的文本。\n它应该被当作一个完整的章节。"
-        chapters = split_chapters(text)
+
+        with patch("cli.chunker._llm_split") as mock_llm:
+            mock_llm.return_value = [Chapter(text=text, title="全文", index=0)]
+            chapters = split_chapters(text)
+
         assert len(chapters) == 1
         assert chapters[0].index == 0
         assert text in chapters[0].text
 
-    @pytest.mark.skip(reason="Known: chapter splitter threshold logic — GBK substring matching differs from UTF-8 on Windows")
     def test_markers_with_tiny_bodies_falls_back(self) -> None:
-        """When markers produce chapters shorter than the minimum, LLM fallback
-        kicks in.  Since no API key is present in tests, the fallback wraps
-        as a single chapter."""
+        """When regex markers produce chapters shorter than the minimum
+        average, the LLM fallback kicks in.  Mock ``_llm_split`` so the
+        test works without a live API key."""
         text = "第一章\nx\n第二章\ny\n"
-        chapters = split_chapters(text)
-        # With no DEEPSEEK_API_KEY, LLM fallback fails → wraps as single chapter
+
+        with patch("cli.chunker._llm_split") as mock_llm:
+            mock_llm.return_value = [Chapter(text=text, title="全文", index=0)]
+            chapters = split_chapters(text)
+
         assert len(chapters) == 1
