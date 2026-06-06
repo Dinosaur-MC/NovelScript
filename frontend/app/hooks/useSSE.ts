@@ -1,46 +1,117 @@
 import { useEffect, useRef } from "react";
 import { useTaskStore } from "../stores/task-store";
-import { getTaskStatus } from "../api/tasks";
+import { getTaskStatus, createTaskStream } from "../api/tasks";
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 3000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 /**
- * Polls GET /api/v1/tasks/{task_id}/status every 2s while the task is active.
- * Stops when task reaches 'completed' or 'failed', or after too many failures.
- * Switches to SSE when backend adds the stream endpoint (D3).
+ * Real-time SSE progress subscription with polling fallback.
+ *
+ * Prefers EventSource (`GET /api/v1/tasks/{task_id}/stream`) for
+ * instant progress events. Falls back to 3-second polling if SSE
+ * fails to connect or is not supported (Node.js test environments).
  */
 export function useSSE() {
   const taskId = useTaskStore((s) => s.taskId);
   const status = useTaskStore((s) => s.status);
   const updateProgress = useTaskStore((s) => s.updateProgress);
-  const failuresRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startedRef = useRef(false);
 
   useEffect(() => {
     const isActive = taskId && (status === "preprocessing" || status === "converting");
     if (!isActive) return;
 
-    timerRef.current = setInterval(async () => {
-      try {
-        const data = await getTaskStatus(taskId);
-        updateProgress(data.progress, data.status as never);
-        failuresRef.current = 0;
-        if (data.status === "completed" || data.status === "failed") {
-          if (timerRef.current) clearInterval(timerRef.current);
-          timerRef.current = null;
+    // Guard: already started for this taskId+status combination
+    if (startedRef.current) return;
+    startedRef.current = true;
+
+    const failures = { count: 0 };
+
+    function startPolling() {
+      if (pollRef.current) return; // already polling
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const data = await getTaskStatus(taskId!);
+          updateProgress(data.progress, data.status as never);
+          failures.count = 0;
+          if (data.status === "completed" || data.status === "failed") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        } catch {
+          failures.count++;
+          if (failures.count >= MAX_CONSECUTIVE_FAILURES) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
         }
-      } catch {
-        failuresRef.current++;
-        if (failuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          timerRef.current = null;
+      }, POLL_INTERVAL_MS);
+    }
+
+    // ── SSE primary path ──────────────────────────────────────────
+    try {
+      const es = createTaskStream(taskId);
+      esRef.current = es;
+
+      es.addEventListener("progress", (e: MessageEvent) => {
+        failures.count = 0;
+        try {
+          const data = JSON.parse(e.data);
+          const progress = data.progress ?? 0;
+          const stage = data.stage as string | undefined;
+          updateProgress(progress, stage as never);
+        } catch { /* malformed event — ignore */ }
+      });
+
+      es.addEventListener("complete", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          updateProgress(data.progress ?? 100, "completed");
+        } catch {
+          updateProgress(100, "completed");
         }
-      }
-    }, POLL_INTERVAL_MS);
+        es.close();
+        esRef.current = null;
+      });
+
+      es.addEventListener("error", (e: MessageEvent) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.error) {
+            console.error("SSE pipeline error:", data.error);
+          }
+        } catch { /* ignore parse errors */ }
+        es.close();
+        esRef.current = null;
+      });
+
+      es.onerror = () => {
+        failures.count++;
+        es.close();
+        esRef.current = null;
+        // EventSource onerror = network issue → fall back to polling
+        startPolling();
+      };
+    } catch {
+      // EventSource constructor threw (e.g. Node.js test env) → polling
+      startPolling();
+    }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      startedRef.current = false;
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
     };
   }, [taskId, status, updateProgress]);
 }

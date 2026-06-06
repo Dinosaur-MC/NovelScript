@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { Card, Tag, Button, Modal, Input, Upload, Collapse, message } from "antd";
+import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select } from "antd";
 import {
   PlusOutlined,
   UploadOutlined,
@@ -8,6 +8,7 @@ import {
   CloseCircleFilled,
   SyncOutlined,
   ClockCircleFilled,
+  SearchOutlined,
 } from "@ant-design/icons";
 import { listNovels, uploadNovel, uploadNovelFile } from "../../api/novels";
 import { listScripts, type ScriptLight } from "../../api/scripts";
@@ -62,6 +63,21 @@ export function HomePage() {
   for (const s of scripts) {
     (scriptsByNovel[s.novel_id] ??= []).push(s);
   }
+
+  // Search & filter
+  const [searchText, setSearchText] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+
+  const filteredNovels = novels.filter((n) => {
+    if (searchText && !n.title.includes(searchText)) return false;
+    if (statusFilter === "with_scripts") {
+      return scriptsByNovel[n.id]?.length > 0;
+    }
+    if (statusFilter === "without_scripts") {
+      return !scriptsByNovel[n.id] || scriptsByNovel[n.id].length === 0;
+    }
+    return true;
+  });
 
   const handlePasteUpload = async () => {
     if (!pasteText.trim()) return;
@@ -153,8 +169,37 @@ export function HomePage() {
         </Button>
       </div>
 
+      {/* Search & Filter */}
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          marginBottom: 24,
+          maxWidth: 640,
+        }}
+      >
+        <Input
+          prefix={<SearchOutlined style={{ color: "var(--color-text-muted)" }} />}
+          placeholder="搜索小说名称..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          allowClear
+          style={{ flex: 1 }}
+        />
+        <Select
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v)}
+          style={{ width: 160 }}
+          options={[
+            { value: "all", label: "全部小说" },
+            { value: "with_scripts", label: "已有剧本" },
+            { value: "without_scripts", label: "暂无剧本" },
+          ]}
+        />
+      </div>
+
       {/* Novel groups */}
-      {novels.length === 0 ? (
+      {filteredNovels.length === 0 ? (
         <div
           style={{
             textAlign: "center",
@@ -162,15 +207,21 @@ export function HomePage() {
             color: "var(--color-text-muted)",
           }}
         >
-          <p style={{ fontSize: 16, marginBottom: 16 }}>还没有剧本，上传第一部小说开始吧</p>
-          <Button size="large" type="primary" onClick={() => setUploadOpen(true)}>
-            上传小说
-          </Button>
+          <p style={{ fontSize: 16, marginBottom: 16 }}>
+            {novels.length === 0
+              ? "还没有剧本，上传第一部小说开始吧"
+              : "没有匹配的小说，请调整搜索条件"}
+          </p>
+          {novels.length === 0 && (
+            <Button size="large" type="primary" onClick={() => setUploadOpen(true)}>
+              上传小说
+            </Button>
+          )}
         </div>
       ) : (
         <Collapse
-          defaultActiveKey={novels.map((n) => n.id)}
-          items={novels.map((novel) => {
+          defaultActiveKey={filteredNovels.map((n) => n.id)}
+          items={filteredNovels.map((novel) => {
             const novelScripts = scriptsByNovel[novel.id] ?? [];
             return {
               key: novel.id,

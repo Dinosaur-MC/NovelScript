@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
+import { Tag } from "antd";
 
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
+import { ApiError } from "../api/types";
 import { useTaskStore } from "../stores/task-store";
 import { useNovelStore } from "../stores/novel-store";
 import { useScriptStore } from "../stores/script-store";
@@ -76,7 +78,9 @@ export default function Workspace() {
           })),
         );
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        if (!cancelled) setError(err instanceof ApiError && err.status === 404
+          ? "任务不存在（可能已被删除）"
+          : (err as Error).message || "加载失败，请检查网络后重试");
       } finally {
         if (!cancelled) setLoading(false);
       }

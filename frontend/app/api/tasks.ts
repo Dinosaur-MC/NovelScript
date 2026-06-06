@@ -64,3 +64,9 @@ export function resumeTask(id: string) {
     method: "POST",
   });
 }
+
+/** Create an EventSource for real-time SSE progress streaming. */
+export function createTaskStream(id: string): EventSource {
+  const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+  return new EventSource(`${BASE_URL}/tasks/${id}/stream`);
+}
