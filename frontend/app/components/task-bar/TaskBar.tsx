@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router";
-import { Button, Dropdown, Tag, Avatar } from "antd";
-import { ExportOutlined, HomeOutlined, UserOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Tag, Avatar, Popover } from "antd";
+import { ExportOutlined, HomeOutlined, UserOutlined, LogoutOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
 import { useAuthStore } from "../../stores/auth-store";
 import { exportScript } from "../../api/scripts";
@@ -62,19 +62,54 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
       {/* Right */}
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         {user ? (
-          <>
-            <Avatar
-              size="small"
-              icon={<UserOutlined />}
-              style={{ backgroundColor: "var(--color-accent-primary)" }}
-            />
-            <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            overlayStyle={{ width: 220 }}
+            content={
+              <div style={{ fontSize: 13 }}>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>用户名</div>
+                  <div style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{user.username}</div>
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>邮箱</div>
+                  <div style={{ color: "var(--color-text-primary)" }}>{user.email ?? "—"}</div>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>角色</div>
+                  <div style={{ color: "var(--color-text-primary)" }}>{user.role === "admin" ? "管理员" : "用户"}</div>
+                </div>
+                <Button
+                  block
+                  danger
+                  size="small"
+                  icon={<LogoutOutlined />}
+                  onClick={() => { logout().catch(() => {}); clearUser(); navigate("/login"); }}
+                >
+                  退出登录
+                </Button>
+              </div>
+            }
+          >
+            <span
+              style={{
+                fontSize: 13,
+                color: "var(--color-text-secondary)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <Avatar
+                size="small"
+                icon={<UserOutlined />}
+                style={{ backgroundColor: "var(--color-accent-primary)" }}
+              />
               {user.username}
             </span>
-            <Button type="link" size="small" onClick={() => { logout().catch(() => {}); clearUser(); navigate("/login"); }}>
-              退出
-            </Button>
-          </>
+          </Popover>
         ) : (
           <Button type="link" size="small" onClick={() => navigate("/login")}>
             登录

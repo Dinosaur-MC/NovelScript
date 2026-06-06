@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select, Avatar } from "antd";
+import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select, Avatar, Popover, Popconfirm } from "antd";
 import {
   PlusOutlined,
   UploadOutlined,
@@ -10,12 +10,17 @@ import {
   ClockCircleFilled,
   SearchOutlined,
   UserOutlined,
+  LogoutOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  DashboardOutlined,
 } from "@ant-design/icons";
-import { listNovels, uploadNovel, uploadNovelFile } from "../../api/novels";
-import { listScripts, type ScriptLight } from "../../api/scripts";
+import { listNovels, uploadNovel, uploadNovelFile, updateNovel, deleteNovel } from "../../api/novels";
+import { listScripts, type ScriptLight, deleteScript } from "../../api/scripts";
 import { createTask } from "../../api/tasks";
 import type { Novel } from "../../api/novels";
 import { useAuthStore } from "../../stores/auth-store";
+import { logout } from "../../api/auth";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircleFilled style={{ color: "var(--color-accent-success)" }} />,
@@ -41,7 +46,12 @@ export function HomePage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renameAuthor, setRenameAuthor] = useState("");
   const user = useAuthStore((s) => s.user);
+  const clearUser = useAuthStore((s) => s.clearUser);
   const authLoaded = useAuthStore((s) => s.loaded);
 
   const load = useCallback(async () => {
@@ -135,6 +145,45 @@ export function HomePage() {
     }
   };
 
+  const handleRenameClick = (novel: Novel) => {
+    setRenameId(novel.id);
+    setRenameTitle(novel.title);
+    setRenameAuthor(novel.author ?? "");
+    setRenameOpen(true);
+  };
+
+  const handleRenameSubmit = async () => {
+    if (!renameId) return;
+    try {
+      await updateNovel(renameId, { title: renameTitle, author: renameAuthor || undefined });
+      message.success("小说信息已更新");
+      setRenameOpen(false);
+      load();
+    } catch {
+      message.error("更新失败");
+    }
+  };
+
+  const handleDeleteNovel = async (novelId: string) => {
+    try {
+      await deleteNovel(novelId);
+      message.success("小说已删除");
+      load();
+    } catch {
+      message.error("删除失败");
+    }
+  };
+
+  const handleDeleteScript = async (scriptId: string) => {
+    try {
+      await deleteScript(scriptId);
+      message.success("剧本已删除");
+      load();
+    } catch {
+      message.error("删除失败");
+    }
+  };
+
   if (loading) {
     return (
       <div
@@ -176,22 +225,67 @@ export function HomePage() {
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {user ? (
             <>
-              <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
-                <Avatar
-                  size="small"
-                  icon={<UserOutlined />}
-                  style={{ backgroundColor: "var(--color-accent-primary)", marginRight: 8 }}
-                />
-                {user.username}
-              </span>
+              <Button
+                icon={<DashboardOutlined />}
+                onClick={() => navigate("/dashboard")}
+              >
+                仪表板
+              </Button>
               <Button
                 type="primary"
-                size="large"
                 icon={<PlusOutlined />}
                 onClick={() => setUploadOpen(true)}
               >
                 上传新小说
               </Button>
+              <Popover
+                trigger="click"
+                placement="bottomRight"
+                overlayStyle={{ width: 220 }}
+                content={
+                  <div style={{ fontSize: 13 }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>用户名</div>
+                      <div style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{user.username}</div>
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>邮箱</div>
+                      <div style={{ color: "var(--color-text-primary)" }}>{user.email ?? "—"}</div>
+                    </div>
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>角色</div>
+                      <div style={{ color: "var(--color-text-primary)" }}>{user.role === "admin" ? "管理员" : "用户"}</div>
+                    </div>
+                    <Button
+                      block
+                      danger
+                      size="small"
+                      icon={<LogoutOutlined />}
+                      onClick={() => { logout().catch(() => {}); clearUser(); navigate("/"); }}
+                    >
+                      退出登录
+                    </Button>
+                  </div>
+                }
+              >
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: "var(--color-text-secondary)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Avatar
+                    size="small"
+                    icon={<UserOutlined />}
+                    style={{ backgroundColor: "var(--color-accent-primary)" }}
+                  />
+                  {user.username}
+                </span>
+              </Popover>
             </>
           ) : (
             <Button
@@ -270,12 +364,26 @@ export function HomePage() {
             return {
               key: novel.id,
               label: (
-                <span style={{ fontWeight: 600, fontSize: 15 }}>
-                  《{novel.title}》
-                  <span style={{ color: "var(--color-text-secondary)", marginLeft: 8, fontSize: 12 }}>
-                    ({novel.word_count?.toLocaleString() ?? 0} 字)
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                  <span style={{ fontWeight: 600, fontSize: 15 }}>
+                    《{novel.title}》
+                    <span style={{ color: "var(--color-text-secondary)", marginLeft: 8, fontSize: 12 }}>
+                      ({novel.word_count?.toLocaleString() ?? 0} 字)
+                    </span>
                   </span>
-                </span>
+                  <span onClick={(e) => e.stopPropagation()}>
+                    <Popconfirm
+                      title="确定删除此小说及其所有剧本？"
+                      onConfirm={() => handleDeleteNovel(novel.id)}
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                    <Button type="text" size="small" icon={<EditOutlined />} onClick={() => handleRenameClick(novel)} />
+                  </span>
+                </div>
               ),
               children: (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, padding: "8px 0" }}>
@@ -295,7 +403,24 @@ export function HomePage() {
                         <span style={{ fontWeight: 600, fontSize: 13 }}>
                           {s.summary?.slice(0, 20) || "剧本"}
                         </span>
-                        {STATUS_ICON[s.status] ?? null}
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {STATUS_ICON[s.status] ?? null}
+                          <Popconfirm
+                            title="确定删除？"
+                            onConfirm={() => handleDeleteScript(s.script_id)}
+                            okText="删除"
+                            cancelText="取消"
+                            okButtonProps={{ danger: true }}
+                          >
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </Popconfirm>
+                        </span>
                       </div>
                       <div style={{ marginTop: 4, fontSize: 12, color: "var(--color-text-secondary)" }}>
                         <span>{s.scene_count} 个场景</span>
@@ -377,6 +502,40 @@ export function HomePage() {
           </p>
           <p>点击或拖拽上传 .txt / .md 文件</p>
         </Upload.Dragger>
+      </Modal>
+
+      {/* Rename Modal */}
+      <Modal
+        title="编辑小说信息"
+        open={renameOpen}
+        onCancel={() => setRenameOpen(false)}
+        onOk={handleRenameSubmit}
+        okText="保存"
+        cancelText="取消"
+        destroyOnHidden
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+          <div>
+            <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+              标题
+            </label>
+            <Input
+              value={renameTitle}
+              onChange={(e) => setRenameTitle(e.target.value)}
+              placeholder="小说标题"
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+              作者
+            </label>
+            <Input
+              value={renameAuthor}
+              onChange={(e) => setRenameAuthor(e.target.value)}
+              placeholder="作者（选填）"
+            />
+          </div>
+        </div>
       </Modal>
     </div>
   );
