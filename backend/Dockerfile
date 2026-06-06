@@ -13,11 +13,11 @@
 # ============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1 — uv environment cache
+# Stage 1 — uv environment (cache mounts for uv + apt)
 # ---------------------------------------------------------------------------
 FROM python:3.13.13-slim AS build
 
-# Install uv via the official script (fast, pinned)
+# Install uv via the official image (fast, pinned)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
@@ -25,22 +25,26 @@ WORKDIR /app
 # Copy dependency manifests first → cache layer when deps don't change
 COPY pyproject.toml uv.lock ./
 
-# Sync dependencies into the virtual environment
-RUN uv sync --frozen --no-dev --no-install-project
+# --mount=type=cache keeps uv packages + apt lists across rebuilds
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
 # ---------------------------------------------------------------------------
 # Stage 2 — application code
 # ---------------------------------------------------------------------------
 FROM python:3.13.13-slim AS app-base
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     # psycopg2 binary needs libpq at runtime
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy the uv-built virtual environment
+# Copy uv binary + virtual environment
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     VIRTUAL_ENV="/app/.venv" \
