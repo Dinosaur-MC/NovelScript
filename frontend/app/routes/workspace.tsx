@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
@@ -30,8 +30,6 @@ export default function Workspace() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const loadingStartMs = useRef(Date.now());
-  const pendingError = useRef<string | null>(null);
 
   // Stores
   const setTask = useTaskStore((s) => s.setTask);
@@ -50,7 +48,7 @@ export default function Workspace() {
   // Progress polling
   useSSE();
 
-  // Async data load — does NOT block initial render
+  // Async data load
   useEffect(() => {
     if (!taskId) return;
     let cancelled = false;
@@ -79,23 +77,9 @@ export default function Workspace() {
           })),
         );
       } catch (err) {
-        // Hold the error until loading indicator can finish its minimum duration
-        if (!cancelled) pendingError.current = (err as Error).message;
+        if (!cancelled) setError((err as Error).message);
       } finally {
-        if (cancelled) return;
-        const elapsed = Date.now() - loadingStartMs.current;
-        const MIN_LOADING_MS = 600;
-        const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
-        setTimeout(
-          () => {
-            setLoading(false);
-            if (pendingError.current) {
-              setError(pendingError.current);
-              pendingError.current = null;
-            }
-          },
-          remaining,
-        );
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -103,8 +87,6 @@ export default function Workspace() {
     return () => { cancelled = true; };
   }, [taskId, setTask, loadScript, setNovel, setChapters]);
 
-  // Only block render on fatal error, NOT on loading.
-  // Each panel handles its own empty/loading state internally.
   if (error) {
     return (
       <div

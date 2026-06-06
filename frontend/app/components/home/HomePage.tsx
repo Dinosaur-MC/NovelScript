@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
 import {
   Card,
@@ -48,11 +48,9 @@ export function HomePage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploading, setUploading] = useState(false);
-  const loadingStartMs = useRef(Date.now());
 
   const load = useCallback(async () => {
     setLoading(true);
-    loadingStartMs.current = Date.now();
     try {
       const [novelsRes, scriptsRes] = await Promise.all([
         listNovels(1, 100),
@@ -63,9 +61,7 @@ export function HomePage() {
     } catch {
       message.error("加载数据失败");
     } finally {
-      const MIN_LOADING_MS = 600;
-      const remaining = Math.max(0, MIN_LOADING_MS - (Date.now() - loadingStartMs.current));
-      setTimeout(() => setLoading(false), remaining);
+      setLoading(false);
     }
   }, []);
 
