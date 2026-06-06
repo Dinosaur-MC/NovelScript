@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { Button } from "antd";
@@ -60,6 +60,18 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   const markDirty = useEditorStore((s) => s.markDirty);
 
   const latestValueRef = useRef(yaml ?? "");
+  const loadedRef = useRef(false);
+
+  const updateYaml = useScriptStore((s) => s.updateYaml);
+
+  // Trigger preview parse when yaml data arrives from initial load
+  // (Monaco's onChange only fires on user edits, not prop changes)
+  useEffect(() => {
+    if (yaml && !loadedRef.current) {
+      loadedRef.current = true;
+      updateYaml(yaml);
+    }
+  }, [yaml, updateYaml]);
 
   const handleMount: OnMount = useCallback(
     (ed: editor.IStandaloneCodeEditor) => {
@@ -67,8 +79,6 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
     },
     [editorHook],
   );
-
-  const updateYaml = useScriptStore((s) => s.updateYaml);
 
   const handleChange = useCallback(
     (value: string | undefined) => {
