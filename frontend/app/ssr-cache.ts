@@ -9,12 +9,7 @@ export function getSSRCache(): Cache {
   return _cache;
 }
 
-export function extractSSRStyles(): string {
-  if (!_cache) return "";
-  // Dynamic import to avoid bundling server-only code on client
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { extractStyle } = require("@ant-design/cssinjs") as {
-    extractStyle: (c: Cache, opts?: { plain?: boolean }) => string;
-  };
-  return extractStyle(_cache, { plain: true });
+/** The current cache instance — entry.server.tsx calls extractStyle() on it after render. */
+export function getCacheForExtraction(): ReturnType<typeof createCache> | null {
+  return _cache;
 }
