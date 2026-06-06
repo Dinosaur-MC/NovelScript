@@ -8,6 +8,8 @@ import {
 } from "react-router";
 
 import { ConfigProvider, theme } from "antd";
+import { StyleProvider } from "@ant-design/cssinjs";
+import { getSSRCache } from "./lib/ssr-cache";
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -45,28 +47,30 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <ConfigProvider
-      theme={{
-        cssVar: { prefix: "ns" },
-        algorithm: theme.darkAlgorithm,
-        token: {
-          colorPrimary: "#6c5ce7",
-          colorSuccess: "#00cec9",
-          colorWarning: "#fdcb6e",
-          colorError: "#e17055",
-          colorInfo: "#74b9ff",
-          colorTextBase: "#e8e8f0",
-          colorBgBase: "#0a0a0f",
-          colorBgContainer: "#14141f",
-          colorBgElevated: "#1c1c2a",
-          colorBorder: "#2a2a3e",
-          colorBorderSecondary: "#2a2a3e",
-          borderRadius: 6,
-        },
-      }}
-    >
-      <Outlet />
-    </ConfigProvider>
+    <StyleProvider cache={getSSRCache()}>
+      <ConfigProvider
+        theme={{
+          cssVar: { prefix: "ns" },
+          algorithm: theme.darkAlgorithm,
+          token: {
+            colorPrimary: "#6c5ce7",
+            colorSuccess: "#00cec9",
+            colorWarning: "#fdcb6e",
+            colorError: "#e17055",
+            colorInfo: "#74b9ff",
+            colorTextBase: "#e8e8f0",
+            colorBgBase: "#0a0a0f",
+            colorBgContainer: "#14141f",
+            colorBgElevated: "#1c1c2a",
+            colorBorder: "#2a2a3e",
+            colorBorderSecondary: "#2a2a3e",
+            borderRadius: 6,
+          },
+        }}
+      >
+        <Outlet />
+      </ConfigProvider>
+    </StyleProvider>
   );
 }
 

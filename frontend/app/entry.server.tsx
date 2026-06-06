@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@react-router/node";
 import { ServerRouter } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
-import { createCache, extractStyle, StyleProvider } from "@ant-design/cssinjs";
+import { extractSSRStyles } from "./lib/ssr-cache";
 import type { EntryContext } from "react-router";
 
 export const streamTimeout = 5_000;
@@ -21,10 +21,8 @@ export default function handleRequest(
     });
   }
 
-  // Single render pass: StyleProvider collects all antd css-in-js styles
-  // into the shared cache during renderToPipeableStream.
-  const cssCache = createCache();
-
+  // StyleProvider lives inside root.tsx (via getSSRCache).
+  // No extra wrapper here — keeps SSR & client component trees identical.
   return new Promise((resolve, reject) => {
     let settled = false;
     const timeoutId = setTimeout(() => {
@@ -35,21 +33,18 @@ export default function handleRequest(
     }, streamTimeout);
 
     const { pipe, abort } = renderToPipeableStream(
-      <StyleProvider cache={cssCache}>
-        <ServerRouter context={routerContext} url={request.url} />
-      </StyleProvider>,
+      <ServerRouter context={routerContext} url={request.url} />,
       {
         onAllReady() {
           if (settled) return;
 
-          // Buffer the entire stream so we can inject styles before </head>
           const chunks: Buffer[] = [];
           const collector = new PassThrough();
           collector.on("data", (chunk: Buffer) => chunks.push(chunk));
           collector.on("end", () => {
             let html = Buffer.concat(chunks).toString("utf-8");
 
-            const styleText = extractStyle(cssCache, { plain: true });
+            const styleText = extractSSRStyles();
             if (styleText) {
               html = html.replace(
                 "</head>",
