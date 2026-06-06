@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Skeleton } from "antd";
+import { Skeleton, Spin } from "antd";
+import { LoadingOutlined } from "@ant-design/icons";
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
 import { useTaskStore } from "../stores/task-store";
@@ -128,23 +129,45 @@ export default function Workspace() {
         backgroundColor: "var(--color-bg-canvas)",
       }}
     >
-      <TaskBar />
+      <TaskBar loading={loading} />
       <div style={{ flex: 1, overflow: "hidden" }}>
         {loading ? (
-          /* Skeleton shell while first load — layout visible immediately */
-          <div style={{ height: "100%", display: "flex", gap: 4, padding: 4 }}>
+          /* Skeleton shell + loading indicator while data loads */
+          <div style={{ height: "100%", display: "flex", gap: 4, padding: 4, position: "relative" }}>
+            {/* Left skeleton */}
             <div style={{ width: `${leftW}%`, padding: 16 }}>
               <Skeleton active paragraph={{ rows: 12 }} />
             </div>
             <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
+            {/* Center + Right skeleton */}
             <div style={{ flex: 1, display: "flex", gap: 4 }}>
               <div style={{ flex: 1, padding: 16 }}>
                 <Skeleton active paragraph={{ rows: 20 }} />
               </div>
               <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
-              <div style={{ width: `${100 - leftW - (centerW / (centerW + (100 - leftW - centerW)) * 100)}%`, padding: 16 }}>
+              <div style={{ width: "28%", padding: 16 }}>
                 <Skeleton active paragraph={{ rows: 8 }} />
               </div>
+            </div>
+            {/* Central loading overlay */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 16,
+                background: "rgba(10, 10, 15, 0.6)",
+                backdropFilter: "blur(2px)",
+                zIndex: 10,
+              }}
+            >
+              <Spin
+                indicator={<LoadingOutlined style={{ fontSize: 36, color: "var(--color-accent-primary)" }} spin />}
+              />
+              <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>加载中...</span>
             </div>
           </div>
         ) : (

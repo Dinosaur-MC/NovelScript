@@ -12,7 +12,7 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
   failed:        { color: "error", label: "失败" },
 };
 
-export function TaskBar() {
+export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
   const navigate = useNavigate();
   const taskId = useTaskStore((s) => s.taskId);
   const status = useTaskStore((s) => s.status);
@@ -51,7 +51,8 @@ export function TaskBar() {
             NovelScript
           </span>
         </Button>
-        {status && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
+        {isLoading && <Tag color="processing">加载中...</Tag>}
+        {!isLoading && status && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
       </div>
 
       {/* Right */}
