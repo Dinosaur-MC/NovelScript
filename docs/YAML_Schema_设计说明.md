@@ -18,7 +18,7 @@
 | **原子级双向溯源**         | `source_ref` 机制下沉至 Scene 与每一个 Element，支持基于字符偏移量 (Offset) 的毫秒级双向高亮联动。                                                                                                                                      |
 | **逻辑块与物理行解耦**     | YAML 采用"逻辑块 (Logical Block)"聚合（如将角色、括号提示、对白聚合为一个 `dialogue_block`），导出引擎负责拆解为 Fountain 的"物理行"。                                                                                                  |
 | **结构化兜底**             | 每个结构化字段（如 `heading`）同时保留原始文本 (`text`) 与拆解后的结构化子字段，确保在解析失败时仍具备降级回退能力。                                                                                                                    |
-| **强校验**                 | 对应 Pydantic V2 严格模型，非法输出将在管道中被自动捕获、修复（最多 2 次重试）。                                                                                                                                                        |
+| **强校验**                 | 对应 Pydantic V2 严格模型，非法输出触发应用层重试（指数退避，每阶段 1-3 次可配），连接/超时/限流自动恢复。降级返回已解析部分，管道绝不崩溃。                                                                                                                                                        |
 | **版本控制原生支持**       | YAML 文本格式天然适配 Git diff/merge，支持原作者、编剧、制片人异步协作与全历史溯源——这是 NovelScript 在 AI 辅助创作之外的第二核心竞争力。                                                                                               |
 | **Fountain 互补定位**      | Fountain 1.1 是"导出友好的中间层"，并非行业交付终点。YAML Schema 在 100% 兼容 Fountain 往返的基础上，通过 `metadata` 扩展字段承载小说改编所需的高维叙事信息（闪回、多时间线、内心独白等），弥补 Fountain 在处理复杂叙事方面的语法空白。 |
 
@@ -867,15 +867,13 @@ LLM 输出 (raw JSON/YAML)
 └──────────────────────────────┘
 ```
 
-### 9.2 Auto-Fix 自动修复流程
+### 9.2 校验与重试流程
 
-1. 捕获 `pydantic.ValidationError`。
-2. 提取错误字段路径与描述。
-3. 构造修复 Prompt，将错误清单 + 原始输出送入 DeepSeek Flash。
-4. LLM 返回修正后的 JSON。
-5. 重新执行 Level 1 校验。
-6. 若仍失败，重复步骤 2–5，**最多 2 次重试**。
-7. 2 次重试均失败 → 降级策略：丢弃非法 Element，`system_meta.warnings` 记录，标记 Task 为 `completed_with_warnings`。
+1. `LangChain` `JsonOutputParser` + Pydantic `model_validate()` 双阶段校验。
+2. 校验通过的 Scene 进入 `source_ref` 注入（exact→prefix→estimated 三级回退）。
+3. 网络/超时/限流错误由 `invoke_with_retry()` 自动使用指数退避重试（每阶段 1-3 次可配）。
+4. 不可恢复的错误（格式非法/模型幻觉）→ 降级策略：丢弃非法 Element，当前阶段回退（转换→空列表，优化→保留原始场景）。
+5. Pipeline 各阶段独立回退，任意阶段失败不阻断下游。
 
 ### 9.3 系统自动修复规则 (无需 LLM)
 
