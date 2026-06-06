@@ -62,7 +62,7 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 ### Key CLI Options
 
 ```
-uv run python -m cli.pipeline <input> [-o output.yaml] [--json] [-n N] [-c C]
+uv run python -m cli.pipeline <input> [-o output.yaml] [--json] [-n N] [-c C] [-s STYLE]
 uv run python -m cli.pipeline chapters/ -o out.yaml -n 3  # first 3 chapters, dir mode
 ```
 
@@ -72,6 +72,7 @@ uv run python -m cli.pipeline chapters/ -o out.yaml -n 3  # first 3 chapters, di
 | `--json` | Export JSON instead of YAML | YAML |
 | `-n N`, `--limit N` | Process only the first N chapters | all |
 | `-c C`, `--concurrency C` | Max concurrent LLM API calls | 20 |
+| `-s STYLE`, `--style STYLE` | AI scriptwriting direction injected into conversion prompts | (none) |
 
 ## Package Managers
 

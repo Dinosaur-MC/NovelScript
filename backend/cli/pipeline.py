@@ -1,8 +1,8 @@
 """Pipeline engine — main orchestrator for novel-to-script conversion.
 
 Usage:
-    uv run python -m cli.pipeline <input_file> [-o output.yaml] [-n N] [-c C]
-    uv run python -m cli.pipeline <directory/>  [-o output.yaml] [-n N] [-c C]
+    uv run python -m cli.pipeline <input_file> [-o output.yaml] [-n N] [-c C] [-s STYLE]
+    uv run python -m cli.pipeline <directory/>  [-o output.yaml] [-n N] [-c C] [-s STYLE]
 
 When *input* is a directory, all ``.txt`` / ``.md`` / ``.utf8`` files are
 read in alphabetical order, each treated as a separate chapter.  This is
@@ -11,6 +11,8 @@ convenient for novels where each chapter is a single file.
 ``-n N`` / ``--limit N`` restricts processing to the first N chapters.
 ``-c C`` / ``--concurrency C`` caps concurrent LLM API calls (default 20,
 also settable via ``LLM_MAX_CONCURRENCY`` env var).
+``-s STYLE`` / ``--style STYLE`` injects AI scriptwriting direction into
+the conversion & optimization prompts (e.g. "悬疑风格，注重氛围渲染").
 
 Stages:
     1. Chunking      — split raw novel into chapters
@@ -84,7 +86,12 @@ def _call_cb(cb: ProgressCallback | None, progress: int, stage: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run(input_path: str, *, limit: int | None = None) -> Script:
+async def run(
+    input_path: str,
+    *,
+    limit: int | None = None,
+    style_direction: str = "",
+) -> Script:
     """Execute the full pipeline on a novel file or directory.
 
     Args:
@@ -94,6 +101,9 @@ async def run(input_path: str, *, limit: int | None = None) -> Script:
         limit:      Maximum number of chapters to process (``None`` = all).
                     Applied after sorting; the first *limit* files/chapters
                     are kept in alphabetical / occurrence order.
+        style_direction:  Optional AI scriptwriting / style instruction
+                    injected into the Conversion and Optimization prompts
+                    (e.g. "悬疑风格", "更加黑暗").
 
     Returns:
         A complete Script model ready for export.
@@ -130,10 +140,14 @@ async def run(input_path: str, *, limit: int | None = None) -> Script:
             chapters = chapters[:limit]
 
         logger.info("Loaded %d chapter(s) (chunking skipped).", len(chapters))
-        return await run_from_chapters(chapters, source_name=path.name)
+        return await run_from_chapters(
+            chapters, source_name=path.name, style_direction=style_direction,
+        )
 
     raw_text = path.read_text(encoding="utf-8")
-    return await run_from_text(raw_text, source_name=path.name, limit=limit)
+    return await run_from_text(
+        raw_text, source_name=path.name, limit=limit, style_direction=style_direction,
+    )
 
 
 async def run_from_text(
@@ -142,6 +156,7 @@ async def run_from_text(
     source_name: str = "",
     *,
     limit: int | None = None,
+    style_direction: str = "",
 ) -> Script:
     """Execute the full pipeline on in-memory *raw_text*.
 
@@ -151,6 +166,7 @@ async def run_from_text(
         source_name:  Human-readable label for the ``meta.source_file`` field
                       (e.g. the original filename or novel title).
         limit:        Maximum number of chapters to process (``None`` = all).
+        style_direction:  Optional AI scriptwriting / style instruction.
 
     Returns:
         A complete Script model ready for export.
@@ -160,6 +176,7 @@ async def run_from_text(
         chapters = chapters[:limit]
     return await run_from_chapters(
         chapters, progress_callback=progress_callback, source_name=source_name,
+        style_direction=style_direction,
     )
 
 
@@ -170,6 +187,7 @@ async def run_from_chapters(
     *,
     faiss_index=None,  # pre-built FAISS index — skips stage 3 when set
     kg: KnowledgeGraph | None = None,  # pre-built KG — skips stage 4 when set
+    style_direction: str = "",
 ) -> Script:
     """Execute the full pipeline on pre-built *chapters*.
 
@@ -181,6 +199,8 @@ async def run_from_chapters(
                       When ``None`` (default), the index is built from scratch.
         kg:           Pre-built KnowledgeGraph.  When ``None`` (default),
                       the KG is extracted via LLM (stage 4).
+        style_direction:  Optional AI scriptwriting / style instruction
+                      injected into Conversion and Optimization prompts.
 
     Returns:
         A complete Script model ready for export.
@@ -285,6 +305,7 @@ async def run_from_chapters(
             result = await asyncio.to_thread(
                 convert_chapter, ch, kg, rag_ctx,
                 chapter_summary=ch_summary,
+                style_direction=style_direction,
             )
         completed_count += 1
         progress = 35 + int((completed_count / max(chapter_count, 1)) * 40)
@@ -305,7 +326,7 @@ async def run_from_chapters(
     # 6. Optimization — cross-scene consistency
     # ------------------------------------------------------------------
     logger.info("=== Stage 6: Scene Optimization ===")
-    optimized_scenes = await optimize(all_scenes, kg)
+    optimized_scenes = await optimize(all_scenes, kg, style_direction=style_direction)
     logger.info("Optimized %d scene(s).", len(optimized_scenes))
     _call_cb(cb, 90, "optimizing")
 
@@ -405,13 +426,15 @@ def _programmatic_summary(kg: KnowledgeGraph) -> str:
 
 
 def main():
-    """CLI entry: uv run python -m cli.pipeline <INPUT> [-o OUTPUT] [--json] [-n N] [-c C]
+    """CLI entry: uv run python -m cli.pipeline <INPUT> [-o OUTPUT] [--json] [-n N] [-c C] [-s STYLE]
 
     When ``-o`` / ``--output`` is given the result is written to that
     file (logs go to stderr only).  Otherwise it is printed to stdout.
     ``--json`` exports JSON instead of the default YAML.
     ``-n N`` / ``--limit N`` restricts processing to the first N chapters.
     ``-c C`` / ``--concurrency C`` caps concurrent LLM calls (default: 20).
+    ``-s STYLE`` / ``--style STYLE`` injects AI scriptwriting direction
+    (e.g. "悬疑风格，注重氛围渲染").
     """
     import argparse
     import os
@@ -447,6 +470,11 @@ def main():
         help="Maximum concurrent LLM API calls (default: 20).  "
              "Also settable via LLM_MAX_CONCURRENCY env var.",
     )
+    parser.add_argument(
+        "-s", "--style", type=str, default="", metavar="STYLE",
+        help="AI scriptwriting direction injected into conversion & optimization "
+             "prompts (e.g. '悬疑风格，注重氛围渲染').",
+    )
     args = parser.parse_args()
 
     # Apply CLI override early — the semaphore reads this env var on first access.
@@ -454,7 +482,7 @@ def main():
         os.environ["LLM_MAX_CONCURRENCY"] = str(args.concurrency)
 
     try:
-        script = asyncio.run(run(args.input, limit=args.limit))
+        script = asyncio.run(run(args.input, limit=args.limit, style_direction=args.style))
         if args.format_json:
             from cli.exporter import to_json
 

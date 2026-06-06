@@ -41,6 +41,7 @@ _PROMPT = ChatPromptTemplate.from_messages([
 你是一个剧本质量控制专家。检查并修正剧本场景中的一致性问题：
 1. 人物弧光一致性 2. 地点连续性 3. 时间线 4. 对白风格。
 仅修正明显的不一致，保留原文风格和内容精髓。
+{style_instruction}
 
 {format_instructions}"""),
     ("human", """\
@@ -53,7 +54,11 @@ _PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-async def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
+async def optimize(
+    scenes: list[Scene],
+    kg: KnowledgeGraph,
+    style_direction: str = "",
+) -> list[Scene]:
     """Check and improve cross-scene consistency.
 
     Scenes are processed in batches so the per-call JSON payload stays
@@ -69,6 +74,12 @@ async def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
     kg_summary = _summarize_kg(kg)
     format_instructions = _parser.get_format_instructions()
     batches = _batch_scenes(scenes)
+
+    style_instruction = ""
+    if style_direction:
+        style_instruction = (
+            f"【编剧指示】\n请按照以下风格/编剧指示调整剧本：{style_direction}\n"
+        )
 
     if len(batches) == 1:
         logger.info("Optimizer: 1 batch (%d scenes).", len(scenes))
@@ -93,7 +104,8 @@ async def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
         try:
             async with llm_sem:
                 raw = await asyncio.to_thread(
-                    _invoke_chain, batch_json, kg_summary, format_instructions, context_note,
+                    _invoke_chain, batch_json, kg_summary, format_instructions,
+                    context_note, style_instruction,
                 )
             result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
             logger.info(
@@ -135,6 +147,7 @@ def _invoke_chain(
     kg_summary: str,
     format_instructions: str,
     context_note: str,
+    style_instruction: str = "",
 ) -> dict:
     """Shared LLM invocation — extracted so the batcher and tests can reuse it.
     Uses ``invoke_with_retry`` for transient-failure resilience.
@@ -144,6 +157,7 @@ def _invoke_chain(
     return invoke_with_retry(chain, {
         "scenes_json": scenes_json,
         "kg_summary": kg_summary,
+        "style_instruction": style_instruction,
         "format_instructions": format_instructions,
         "context_note": context_note,
     }, "consistency_check")

@@ -34,6 +34,7 @@ elements (元素: action/dialogue/heading/transition/parenthetical/character/not
 每元素含 type + content), characters_present (角色ID列表)。
 
 规则: 对白使用 dialogue 类型，去除小说化描写，心理活动转换为 action 或 dialogue。
+{style_instruction}
 
 {format_instructions}"""),
     ("human", """\
@@ -53,6 +54,7 @@ def convert_chapter(
     kg: KnowledgeGraph,
     rag_context: list[str],
     chapter_summary: str = "",
+    style_direction: str = "",
 ) -> list[Scene]:
     llm = get_llm("scene_conversion", temperature=0.5, json_mode=True)
 
@@ -75,6 +77,13 @@ def convert_chapter(
             f"【前情提要】\n以下是本章之前发生过的事情摘要，供你理解上下文：\n{chapter_summary}\n"
         )
 
+    # Build style instruction — nil when empty, guidance when set
+    style_instruction = ""
+    if style_direction:
+        style_instruction = (
+            f"【编剧指示】\n请按照以下风格/编剧指示调整剧本：{style_direction}\n"
+        )
+
     chain = _PROMPT | llm | _parser
     prompt_inputs = {
         "chapter_title": chapter.title,
@@ -82,6 +91,7 @@ def convert_chapter(
         "kg_summary": kg_summary,
         "rag_context": rag_text,
         "summary_section": summary_section,
+        "style_instruction": style_instruction,
         "format_instructions": _parser.get_format_instructions(),
     }
 
