@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
+
+// Guard against popconfirm portal clicks leaking to card onClick
+const blockNav = { current: false } as { current: boolean };
 import { useNavigate } from "react-router";
 import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select, Avatar, Popover, Popconfirm } from "antd";
 import {
@@ -109,14 +112,14 @@ export function HomePage() {
     setUploading(true);
     try {
       const upRes = await uploadNovel(pasteText.trim(), uploadTitle || undefined);
-      const taskRes = await createTask(upRes.novel_id);
-      message.success("上传成功！");
+      await createTask(upRes.novel_id);
+      message.success("上传成功，转换任务已创建");
       setUploadOpen(false);
       setPasteText("");
       setUploadTitle("");
-      navigate(`/workspace/${taskRes.task_id}`);
-    } catch {
-      message.error("上传失败");
+      load(); // need server data for new novel + task
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "上传失败");
     } finally {
       setUploading(false);
     }
@@ -126,23 +129,32 @@ export function HomePage() {
     setUploading(true);
     try {
       const upRes = await uploadNovelFile(file, uploadTitle || undefined);
-      const taskRes = await createTask(upRes.novel_id);
-      message.success("上传成功！");
+      await createTask(upRes.novel_id);
+      message.success("上传成功，转换任务已创建");
       setUploadOpen(false);
       setUploadTitle("");
-      navigate(`/workspace/${taskRes.task_id}`);
-    } catch {
-      message.error("上传失败");
+      load(); // need server data for new novel + task
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "上传失败");
     } finally {
       setUploading(false);
     }
-    return false; // prevent default Upload behavior
+    return false;
   };
 
   const handleNewScript = async (novelId: string) => {
     try {
-      const taskRes = await createTask(novelId);
-      navigate(`/workspace/${taskRes.task_id}`);
+      const res = await createTask(novelId);
+      message.success("转换任务已创建");
+      // Append locally instead of full reload
+      setScripts((prev) => [
+        ...prev,
+        {
+          script_id: res.task_id, novel_id: novelId, status: "pending",
+          progress: 0, summary: null, scene_count: 0,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      ]);
     } catch {
       message.error("创建任务失败");
     }
@@ -161,27 +173,32 @@ export function HomePage() {
       await updateNovel(renameId, { title: renameTitle, author: renameAuthor || undefined });
       message.success("小说信息已更新");
       setRenameOpen(false);
-      load();
+      setNovels((prev) =>
+        prev.map((n) => (n.id === renameId ? { ...n, title: renameTitle, author: renameAuthor || null } : n)),
+      );
     } catch {
       message.error("更新失败");
     }
   };
 
   const handleDeleteNovel = async (novelId: string) => {
+    blockNav.current = true;
     try {
       await deleteNovel(novelId);
       message.success("小说已删除");
-      load();
+      setNovels((prev) => prev.filter((n) => n.id !== novelId));
+      setScripts((prev) => prev.filter((s) => s.novel_id !== novelId));
     } catch {
       message.error("删除失败");
     }
   };
 
   const handleDeleteScript = async (scriptId: string) => {
+    blockNav.current = true;
     try {
       await deleteScript(scriptId);
       message.success("剧本已删除");
-      load();
+      setScripts((prev) => prev.filter((s) => s.script_id !== scriptId));
     } catch {
       message.error("删除失败");
     }
@@ -383,14 +400,34 @@ export function HomePage() {
                       cancelText="取消"
                       okButtonProps={{ danger: true }}
                     >
-                      <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
                     </Popconfirm>
-                    <Button type="text" size="small" icon={<EditOutlined />} onClick={() => handleRenameClick(novel)} />
+                    <Button type="text" size="small" icon={<EditOutlined />} onClick={(e) => { e.stopPropagation(); handleRenameClick(novel); }} />
                   </span>
                 </div>
               ),
               children: (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 12, padding: "8px 0" }}>
+                  {novelScripts.length === 0 && (
+                    <div
+                      style={{
+                        width: 220, cursor: "pointer", borderRadius: 8,
+                        backgroundColor: "rgba(108,92,231,0.08)",
+                        border: "1px solid var(--color-accent-primary)",
+                        display: "flex", flexDirection: "column",
+                        alignItems: "center", justifyContent: "center",
+                        gap: 6, minHeight: 78, padding: "12px 8px",
+                      }}
+                      onClick={() => handleNewScript(novel.id)}
+                    >
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-accent-primary)" }}>
+                        开始转换
+                      </span>
+                      <span style={{ fontSize: 11, color: "var(--color-text-muted)", textAlign: "center" }}>
+                        将小说转换为剧本
+                      </span>
+                    </div>
+                  )}
                   {novelScripts.map((s) => (
                     <Card
                       key={s.script_id}
@@ -401,7 +438,10 @@ export function HomePage() {
                         backgroundColor: "var(--color-bg-elevated)",
                         borderColor: "var(--color-border-subtle)",
                       }}
-                      onClick={() => navigate(`/workspace/${s.script_id}`)}
+                      onClick={() => {
+                        if (blockNav.current) { blockNav.current = false; return; }
+                        navigate(`/workspace/${s.script_id}`);
+                      }}
                     >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <span style={{ fontWeight: 600, fontSize: 13 }}>
@@ -442,13 +482,14 @@ export function HomePage() {
                       </div>
                     </Card>
                   ))}
-                  <Card
-                    hoverable
-                    size="small"
-                    style={{
-                      width: 220,
-                      backgroundColor: "transparent",
-                      borderColor: "var(--color-border-emphasis)",
+                  {novelScripts.length > 0 && (
+                    <Card
+                      hoverable
+                      size="small"
+                      style={{
+                        width: 220,
+                        backgroundColor: "transparent",
+                        borderColor: "var(--color-border-emphasis)",
                       borderStyle: "dashed",
                       display: "flex",
                       alignItems: "center",
@@ -460,6 +501,7 @@ export function HomePage() {
                     <PlusOutlined style={{ marginRight: 6 }} />
                     新建剧本
                   </Card>
+                  )}
                 </div>
               ),
             };
