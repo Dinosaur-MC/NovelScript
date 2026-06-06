@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
 import urllib.parse
 from collections.abc import Generator
@@ -43,6 +44,8 @@ _engine = create_engine(
     echo=settings.DEBUG,
     pool_size=5,
     max_overflow=10,
+    pool_pre_ping=True,   # verify connections are alive before using
+    pool_recycle=3600,    # recycle connections after 1 hour
 )
 
 _session_factory = sessionmaker(
@@ -50,6 +53,19 @@ _session_factory = sessionmaker(
     class_=Session,
     expire_on_commit=False,
 )
+
+
+def dispose_engine() -> None:
+    """Close the connection pool, releasing all idle connections.
+
+    Call this at application shutdown or process exit.  Safe to call
+    multiple times — subsequent calls are no-ops.
+    """
+    logger.info("Disposing database engine pool …")
+    _engine.dispose()
+
+
+atexit.register(dispose_engine)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +141,9 @@ def init_db() -> None:
 
     recover_stale_tasks()
 
+    # -- 5. Seed initial admin account ------------------------------------ #
+    _seed_admin()
+
 
 def _split_statements(sql: str):
     """Split SQL on semicolons, yielding non-empty statements."""
@@ -132,3 +151,37 @@ def _split_statements(sql: str):
         stmt = stmt.strip()
         if stmt:
             yield stmt
+
+
+def _seed_admin() -> None:
+    """Create the initial admin account if it doesn't already exist.
+
+    Credentials are read from :class:`Settings` (env vars / .env).
+    The account is only inserted when the ``users`` table is empty or
+    no row with ``role='admin'`` exists.
+    """
+    from app.core.security import hash_password
+    from app.models.sql import User
+
+    with _session_factory() as session:
+        existing = session.query(User).filter(User.role == "admin").first()
+        if existing is not None:
+            logger.debug("Admin account already exists — skipping seed.")
+            session.close()
+            return
+
+        admin = User(
+            email=settings.ADMIN_EMAIL,
+            username=settings.ADMIN_USERNAME,
+            password_hash=hash_password(settings.ADMIN_PASSWORD),
+            display_name=settings.ADMIN_DISPLAY_NAME,
+            role="admin",
+            is_active=True,
+        )
+        session.add(admin)
+        session.commit()
+        logger.info(
+            "Seeded admin account: %s <%s>",
+            settings.ADMIN_USERNAME,
+            settings.ADMIN_EMAIL,
+        )

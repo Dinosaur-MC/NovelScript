@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from starlette.exceptions import HTTPException
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +14,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ========== 生命周期 ==========
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Startup / shutdown hook — disposes engine pool on exit."""
+    yield
+    from app.core.db import dispose_engine
+
+    dispose_engine()
+
+
 # ========== 创建主应用实例 ==========
 app = FastAPI(
     title="NovelScript API",
@@ -21,6 +35,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     debug=True,
+    lifespan=_lifespan,
 )
 
 

@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # -- Application ----------------------------------------------------------
     DEBUG: bool = False
 
+    # -- Initial admin account -------------------------------------------------
+    ADMIN_EMAIL: str = "admin@novelscript.local"
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "admin123"
+    ADMIN_DISPLAY_NAME: str = "Administrator"
+
 
 # Singleton — import this everywhere
 settings = Settings()

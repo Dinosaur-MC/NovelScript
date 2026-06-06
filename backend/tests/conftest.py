@@ -18,7 +18,10 @@ def db_engine():
         init_db()
         _DB_INITIALISED = True
     yield
-    # Engine is disposed by pytest's built-in cleanup
+    # Dispose engine pool so connections don't linger after tests
+    from app.core.db import dispose_engine
+
+    dispose_engine()
 
 
 @pytest.fixture
