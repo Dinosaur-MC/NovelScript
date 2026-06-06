@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select } from "antd";
+import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select, Avatar } from "antd";
 import {
   PlusOutlined,
   UploadOutlined,
@@ -9,11 +9,13 @@ import {
   SyncOutlined,
   ClockCircleFilled,
   SearchOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
 import { listNovels, uploadNovel, uploadNovelFile } from "../../api/novels";
 import { listScripts, type ScriptLight } from "../../api/scripts";
 import { createTask } from "../../api/tasks";
 import type { Novel } from "../../api/novels";
+import { useAuthStore } from "../../stores/auth-store";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   completed: <CheckCircleFilled style={{ color: "var(--color-accent-success)" }} />,
@@ -39,6 +41,7 @@ export function HomePage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploading, setUploading] = useState(false);
+  const user = useAuthStore((s) => s.user);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,14 +162,37 @@ export function HomePage() {
         }}
       >
         <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>NovelScript 析幕</h1>
-        <Button
-          type="primary"
-          size="large"
-          icon={<PlusOutlined />}
-          onClick={() => setUploadOpen(true)}
-        >
-          上传新小说
-        </Button>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {user ? (
+            <>
+              <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+                <Avatar
+                  size="small"
+                  icon={<UserOutlined />}
+                  style={{ backgroundColor: "var(--color-accent-primary)", marginRight: 8 }}
+                />
+                {user.username}
+              </span>
+              <Button
+                type="primary"
+                size="large"
+                icon={<PlusOutlined />}
+                onClick={() => setUploadOpen(true)}
+              >
+                上传新小说
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="primary"
+              size="large"
+              icon={<UserOutlined />}
+              onClick={() => navigate("/login")}
+            >
+              登录
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Search & Filter */}
@@ -209,12 +235,19 @@ export function HomePage() {
         >
           <p style={{ fontSize: 16, marginBottom: 16 }}>
             {novels.length === 0
-              ? "还没有小说，点击上方上传第一部小说开始吧"
+              ? user
+                ? "还没有小说，点击上方上传第一部小说开始吧"
+                : "还没有小说，请先登录"
               : "没有匹配的小说，请调整搜索条件"}
           </p>
-          {novels.length === 0 && (
+          {novels.length === 0 && user && (
             <Button size="large" type="primary" onClick={() => setUploadOpen(true)}>
               上传小说
+            </Button>
+          )}
+          {novels.length === 0 && !user && (
+            <Button size="large" type="primary" onClick={() => navigate("/login")}>
+              登录
             </Button>
           )}
         </div>
