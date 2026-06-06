@@ -4,4 +4,5 @@ export default [
   index("routes/home.tsx"),
   route("login", "routes/login.tsx"),
   route("workspace/:taskId", "routes/workspace.tsx"),
+  route("dashboard", "routes/dashboard.tsx"),
 ] satisfies RouteConfig;
