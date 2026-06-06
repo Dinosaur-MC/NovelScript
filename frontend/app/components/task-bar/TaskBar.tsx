@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router";
-import { Button, Dropdown, Tag } from "antd";
-import { ExportOutlined, HomeOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Tag, Avatar } from "antd";
+import { ExportOutlined, HomeOutlined, UserOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
+import { useAuthStore } from "../../stores/auth-store";
 import { exportScript } from "../../api/scripts";
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
@@ -18,6 +19,8 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
   const status = useTaskStore((s) => s.status);
 
   const statusInfo = STATUS_MAP[status ?? ""] ?? { color: "default", label: "未知" };
+  const user = useAuthStore((s) => s.user);
+  const clearUser = useAuthStore((s) => s.clearUser);
 
   const handleExport = async (format: "yaml" | "json" | "fountain") => {
     if (!taskId) return;
@@ -56,7 +59,26 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
       </div>
 
       {/* Right */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {user ? (
+          <>
+            <Avatar
+              size="small"
+              icon={<UserOutlined />}
+              style={{ backgroundColor: "var(--color-accent-primary)" }}
+            />
+            <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+              {user.username}
+            </span>
+            <Button type="link" size="small" onClick={() => { clearUser(); navigate("/login"); }}>
+              退出
+            </Button>
+          </>
+        ) : (
+          <Button type="link" size="small" onClick={() => navigate("/login")}>
+            登录
+          </Button>
+        )}
         {taskId && (
           <Dropdown
             menu={{

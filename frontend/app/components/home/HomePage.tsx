@@ -209,7 +209,7 @@ export function HomePage() {
         >
           <p style={{ fontSize: 16, marginBottom: 16 }}>
             {novels.length === 0
-              ? "还没有剧本，上传第一部小说开始吧"
+              ? "还没有小说，点击上方上传第一部小说开始吧"
               : "没有匹配的小说，请调整搜索条件"}
           </p>
           {novels.length === 0 && (

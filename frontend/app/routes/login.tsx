@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { Button, Form, Input, message, Tabs } from "antd";
 import { UserOutlined, LockOutlined, MailOutlined } from "@ant-design/icons";
 import { login, register } from "../api/auth";
+import { useAuthStore } from "../stores/auth-store";
 import type { Route } from "./+types/login";
 
 export function meta({}: Route.MetaArgs) {
@@ -19,6 +20,7 @@ export default function LoginPage() {
     try {
       const res = await login(values.email, values.password);
       localStorage.setItem("auth_token", res.token);
+      useAuthStore.getState().setUser(res.user);
       message.success("登录成功");
       navigate("/");
     } catch {

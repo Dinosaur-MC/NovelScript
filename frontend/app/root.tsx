@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   isRouteErrorResponse,
   Links,
@@ -10,6 +11,7 @@ import {
 import { ConfigProvider, theme } from "antd";
 import { StyleProvider } from "@ant-design/cssinjs";
 import { getSSRCache } from "./ssr-cache";
+import { useAuthStore } from "./stores/auth-store";
 
 import type { Route } from "./+types/root";
 import "./app.css";
@@ -50,6 +52,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const { fetchUser, loaded } = useAuthStore();
+
+  useEffect(() => {
+    if (!loaded) fetchUser();
+  }, [fetchUser, loaded]);
+
   return (
     <StyleProvider cache={getSSRCache()}>
       <ConfigProvider
