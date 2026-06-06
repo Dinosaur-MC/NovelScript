@@ -29,14 +29,18 @@ export const links: Route.LinksFunction = () => [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html
+      lang="zh-CN"
+      suppressHydrationWarning
+      style={{ background: "#0a0a0f", color: "#e8e8f0", height: "100%", overflow: "hidden" }}
+    >
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
       </head>
-      <body>
+      <body style={{ height: "100%", margin: 0, padding: 0, overflow: "hidden", boxSizing: "border-box" }}>
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -93,7 +97,8 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   return (
     <main
       style={{
-        minHeight: "100vh",
+        minHeight: 0,
+        height: "100%",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -101,12 +106,13 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         backgroundColor: "#0a0a0f",
         color: "#e8e8f0",
         fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif',
+        boxSizing: "border-box",
         padding: 32,
         gap: 12,
       }}
     >
-      <h1 style={{ fontSize: 32, fontWeight: 600, margin: 0 }}>{message}</h1>
-      <p style={{ fontSize: 16, color: "#9090a8", margin: 0 }}>{details}</p>
+      <h1 style={{ fontSize: 32, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{message}</h1>
+      <p style={{ fontSize: 16, color: "#9090a8", margin: 0, lineHeight: 1.5 }}>{details}</p>
       {stack && (
         <pre
           style={{
