@@ -102,11 +102,12 @@ export function NovelReader({ readerHook, traceHook }: Props) {
         style={{
           flex: 1,
           overflow: "auto",
-          padding: "16px",
+          padding: "24px 20px",
           fontFamily: "var(--font-serif)",
           fontSize: 15,
           lineHeight: 1.8,
-          color: "var(--color-text-primary)",
+          color: "#c8c8d4",
+          backgroundColor: "#0e0e16",
         }}
       >
         <EditorContent editor={editor} />

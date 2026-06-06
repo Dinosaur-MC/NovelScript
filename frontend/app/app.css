@@ -104,3 +104,27 @@ html, body, #root {
 .ant-notification .ant-notification-notice-message { color: var(--color-text-primary) !important; }
 .ant-notification .ant-notification-notice-close   { color: var(--color-text-secondary) !important; }
 
+/* ---- Novel reader panel collapse animation ---- */
+.ns-reader-panel {
+  overflow: hidden;
+  transition: width 0.25s ease;
+}
+.ns-reader-panel.ns-collapsed {
+  width: 28px !important;
+}
+.ns-reader-collapse-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  letter-spacing: 4px;
+  transition: color 0.15s;
+}
+.ns-reader-collapse-btn:hover {
+  color: var(--color-accent-primary);
+}
+

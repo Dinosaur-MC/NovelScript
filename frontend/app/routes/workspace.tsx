@@ -172,67 +172,58 @@ export default function Workspace() {
               加载中...
             </span>
           </div>
-        ) : readerCollapsed ? (
+        ) : (
           <div style={{ display: "flex", height: "100%" }}>
+            {/* Collapse bar — slides in/out */}
             <div
               onClick={() => setReaderCollapsed(false)}
+              className="ns-reader-collapse-btn"
               title="展开小说原文"
               style={{
-                width: 28,
                 height: "100%",
-                flexShrink: 0,
-                cursor: "pointer",
-                userSelect: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                width: readerCollapsed ? 28 : 0,
+                writingMode: "vertical-rl",
                 backgroundColor: "var(--color-bg-surface)",
                 borderRight: "1px solid var(--color-border-subtle)",
-                writingMode: "vertical-rl",
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                letterSpacing: 4,
+                opacity: readerCollapsed ? 1 : 0,
+                pointerEvents: readerCollapsed ? "auto" : "none",
+                overflow: "hidden",
+                transition: "width 0.25s ease, opacity 0.2s ease",
               }}
             >
               小说原文
             </div>
-            <Splitter
-              direction="horizontal"
-              initialLeftPercent={65}
-              minLeftPx={360}
-              minRightPx={280}
-            >
-              <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
-              <RightPanel traceHook={traceHook} editorHook={editorHook} />
-            </Splitter>
+            {/* Reader + main content */}
+            <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
+              <Splitter
+                direction="horizontal"
+                initialLeftPercent={readerCollapsed ? 0 : leftW}
+                minLeftPx={readerCollapsed ? 0 : 240}
+                minRightPx={280 + 360}
+                onResize={(pct) => {
+                  if (readerCollapsed) return;
+                  const rem = 100 - pct;
+                  const innerRatio = centerW / (centerW + rightW || 1);
+                  setPanelWidths(pct, innerRatio * rem, rem - innerRatio * rem);
+                }}
+              >
+                <NovelReader readerHook={readerHook} traceHook={traceHook} />
+                <Splitter
+                  direction="horizontal"
+                  initialLeftPercent={centerW / (centerW + rightW || 1) * 100}
+                  minLeftPx={360}
+                  minRightPx={280}
+                  onResize={(pct) => {
+                    const rem = 100 - (readerCollapsed ? 0 : leftW);
+                    setPanelWidths(readerCollapsed ? 0 : leftW, (pct / 100) * rem, rem - (pct / 100) * rem);
+                  }}
+                >
+                  <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
+                  <RightPanel traceHook={traceHook} editorHook={editorHook} />
+                </Splitter>
+              </Splitter>
+            </div>
           </div>
-        ) : (
-          <Splitter
-            direction="horizontal"
-            initialLeftPercent={leftW}
-            minLeftPx={240}
-            minRightPx={280 + 360}
-            onResize={(pct) => {
-              const rem = 100 - pct;
-              const innerRatio = centerW / (centerW + rightW || 1);
-              setPanelWidths(pct, innerRatio * rem, rem - innerRatio * rem);
-            }}
-          >
-            <NovelReader readerHook={readerHook} traceHook={traceHook} />
-            <Splitter
-              direction="horizontal"
-              initialLeftPercent={centerW / (centerW + rightW || 1) * 100}
-              minLeftPx={360}
-              minRightPx={280}
-              onResize={(pct) => {
-                const rem = 100 - leftW;
-                setPanelWidths(leftW, (pct / 100) * rem, rem - (pct / 100) * rem);
-              }}
-            >
-              <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
-              <RightPanel traceHook={traceHook} editorHook={editorHook} />
-            </Splitter>
-          </Splitter>
         )}
       </div>
       <StatusBar />
