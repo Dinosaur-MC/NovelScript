@@ -1,16 +1,22 @@
 """Pipeline engine — main orchestrator for novel-to-script conversion.
 
 Usage:
-    uv run python -m cli.pipeline <input_file>
+    uv run python -m cli.pipeline <input_file> [-o output.yaml]
+    uv run python -m cli.pipeline <directory/>  [-o output.yaml]
+
+When *input* is a directory, all ``.txt`` files are read in alphabetical
+order and concatenated as individual chapters.  This is convenient for
+novels where each chapter is a separate file.
 
 Stages:
-    1. Chunking     — split raw novel into chapters
-    2. Summarize    — per-chapter objective summary (Flash, parallel)
-    3. RAG Index    — build FAISS index for cross-chapter context
-    4. GraphRAG     — extract knowledge graph (Pro, with RAG context)
-    5. Conversion   — convert each chapter to script scenes (Flash, parallel)
-    6. Optimization — cross-scene consistency check (Pro, batched)
-    7. Export       — YAML to stdout
+    1. Chunking      — split raw novel into chapters
+    2. Summarize     — per-chapter objective summary (Flash, parallel)
+    3. RAG Index     — build FAISS index for cross-chapter context
+    4. GraphRAG      — extract knowledge graph (Pro, with RAG context)
+    5. Conversion    — convert each chapter to script scenes (Flash, parallel)
+    6. Optimization  — cross-scene consistency check (Pro, batched)
+    7. Narrative Summary — one-paragraph overview from chapter summaries (Flash)
+    8. Export        — YAML / JSON to stdout or file
 
 The ``run_from_text()`` entry point accepts an optional ``progress_callback``
 so the backend's pipeline-executor thread can stream real-time SSE events.
@@ -33,6 +39,7 @@ from cli.chunker import split_chapters
 from cli.converter import convert_chapter
 from cli.exporter import to_yaml
 from cli.graphrag_builder import extract_graph
+from cli.llm_router import get_llm, invoke_llm_with_retry
 from cli.models import Chapter, KnowledgeGraph, Scene, Script
 from cli.optimizer import optimize
 from cli.rag_builder import build_index, search
@@ -73,18 +80,46 @@ def _call_cb(cb: ProgressCallback | None, progress: int, stage: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def run(file_path: str) -> Script:
-    """Execute the full pipeline on the novel at *file_path*.
+async def run(input_path: str) -> Script:
+    """Execute the full pipeline on a novel file or directory.
 
     Args:
-        file_path: Path to a UTF-8 encoded plain-text novel file.
+        input_path: Path to a UTF-8 plain-text novel file, or a directory
+                    containing ``.txt`` files (one per chapter, read in
+                    alphabetical order).
 
     Returns:
         A complete Script model ready for export.
+
+    When *input_path* is a directory each ``.txt`` file is treated as a
+    single pre-split chapter — the chunking stage is skipped entirely.
     """
-    path = Path(file_path)
+    path = Path(input_path)
     if not path.exists():
-        raise FileNotFoundError(f"Input file not found: {file_path}")
+        raise FileNotFoundError(f"Input not found: {input_path}")
+
+    if path.is_dir():
+        txt_files = sorted(
+            p for p in path.iterdir()
+            if p.suffix.lower() in (".txt", ".utf8", ".utf-8")
+        )
+        if not txt_files:
+            raise FileNotFoundError(f"No .txt files found in directory: {input_path}")
+
+        logger.info("Reading %d pre-split chapter(s) from directory: %s",
+                     len(txt_files), path.name)
+        chapters: list[Chapter] = []
+        for i, f in enumerate(txt_files):
+            text = f.read_text(encoding="utf-8").strip()
+            if text:
+                # Use filename stem as chapter title, strip leading numbers
+                title = f.stem
+                chapters.append(Chapter(text=text, title=title, index=i))
+
+        if not chapters:
+            raise ValueError(f"All .txt files in {input_path} are empty.")
+        logger.info("Loaded %d chapter(s) (chunking skipped).", len(chapters))
+        return await run_from_chapters(chapters, source_name=path.name)
 
     raw_text = path.read_text(encoding="utf-8")
     return await run_from_text(raw_text, source_name=path.name)
@@ -106,19 +141,35 @@ async def run_from_text(
     Returns:
         A complete Script model ready for export.
     """
+    chapters = split_chapters(raw_text)
+    return await run_from_chapters(
+        chapters, progress_callback=progress_callback, source_name=source_name,
+    )
+
+
+async def run_from_chapters(
+    chapters: list[Chapter],
+    progress_callback: ProgressCallback | None = None,
+    source_name: str = "",
+) -> Script:
+    """Execute the full pipeline on pre-built *chapters*.
+
+    Args:
+        chapters:     Ordered list of already-split Chapter objects.
+        progress_callback:  Optional ``(percent, stage)`` reporter for SSE / UI.
+        source_name:  Human-readable label for the ``meta.source_file`` field.
+
+    Returns:
+        A complete Script model ready for export.
+
+    When chapters are pre-built (e.g. from a directory of per-chapter
+    files or from the database), the chunking stage is skipped entirely.
+    """
     started = time.monotonic()
     cb = progress_callback
-    total_chars = len(raw_text)
-    logger.info("Loaded %s (%d chars).", source_name or "<text>", total_chars)
-    _call_cb(cb, 0, "starting")
-
-    # ------------------------------------------------------------------
-    # 1. Chunking
-    # ------------------------------------------------------------------
-    logger.info("=== Stage 1: Chapter Chunking ===")
-    chapters = split_chapters(raw_text)
-    logger.info("Split into %d chapter(s).", len(chapters))
-    _call_cb(cb, 5, "chunking")
+    total_chars = sum(len(c.text) for c in chapters)
+    logger.info("Loaded %d chapter(s) (%d chars).", len(chapters), total_chars)
+    _call_cb(cb, 5, "chunking")  # chapters already split — skip to 5%
 
     # Pre-compute chapter texts list for RAG fallback (used by both
     # GraphRAG and Conversion stages)
@@ -235,7 +286,7 @@ async def run_from_text(
 
     script = Script(
         meta=meta,
-        summary=_generate_summary(optimized_scenes, kg),
+        summary=_narrative_summary(summaries, kg),
         characters=characters,
         scenes=optimized_scenes,
         knowledge_graph=kg,
@@ -253,15 +304,45 @@ async def run_from_text(
 # ---------------------------------------------------------------------------
 
 
-def _generate_summary(scenes: list[Scene], kg: KnowledgeGraph) -> str:
-    """Generate a simple summary from scene count and character info."""
+def _narrative_summary(summaries: list[str], kg: KnowledgeGraph) -> str:
+    """Generate a narrative one-paragraph overview from chapter summaries.
+
+    Uses Flash for a low-cost natural-language summary covering the full story
+    arc, key characters, and setting.  Falls back to a programmatic summary on
+    LLM failure or when no chapter summaries are available.
+    """
+    valid = [s for s in summaries if s]
+    if not valid:
+        return _programmatic_summary(kg)
+
+    combined = "\n\n---\n\n".join(
+        f"第{i+1}章摘要：{s}" for i, s in enumerate(valid)
+    )
+
+    prompt = (
+        "你是一个剧本策划。根据以下每章的事件摘要，用一段话概括整部小说的故事——"
+        "包含主角、核心冲突、主要事件和整体基调。控制在 300 字以内，不要使用"
+        "'这部小说'、'这个故事'等元描述。\n\n" + combined
+    )
+
+    try:
+        llm = get_llm("chapter_summary", temperature=0.3, json_mode=False)
+        resp = invoke_llm_with_retry(llm, prompt, "chapter_summary")
+        return resp.content.strip()  # type: ignore[union-attr]
+    except Exception:
+        logger.exception("Narrative summary failed — falling back to programmatic summary.")
+        return _programmatic_summary(kg)
+
+
+def _programmatic_summary(kg: KnowledgeGraph) -> str:
+    """Fallback: count-based summary when LLM is unavailable."""
     char_names = [n.name for n in kg.nodes if n.node_type == "character"]
     loc_names = [n.name for n in kg.nodes if n.node_type == "location"]
+    ec = len([n for n in kg.nodes if n.node_type == "event"])
     return (
-        f"共 {len(scenes)} 个场景，"
-        f"涉及 {len(char_names)} 个角色"
-        + (f"（{', '.join(char_names[:5])}...）" if len(char_names) > 5 else f"（{', '.join(char_names)}）")
-        + (f"，{len(loc_names)} 个地点。" if loc_names else "。")
+        f"共 {len(char_names)} 个主要角色"
+        + (f"（{', '.join(char_names[:8])}...）" if len(char_names) > 8 else f"（{', '.join(char_names)}）")
+        + f"，{len(loc_names)} 个地点，{ec} 个关键事件。"
     )
 
 
@@ -288,7 +369,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="NovelScript Pipeline — convert a novel to a structured script.",
     )
-    parser.add_argument("input", help="Path to a UTF-8 plain-text novel file.")
+    parser.add_argument(
+        "input",
+        help="Path to a UTF-8 plain-text novel file, or a directory of .txt files "
+             "(one per chapter, read in alphabetical order).",
+    )
     parser.add_argument(
         "-o", "--output", metavar="OUTPUT", default=None,
         help="Write result to this file instead of stdout.",
