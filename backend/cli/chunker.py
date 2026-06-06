@@ -116,28 +116,31 @@ def _llm_split(text: str) -> list[Chapter]:
     """Use the Flash model to perform semantic chapter splitting.
 
     Falls back to a single-chapter wrapper if the LLM call fails.
+    Uses JSON mode for reliable structured output.
     """
-    llm = get_llm("chapter_split", temperature=0.2)
+    from pydantic import BaseModel, Field
+
+    class ChapterItem(BaseModel):
+        title: str = Field(..., min_length=1)
+        body: str = Field(..., min_length=1)
+
+    class ChapterList(BaseModel):
+        chapters: list[ChapterItem] = Field(default_factory=list)
+
+    llm = get_llm("chapter_split", temperature=0.2, json_mode=True)
 
     prompt = textwrap.dedent("""\
     你是一个小说章节切分助手。请将以下文本按章节切分。
 
-    对于每一章，请输出一个 JSON 对象，包含以下字段：
-    - title: 章节标题
-    - body: 该章节的完整正文
+    输出一个 JSON 对象，包含 chapters 数组，每个元素的格式为：
+    {"title": "章节标题", "body": "该章节的完整正文"}
 
-    将所有章节放在一个 JSON 数组中返回：
-    ```json
-    [
-      {"title": "第一章 ...", "body": "..."},
-      {"title": "第二章 ...", "body": "..."}
-    ]
-    ```
+    如果文本中没有明确的章节标记，则将整篇文本作为一个章节（chapters 数组中只有一个元素）。
 
-    如果文本中没有明确的章节标记，则将整篇文本作为一个章节返回。
+    请以 JSON 格式输出。
 
     文本内容：
-    """) + text[:12000]  # Truncate to avoid context overflow
+    """) + text[:60000]  # Increased from 12000 — DeepSeek has 128K context
 
     try:
         resp = llm.invoke(prompt)
@@ -153,12 +156,11 @@ def _llm_split(text: str) -> list[Chapter]:
         import json
 
         parsed = json.loads(json_str, strict=False)
-        if not isinstance(parsed, list):
-            parsed = [parsed]
+        result = ChapterList.model_validate(parsed)
 
         chapters = [
-            Chapter(text=item.get("body", item.get("text", "")), title=item["title"], index=i)
-            for i, item in enumerate(parsed)
+            Chapter(text=item.body, title=item.title, index=i)
+            for i, item in enumerate(result.chapters)
         ]
         logger.info("LLM chapter split produced %d chapter(s).", len(chapters))
         return chapters

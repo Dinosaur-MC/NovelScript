@@ -263,7 +263,15 @@ def _build_chat_messages(
         )
 
     if task.script_yaml:
-        context_parts.append(f"## Current Script (YAML)\n```yaml\n{task.script_yaml}\n```")
+        yaml_text = task.script_yaml
+        # Cap at 60000 chars to stay well within the 128K context window
+        # (the YAML is the largest context block; all other blocks combined
+        #  are typically under 5K chars)
+        if len(yaml_text) > 60000:
+            yaml_text = yaml_text[:60000] + (
+                f"\n\n... (truncated, {len(task.script_yaml) - 60000} more chars)"
+            )
+        context_parts.append(f"## Current Script (YAML)\n```yaml\n{yaml_text}\n```")
 
     # Scene-specific context
     if scene_id and task.script_json:

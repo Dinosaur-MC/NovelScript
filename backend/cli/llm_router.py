@@ -32,13 +32,24 @@ MODEL_ROUTING: dict[str, str] = {
     "ai_chat": "deepseek-v4-flash",
 }
 
+# Per-stage max output tokens.  Prevents runaway generation and bounds
+# cost.  Values are conservative — typical output is 50-70% of these caps.
+_MAX_TOKENS: dict[str, int] = {
+    "chapter_split":      2000,   # short JSON array of chapter titles
+    "global_extraction":  6000,   # KG nodes + edges for a full novel
+    "scene_conversion":   8000,   # scene list for one chapter
+    "consistency_check":  4000,   # same-size output as input batch
+    "ai_chat":            2000,   # conversational reply
+}
+
 # ---------------------------------------------------------------------------
 # Timeout configuration
 # ---------------------------------------------------------------------------
 
 _REQUEST_TIMEOUT = httpx.Timeout(
     connect=10.0,
-    read=120.0,
+    read=180.0,   # increased from 120s — Pro model consistency check can
+                   # take longer with larger inputs
     write=10.0,
     pool=5.0,
 )
@@ -76,6 +87,7 @@ def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> Ch
         logger.warning("DEEPSEEK_API_KEY is not set — LLM calls will fail.")
         api_key = "not-set"  # placeholder so the client can be constructed
 
+    max_tokens = _MAX_TOKENS.get(stage)
     kwargs: dict = dict(
         model=model_name,
         base_url=DEEPSEEK_BASE_URL,
@@ -84,10 +96,12 @@ def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> Ch
         timeout=_REQUEST_TIMEOUT,
         max_retries=2,
     )
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
     if json_mode:
         kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
 
     llm = ChatOpenAI(**kwargs)
-    logger.debug("Created LLM client for stage=%s → model=%s json_mode=%s",
-                 stage, model_name, json_mode)
+    logger.debug("Created LLM client for stage=%s → model=%s json_mode=%s max_tokens=%s",
+                 stage, model_name, json_mode, max_tokens)
     return llm

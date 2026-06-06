@@ -65,8 +65,8 @@ def extract_graph(
         return KnowledgeGraph()
 
     combined = "\n\n".join(
-        f"【{ch.title}】\n{ch.text[:6000]}" for ch in chapters
-    )[:24000]
+        f"【{ch.title}】\n{ch.text[:15000]}" for ch in chapters
+    )[:60000]
 
     # Build cross-chapter RAG context
     rag_context = _build_rag_context(chapters, faiss_index, all_chapter_texts)

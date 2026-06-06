@@ -50,29 +50,41 @@ def convert_chapter(
     chapter: Chapter,
     kg: KnowledgeGraph,
     rag_context: list[str],
+    max_retries: int = 1,
 ) -> list[Scene]:
     llm = get_llm("scene_conversion", temperature=0.5, json_mode=True)
 
     kg_summary = _summarize_kg(kg)
-    rag_text = "\n---\n".join(rag_context[:3]) if rag_context else "（无额外上下文）"
+    # Truncate RAG passages to avoid flooding the prompt — each is capped
+    # at 2000 chars (was unbounded; FAISS returns full chapter texts).
+    rag_text = "\n---\n".join(
+        r[:2000] for r in rag_context[:3]
+    ) if rag_context else "（无额外上下文）"
 
     chain = _PROMPT | llm | _parser
 
-    try:
-        raw = chain.invoke({
-            "chapter_title": chapter.title,
-            "chapter_text": chapter.text[:8000],
-            "kg_summary": kg_summary,
-            "rag_context": rag_text,
-            "format_instructions": _parser.get_format_instructions(),
-        })
-        result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
-        scenes = _inject_source_refs(result.scenes, chapter)
-        logger.info("Chapter %d converted to %d scene(s).", chapter.index, len(scenes))
-        return scenes
-    except Exception as exc:
-        logger.exception("Converter failed for chapter %d: %s", chapter.index, exc)
-        return []
+    for attempt in range(max_retries + 1):
+        try:
+            raw = chain.invoke({
+                "chapter_title": chapter.title,
+                "chapter_text": chapter.text[:15000],
+                "kg_summary": kg_summary,
+                "rag_context": rag_text,
+                "format_instructions": _parser.get_format_instructions(),
+            })
+            result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
+            scenes = _inject_source_refs(result.scenes, chapter)
+            logger.info("Chapter %d converted to %d scene(s).", chapter.index, len(scenes))
+            return scenes
+        except Exception as exc:
+            if attempt < max_retries:
+                logger.warning(
+                    "Converter retry %d/%d for chapter %d: %s",
+                    attempt + 1, max_retries, chapter.index, exc,
+                )
+            else:
+                logger.exception("Converter failed for chapter %d: %s", chapter.index, exc)
+    return []
 
 
 def _summarize_kg(kg: KnowledgeGraph) -> str:
