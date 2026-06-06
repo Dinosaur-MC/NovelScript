@@ -1,11 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
 import { useScriptStore } from "../../stores/script-store";
 import { useEditorStore } from "../../stores/editor-store";
-import { useTaskStore } from "../../stores/task-store";
 import { useKeyboard } from "../../hooks/useKeyboard";
-import type { useScriptEditor } from "../../hooks/useScriptEditor";
 import type { useAutoSave } from "../../hooks/useAutoSave";
+import type { useScriptEditor } from "../../hooks/useScriptEditor";
 
 interface Props {
   editorHook: ReturnType<typeof useScriptEditor>;
@@ -14,86 +14,86 @@ interface Props {
 
 export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   const yaml = useScriptStore((s) => s.yaml);
+  const validationErrors = useEditorStore((s) => s.validationErrors);
+  const undo = useEditorStore((s) => s.undo);
+  const redo = useEditorStore((s) => s.redo);
   const dirty = useEditorStore((s) => s.dirty);
   const markDirty = useEditorStore((s) => s.markDirty);
-  const taskId = useTaskStore((s) => s.taskId);
+
+  const latestValueRef = useRef(yaml ?? "");
 
   const handleMount: OnMount = useCallback(
-    (ed, monaco) => {
+    (ed: editor.IStandaloneCodeEditor) => {
       editorHook.bindEditor(ed);
-      (window as unknown as Record<string, unknown>).monaco = monaco;
     },
     [editorHook],
   );
 
   const handleChange = useCallback(
-    (_value: string | undefined) => {
-      markDirty(true);
+    (value: string | undefined) => {
+      const v = value ?? "";
+      latestValueRef.current = v;
+      if (!dirty) markDirty(true);
+      autoSaveHook.triggerSave(v);
     },
-    [markDirty],
+    [autoSaveHook, dirty, markDirty],
   );
 
   const handleSave = useCallback(() => {
-    const current = editorHook.getValue();
-    autoSaveHook.triggerSave(current);
-  }, [editorHook, autoSaveHook]);
+    autoSaveHook.triggerSave(latestValueRef.current);
+  }, [autoSaveHook]);
 
-  useKeyboard({ onSave: handleSave });
+  useKeyboard({
+    onSave: handleSave,
+    onUndo: undo,
+    onRedo: redo,
+  });
 
-  if (!taskId) {
-    return (
-      <div
-        style={{
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--color-text-muted)",
-          fontSize: 14,
-        }}
-      >
-        请先选择任务
-      </div>
-    );
-  }
-
-  if (!yaml) {
-    return (
-      <div
-        style={{
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--color-text-muted)",
-          fontSize: 14,
-        }}
-      >
-        剧本生成中...
-      </div>
-    );
-  }
+  const options: editor.IStandaloneEditorConstructionOptions = useMemo(
+    () => ({
+      fontSize: 14,
+      fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+      lineNumbers: "on",
+      minimap: { enabled: false },
+      wordWrap: "on",
+      wrappingIndent: "same",
+      tabSize: 2,
+      insertSpaces: true,
+      scrollBeyondLastLine: false,
+      renderWhitespace: "selection",
+      bracketPairColorization: { enabled: true },
+      guides: { indentation: true },
+    }),
+    [],
+  );
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {/* Dirty indicator */}
-      {dirty && (
+      {/* Validation error banner */}
+      {validationErrors.length > 0 && (
         <div
           style={{
-            height: 4,
-            backgroundColor: "var(--color-accent-warning)",
+            padding: "6px 12px",
+            backgroundColor: "var(--color-accent-danger)",
+            color: "#fff",
+            fontSize: 12,
             flexShrink: 0,
           }}
-        />
+        >
+          {validationErrors.join(" | ")}
+        </div>
       )}
+
+      {/* Editor */}
       <div style={{ flex: 1 }}>
         <Editor
           height="100%"
           defaultLanguage="yaml"
-          defaultValue={yaml}
-          theme="vs-dark"
+          value={yaml ?? ""}
           onChange={handleChange}
           onMount={handleMount}
+          options={options}
+          theme="vs-dark"
           loading={
             <div
               style={{
@@ -107,20 +107,6 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
               加载编辑器中...
             </div>
           }
-          options={{
-            fontSize: 13,
-            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-            lineNumbers: "on",
-            minimap: { enabled: false },
-            wordWrap: "on",
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            renderWhitespace: "selection",
-            tabSize: 2,
-            folding: true,
-            bracketPairColorization: { enabled: true },
-            guides: { indentation: true },
-          }}
         />
       </div>
     </div>
