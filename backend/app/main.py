@@ -68,7 +68,7 @@ app.include_router(api_v1_router)
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    return BaseResponse(code=0, message="健康检查通过", data={"status": "healthy"})
+    return BaseResponse(code=200, message="健康检查通过", data={"status": "healthy"})
 
 
 @app.head("/", tags=["Root"])

@@ -87,13 +87,14 @@ def init_db() -> None:
         for ext in ("uuid-ossp", "vector", "pg_trgm"):
             try:
                 conn.execute(text(f'CREATE EXTENSION IF NOT EXISTS "{ext}"'))
+                conn.commit()  # commit immediately so failure doesn't undo prior successes
             except Exception as exc:
+                conn.rollback()  # clear aborted transaction
                 logger.warning(
                     "Cannot create extension %s: %s. "
                     "If pre-installed by superuser, this is safe.",
                     ext, exc,
                 )
-        conn.commit()
 
     # -- 2. Raw DDL (init.sql minus extensions) --------------------------- #
     sql_path = Path(__file__).resolve().parent.parent / "db" / "init.sql"
@@ -118,6 +119,11 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(_engine)
     logger.info("SQLModel tables created (if not exists).")
+
+    # -- 4. Recover stale tasks from previous run ------------------------- #
+    from app.services.pipeline_executor import recover_stale_tasks
+
+    recover_stale_tasks()
 
 
 def _split_statements(sql: str):

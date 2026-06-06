@@ -14,6 +14,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -24,6 +25,24 @@ from app.services.base import BaseCRUD
 from app.services.progress import progress_manager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request models
+# ---------------------------------------------------------------------------
+
+
+class CreateTaskRequest(BaseModel):
+    """Body for POST /api/v1/tasks/."""
+    novel_id: str = Field(..., description="Novel UUID")
+    pipeline_config: dict = Field(default_factory=dict, description="Optional pipeline overrides")
+
+
+class UpdateTaskStatusRequest(BaseModel):
+    """Body for PUT /api/v1/tasks/{task_id}/status."""
+    status: str = Field(..., description="Target status")
+    progress: int | None = Field(None, ge=0, le=100, description="Progress percentage")
+    error_message: str | None = Field(None, description="Error details on failure")
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -38,7 +57,7 @@ audit_crud = BaseCRUD[AuditLog](AuditLog)
 # State machine
 # ---------------------------------------------------------------------------
 VALID_TRANSITIONS: dict[str, set[str]] = {
-    "pending":       {"preprocessing", "failed"},
+    "pending":       {"preprocessing", "converting", "failed"},
     "preprocessing": {"converting", "failed"},
     "converting":    {"completed", "failed"},
     "failed":        {"converting"},
@@ -74,41 +93,37 @@ def _write_audit(
 
 
 @router.post("/")
-def create_task(body: dict, db: Session = Depends(get_db)):
+def create_task(body: CreateTaskRequest, db: Session = Depends(get_db)):
     """Create a new conversion task for a novel.
 
-    Body: ``{"novel_id": str, "pipeline_config": {...}?}``
-
     Returns ``{task_id, status: "pending"}`` on success.
+    Immediately spawns a background daemon thread that runs the pipeline.
     """
-    novel_id_raw = body.get("novel_id")
-    if not novel_id_raw:
-        raise HTTPException(status_code=400, detail="novel_id is required")
-
-    # Coerce to UUID
     try:
-        novel_id = uuid.UUID(novel_id_raw) if isinstance(novel_id_raw, str) else novel_id_raw
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail=f"Invalid novel_id: {novel_id_raw!r}")
+        novel_id = uuid.UUID(body.novel_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid novel_id: {body.novel_id!r}")
 
     # Validate novel exists
     novel = novel_crud.get(db, novel_id)
     if novel is None:
         raise HTTPException(status_code=404, detail=f"Novel {novel_id} not found")
 
-    pipeline_config = body.get("pipeline_config", {})
-    if not isinstance(pipeline_config, dict):
-        pipeline_config = {}
-
     task = Task(
         novel_id=novel_id,
         status="pending",
         progress=0,
-        pipeline_config=pipeline_config,
+        pipeline_config=body.pipeline_config,
     )
     task = task_crud.create(db, task)
 
     logger.info("Task %s created for novel %s", task.id, novel_id)
+
+    # ── commit BEFORE spawning background thread ──────────────────────
+    # The background thread opens its own independent session.  Without
+    # an explicit commit, the thread may not see the new Task row (race
+    # with the outer get_db() commit).
+    db.commit()
 
     # ── kick off pipeline in background thread ────────────────────────
     from app.services.pipeline_executor import execute_pipeline
@@ -287,14 +302,12 @@ def get_task_status(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{task_id}/status")
-def update_task_status(task_id: str, body: dict, db: Session = Depends(get_db)):
+def update_task_status(task_id: str, body: UpdateTaskStatusRequest, db: Session = Depends(get_db)):
     """Update task status with state-machine enforcement.
-
-    Body: ``{"status": str, "progress"?: int, "error_message"?: str}``
 
     Valid transitions (skip-stage transitions return 422):
 
-    - pending      -> preprocessing | failed
+    - pending      -> preprocessing | converting | failed
     - preprocessing -> converting | failed
     - converting    -> completed | failed
     - failed        -> converting
@@ -308,10 +321,7 @@ def update_task_status(task_id: str, body: dict, db: Session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    new_status = body.get("status")
-    if not new_status:
-        raise HTTPException(status_code=400, detail="status is required")
-
+    new_status = body.status
     current_status = task.status
     updates: dict = {}
 
@@ -336,10 +346,10 @@ def update_task_status(task_id: str, body: dict, db: Session = Depends(get_db)):
         )
 
     # Optional field updates
-    if "progress" in body and isinstance(body["progress"], int):
-        updates["progress"] = body["progress"]
-    if "error_message" in body:
-        updates["error_message"] = body["error_message"]
+    if body.progress is not None:
+        updates["progress"] = body.progress
+    if body.error_message is not None:
+        updates["error_message"] = body.error_message
 
     if updates:
         task = task_crud.update(db, task.id, updates)
@@ -400,6 +410,14 @@ def resume_task(task_id: str, db: Session = Depends(get_db)):
         message="Task resumed: failed -> converting",
         detail={"from": "failed", "to": "converting"},
     )
+
+    # ── commit BEFORE spawning background thread (race-condition fix) ──
+    db.commit()
+
+    # ── re-spawn the pipeline ─────────────────────────────────────────
+    from app.services.pipeline_executor import execute_pipeline
+
+    execute_pipeline(task.id, task.novel_id)
 
     return BaseResponse(
         code=200,

@@ -172,9 +172,9 @@ class Task(SQLModel, table=True):
         sa_column=Column(Integer, nullable=False, default=0),
     )
     summary: Optional[str] = Field(default=None, sa_column=Column(Text))
-    characters_json: dict[str, Any] = Field(
-        default_factory=dict,
-        sa_column=Column(JSONB, nullable=False, default={}),
+    characters_json: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, default=[]),
     )
     script_yaml: Optional[str] = Field(default=None, sa_column=Column(Text))
     script_json: Optional[dict[str, Any]] = Field(

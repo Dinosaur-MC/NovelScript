@@ -99,7 +99,7 @@ def list_scripts(
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         })
 
-    return BaseResponse(code=0, message="ok", data={
+    return BaseResponse(code=200, message="ok", data={
         "items": items, "total": total, "page": page, "limit": limit,
     })
 
@@ -114,7 +114,7 @@ def get_script(script_id: str, db: Session = Depends(get_db)):
     sid = _parse_script_id(script_id)
     task = _script_or_404(db, sid)
 
-    return BaseResponse(code=0, message="ok", data={
+    return BaseResponse(code=200, message="ok", data={
         "script_id": str(task.id),
         "novel_id": str(task.novel_id),
         "status": task.status,
@@ -160,7 +160,7 @@ def update_script(
     db.add(op)
     db.flush()
 
-    return BaseResponse(code=0, message="Script updated", data={
+    return BaseResponse(code=200, message="Script updated", data={
         "script_id": str(task.id),
         "updated_at": task.updated_at.isoformat(),
         "validation": validation,
@@ -178,7 +178,7 @@ def delete_script(script_id: str, db: Session = Depends(get_db)):
     success = task_crud.delete(db, sid)
     if not success:
         raise HTTPException(status_code=404, detail="Script not found")
-    return BaseResponse(code=0, message="Script deleted", data={"script_id": script_id})
+    return BaseResponse(code=200, message="Script deleted", data={"script_id": script_id})
 
 
 # ---------------------------------------------------------------------------

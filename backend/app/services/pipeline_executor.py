@@ -103,7 +103,8 @@ def _run_in_thread(task_id: uuid.UUID, novel_id: uuid.UUID) -> None:
                 session.rollback()
 
         # ---- run pipeline ------------------------------------------------
-        _on_progress(5, "starting")
+        # run_from_text() calls progress_callback(0, "starting") as its first
+        # action, so there is no need to pre-emit a "starting" event here.
 
         script = asyncio.run(
             run_from_text(
@@ -158,3 +159,37 @@ def _fail(session, task_id: uuid.UUID, message: str) -> None:
     except Exception:
         logger.exception("Failed to persist failure for task %s.", task_id)
         session.rollback()
+
+
+def recover_stale_tasks() -> int:
+    """Mark in-flight tasks as ``failed`` after a server restart.
+
+    Daemon threads are killed on server shutdown, so any task left in
+    ``preprocessing`` or ``converting`` is orphaned.  This function
+    moves them to ``failed`` with a descriptive error so users can
+    resume them manually.
+
+    Returns the number of tasks recovered.
+    """
+    session = _session_factory()
+    try:
+        from sqlalchemy import update
+
+        now = datetime.now(timezone.utc)
+        stale_msg = "Server restarted — pipeline interrupted. Use /resume to retry."
+        result = session.execute(
+            update(Task)
+            .where(Task.status.in_(["preprocessing", "converting"]))
+            .values(status="failed", error_message=stale_msg, updated_at=now)
+        )
+        session.commit()
+        count = result.rowcount
+        if count:
+            logger.warning("Recovered %d stale task(s) after server restart.", count)
+        return count
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to recover stale tasks.")
+        return 0
+    finally:
+        session.close()

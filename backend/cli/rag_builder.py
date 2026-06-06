@@ -72,10 +72,12 @@ def build_index(chapters: list[Chapter]) -> Optional[FAISS]:
         return None
 
 
-def search(index: Optional[FAISS], query: str, k: int = 3) -> list[str]:
+def search(index: Optional[FAISS], query: str, k: int = 3,
+           fallback_texts: list[str] | None = None) -> list[str]:
+    texts = fallback_texts or []
     if index is None:
         logger.info("No FAISS index — using keyword fallback.")
-        return _keyword_fallback(query, [], k)
+        return _keyword_fallback(query, texts, k)
 
     try:
         docs = index.similarity_search(query, k=k)
@@ -84,7 +86,7 @@ def search(index: Optional[FAISS], query: str, k: int = 3) -> list[str]:
         return results
     except Exception:
         logger.exception("FAISS search failed — using keyword fallback.")
-        return _keyword_fallback(query, [], k)
+        return _keyword_fallback(query, texts, k)
 
 
 def _keyword_fallback(query: str, texts: list[str], k: int) -> list[str]:

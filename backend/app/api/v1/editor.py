@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,14 @@ from app.models.sql import Dialogue, Operation, Task
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_task_id(task_id: str) -> uuid.UUID:
+    """Parse and validate a task_id string, raising 400 on invalid UUID."""
+    try:
+        return uuid.UUID(task_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid task_id: {task_id!r}")
 
 router = APIRouter(prefix="/editor", tags=["Editor"])
 
@@ -309,8 +318,10 @@ def chat(
     Returns the AI's text reply and, if the reply contains a JSON Patch
     suggestion, the parsed patch object.
     """
+    tid = _parse_task_id(task_id)
+
     # 1. Fetch Task
-    task = task_crud.get(db, task_id)
+    task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
 
@@ -374,8 +385,10 @@ def apply_patch(
     The operation is persisted as an ``Operation`` row so it can be undone.
     Returns the updated script.
     """
+    tid = _parse_task_id(task_id)
+
     # 1. Fetch task
-    task = task_crud.get(db, task_id)
+    task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
 
@@ -436,8 +449,10 @@ def undo(
     reverses it, writes a compensating ``rollback`` row, and returns
     the restored script.
     """
+    tid = _parse_task_id(task_id)
+
     # 1. Fetch task
-    task = task_crud.get(db, task_id)
+    task = task_crud.get(db, tid)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
 

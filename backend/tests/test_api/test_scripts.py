@@ -109,7 +109,7 @@ def test_list_scripts(client, db_engine):
     resp = client.get("/api/v1/scripts/")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["code"] == 0
+    assert body["code"] == 200
     assert body["data"]["total"] >= 1
     items = body["data"]["items"]
     script_ids = [i["script_id"] for i in items]
@@ -161,7 +161,7 @@ def test_get_script(client, db_engine):
     resp = client.get(f"/api/v1/scripts/{tid}")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["code"] == 0
+    assert body["code"] == 200
     data = body["data"]
     assert data["script_id"] == str(tid)
     assert data["novel_id"] == str(nid)
@@ -198,7 +198,7 @@ def test_put_valid_yaml(client_and_session, db_engine):
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["code"] == 0
+    assert body["code"] == 200
     data = body["data"]
     assert data["script_id"] == str(tid)
     assert data["updated_at"] is not None

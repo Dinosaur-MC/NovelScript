@@ -144,10 +144,13 @@ async def run_from_text(
     all_scenes: list[Scene] = []
     chapter_count = len(chapters)
     completed_count = 0
+    # Pre-compute fallback texts for keyword search when FAISS is unavailable
+    all_chapter_texts = [c.text for c in chapters]
 
     async def convert_one(ch: Chapter) -> list[Scene]:
         nonlocal completed_count
-        rag_ctx = search(faiss_index, ch.text[:500], k=3)
+        rag_ctx = search(faiss_index, ch.text[:500], k=3,
+                         fallback_texts=all_chapter_texts)
         result = await asyncio.to_thread(convert_chapter, ch, kg, rag_ctx)
         completed_count += 1
         progress = 35 + int((completed_count / max(chapter_count, 1)) * 45)

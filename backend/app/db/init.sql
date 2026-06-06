@@ -163,9 +163,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 -- ----------------------------------------------------------------------------
 -- Default Indexes (B-tree)
+--   NOTE: email and username are already covered by UNIQUE constraints
+--   (uq_users_email, uq_users_username) — no separate index needed.
 -- ----------------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_users_email        ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_username     ON users(username);
 CREATE INDEX IF NOT EXISTS idx_novels_user_id     ON novels(user_id);
 CREATE INDEX IF NOT EXISTS idx_novels_status      ON novels(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_novel_id     ON tasks(novel_id);

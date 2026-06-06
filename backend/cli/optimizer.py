@@ -48,13 +48,23 @@ def optimize(scenes: list[Scene], kg: KnowledgeGraph) -> list[Scene]:
     llm = get_llm("consistency_check", temperature=0.2, json_mode=True)
     chain = _PROMPT | llm | _parser
 
+    serialized = _serialize_scenes(scenes)
+    if len(serialized) > 12000:
+        logger.warning(
+            "Scenes JSON is %d chars — truncating to 12000. "
+            "%d of %d scenes may be dropped by the LLM.",
+            len(serialized), max(0, len(scenes) - int(len(scenes) * 12000 / max(len(serialized), 1))), len(scenes),
+        )
+
     try:
         raw = chain.invoke({
-            "scenes_json": _serialize_scenes(scenes)[:12000],
+            "scenes_json": serialized[:12000],
             "kg_summary": _summarize_kg(kg),
             "format_instructions": _parser.get_format_instructions(),
         })
         result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
+        # Restore source_ref tracing lost during serialization/LLM round-trip
+        result.scenes = _restore_source_refs(scenes, result.scenes)
         logger.info("Optimizer: %d scene(s) processed.", len(result.scenes))
         return result.scenes
     except Exception as exc:
@@ -79,3 +89,40 @@ def _summarize_kg(kg: KnowledgeGraph) -> str:
     return "人物参考：\n" + "\n".join(
         f"  {c.name} (traits: {c.properties.get('traits', [])})" for c in chars
     )
+
+
+def _restore_source_refs(original: list[Scene], optimized: list[Scene]) -> list[Scene]:
+    """Copy source_ref from *original* scenes onto *optimized* scenes.
+
+    The LLM round-trip strips ``source_ref`` during serialization, so we
+    rebuild it by matching elements on content within each scene pair.
+    """
+    # Build lookup: (scene_id, content) → source_ref
+    ref_map: dict[tuple[str, str], dict] = {}
+    for s in original:
+        for e in s.elements:
+            if e.source_ref:
+                ref_map[(s.scene_id, e.content)] = e.source_ref
+
+    for s in optimized:
+        # Index-based fallback for elements whose content changed
+        orig = _find_scene(original, s.scene_id)
+        orig_elems = orig.elements if orig else []
+        for i, e in enumerate(s.elements):
+            if e.source_ref is not None:
+                continue  # already has a ref
+            key = (s.scene_id, e.content)
+            if key in ref_map:
+                e.source_ref = ref_map[key]
+            elif i < len(orig_elems) and orig_elems[i].source_ref:
+                # Position-based fallback when content was modified
+                e.source_ref = orig_elems[i].source_ref
+
+    return optimized
+
+
+def _find_scene(scenes: list[Scene], scene_id: str) -> Scene | None:
+    for s in scenes:
+        if s.scene_id == scene_id:
+            return s
+    return None

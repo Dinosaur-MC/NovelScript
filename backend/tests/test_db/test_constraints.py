@@ -11,11 +11,14 @@ from sqlalchemy import text
 def test_fk_violation_rejected(db_conn):
     """Insert into chapters with non-existent novel_id must fail."""
     fake_novel_id = uuid.uuid4()
-    with pytest.raises(Exception):
-        db_conn.execute(text(
-            "INSERT INTO chapters (novel_id, chapter_index, title) "
-            "VALUES (:id, 1, 'Ghost Chapter')"
-        ), {"id": fake_novel_id})
+    try:
+        with pytest.raises(Exception):
+            db_conn.execute(text(
+                "INSERT INTO chapters (novel_id, chapter_index, title) "
+                "VALUES (:id, 1, 'Ghost Chapter')"
+            ), {"id": fake_novel_id})
+    finally:
+        db_conn.rollback()  # reset aborted transaction after FK violation
 
 
 def test_check_violation_rejected(db_conn):
