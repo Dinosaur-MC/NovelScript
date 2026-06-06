@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Spin } from "antd";
+import { Skeleton } from "antd";
 import { getTask } from "../api/tasks";
 import { getNovel } from "../api/novels";
 import { useTaskStore } from "../stores/task-store";
@@ -38,7 +38,7 @@ export default function Workspace() {
   const leftW = useUIStore((s) => s.leftWidth);
   const centerW = useUIStore((s) => s.centerWidth);
 
-  // Hooks
+  // Hooks — always called, safe with empty stores
   const autoSave = useAutoSave();
   const readerHook = useNovelReader();
   const editorHook = useScriptEditor();
@@ -47,7 +47,7 @@ export default function Workspace() {
   // Progress polling
   useSSE();
 
-  // Load data
+  // Async data load — does NOT block initial render
   useEffect(() => {
     if (!taskId) return;
     let cancelled = false;
@@ -64,7 +64,6 @@ export default function Workspace() {
           characters_json: taskData.characters_json,
         });
 
-        // Load novel + chapters
         const novelData = await getNovel(taskData.novel_id);
         if (cancelled) return;
 
@@ -87,6 +86,8 @@ export default function Workspace() {
     return () => { cancelled = true; };
   }, [taskId, setTask, loadScript, setNovel, setChapters]);
 
+  // Only block render on fatal error, NOT on loading.
+  // Each panel handles its own empty/loading state internally.
   if (error) {
     return (
       <div
@@ -118,22 +119,6 @@ export default function Workspace() {
     );
   }
 
-  if (loading) {
-    return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          backgroundColor: "var(--color-bg-canvas)",
-        }}
-      >
-        <Spin size="large" />
-      </div>
-    );
-  }
-
   return (
     <div
       style={{
@@ -145,23 +130,42 @@ export default function Workspace() {
     >
       <TaskBar />
       <div style={{ flex: 1, overflow: "hidden" }}>
-        <Splitter
-          direction="horizontal"
-          initialLeftPercent={leftW}
-          minLeftPx={240}
-          minRightPx={280 + 360}
-        >
-          <NovelReader readerHook={readerHook} traceHook={traceHook} />
+        {loading ? (
+          /* Skeleton shell while first load — layout visible immediately */
+          <div style={{ height: "100%", display: "flex", gap: 4, padding: 4 }}>
+            <div style={{ width: `${leftW}%`, padding: 16 }}>
+              <Skeleton active paragraph={{ rows: 12 }} />
+            </div>
+            <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
+            <div style={{ flex: 1, display: "flex", gap: 4 }}>
+              <div style={{ flex: 1, padding: 16 }}>
+                <Skeleton active paragraph={{ rows: 20 }} />
+              </div>
+              <div style={{ width: "4px", backgroundColor: "var(--color-border-subtle)" }} />
+              <div style={{ width: `${100 - leftW - (centerW / (centerW + (100 - leftW - centerW)) * 100)}%`, padding: 16 }}>
+                <Skeleton active paragraph={{ rows: 8 }} />
+              </div>
+            </div>
+          </div>
+        ) : (
           <Splitter
             direction="horizontal"
-            initialLeftPercent={centerW / (centerW + (100 - leftW - centerW)) * 100}
-            minLeftPx={360}
-            minRightPx={280}
+            initialLeftPercent={leftW}
+            minLeftPx={240}
+            minRightPx={280 + 360}
           >
-            <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
-            <RightPanel traceHook={traceHook} editorHook={editorHook} />
+            <NovelReader readerHook={readerHook} traceHook={traceHook} />
+            <Splitter
+              direction="horizontal"
+              initialLeftPercent={centerW / (centerW + (100 - leftW - centerW)) * 100}
+              minLeftPx={360}
+              minRightPx={280}
+            >
+              <ScriptEditor editorHook={editorHook} autoSaveHook={autoSave} />
+              <RightPanel traceHook={traceHook} editorHook={editorHook} />
+            </Splitter>
           </Splitter>
-        </Splitter>
+        )}
       </div>
       <StatusBar />
     </div>

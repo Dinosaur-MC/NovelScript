@@ -1,7 +1,8 @@
 import { ApiError, getAuthToken } from "./types";
 import type { ApiResponse } from "./types";
 
-const BASE_URL = "/api/v1";
+/** Configurable via VITE_API_BASE_URL env var; defaults to relative /api/v1. */
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
