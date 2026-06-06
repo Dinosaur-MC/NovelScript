@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import {
   Card,
@@ -9,7 +9,7 @@ import {
   Upload,
   Collapse,
   message,
-  Skeleton,
+  Spin,
 } from "antd";
 import {
   PlusOutlined,
@@ -48,9 +48,11 @@ export function HomePage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [uploading, setUploading] = useState(false);
+  const loadingStartMs = useRef(Date.now());
 
   const load = useCallback(async () => {
     setLoading(true);
+    loadingStartMs.current = Date.now();
     try {
       const [novelsRes, scriptsRes] = await Promise.all([
         listNovels(1, 100),
@@ -61,7 +63,9 @@ export function HomePage() {
     } catch {
       message.error("加载数据失败");
     } finally {
-      setLoading(false);
+      const MIN_LOADING_MS = 600;
+      const remaining = Math.max(0, MIN_LOADING_MS - (Date.now() - loadingStartMs.current));
+      setTimeout(() => setLoading(false), remaining);
     }
   }, []);
 
@@ -119,82 +123,17 @@ export function HomePage() {
     return (
       <div
         style={{
-          minHeight: "100vh",
+          height: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
           backgroundColor: "var(--color-bg-canvas)",
-          color: "var(--color-text-primary)",
-          padding: 32,
         }}
       >
-        {/* Header — render immediately */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 32,
-          }}
-        >
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>NovelScript 析幕</h1>
-          <Button
-            type="primary"
-            size="large"
-            icon={<PlusOutlined />}
-            onClick={() => setUploadOpen(true)}
-          >
-            上传新小说
-          </Button>
-        </div>
-        {/* Skeleton placeholders while data loads */}
-        {[1, 2].map((i) => (
-          <div key={i} style={{ marginBottom: 24 }}>
-            <Skeleton.Input active style={{ width: 200, marginBottom: 12 }} />
-            <div style={{ display: "flex", gap: 12 }}>
-              <Skeleton.Input active block style={{ width: 220, height: 80 }} />
-              <Skeleton.Input active block style={{ width: 220, height: 80 }} />
-            </div>
-          </div>
-        ))}
-
-        {/* Upload Modal */}
-        <Modal
-          title="上传小说"
-          open={uploadOpen}
-          onCancel={() => setUploadOpen(false)}
-          footer={null}
-          destroyOnHidden
-        >
-          <div style={{ marginBottom: 16 }}>
-            <Input.TextArea
-              rows={8}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder="在此粘贴小说正文..."
-            />
-            <Button
-              type="primary"
-              onClick={handlePasteUpload}
-              loading={uploading}
-              style={{ marginTop: 8 }}
-              block
-            >
-              提交文本
-            </Button>
-          </div>
-          <div style={{ textAlign: "center", color: "var(--color-text-muted)", marginBottom: 8 }}>
-            或
-          </div>
-          <Upload.Dragger
-            accept=".txt,.md"
-            maxCount={1}
-            beforeUpload={handleFileUpload}
-            showUploadList={false}
-          >
-            <p className="ant-upload-drag-icon">
-              <UploadOutlined />
-            </p>
-            <p>点击或拖拽上传 .txt / .md 文件</p>
-          </Upload.Dragger>
-        </Modal>
+        <Spin size="large" />
+        <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>加载中...</span>
       </div>
     );
   }

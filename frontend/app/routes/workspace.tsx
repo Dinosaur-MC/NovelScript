@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
@@ -30,6 +30,8 @@ export default function Workspace() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadingStartMs = useRef(Date.now());
+  const pendingError = useRef<string | null>(null);
 
   // Stores
   const setTask = useTaskStore((s) => s.setTask);
@@ -77,9 +79,23 @@ export default function Workspace() {
           })),
         );
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        // Hold the error until loading indicator can finish its minimum duration
+        if (!cancelled) pendingError.current = (err as Error).message;
       } finally {
-        if (!cancelled) setLoading(false);
+        if (cancelled) return;
+        const elapsed = Date.now() - loadingStartMs.current;
+        const MIN_LOADING_MS = 600;
+        const remaining = Math.max(0, MIN_LOADING_MS - elapsed);
+        setTimeout(
+          () => {
+            setLoading(false);
+            if (pendingError.current) {
+              setError(pendingError.current);
+              pendingError.current = null;
+            }
+          },
+          remaining,
+        );
       }
     }
 
