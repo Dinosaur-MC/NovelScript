@@ -17,7 +17,7 @@ import logging
 import re
 import textwrap
 
-from cli.llm_router import get_llm
+from cli.llm_router import get_llm, invoke_llm_with_retry
 from cli.models import Chapter
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def _llm_split(text: str) -> list[Chapter]:
     """) + text[:60000]  # Context budget is 60% of the LLM's window via context_chars()
 
     try:
-        resp = llm.invoke(prompt)
+        resp = invoke_llm_with_retry(llm, prompt, "chapter_split")
         raw = resp.content.strip()  # type: ignore[union-attr]
 
         # Extract JSON between ```json fences or raw

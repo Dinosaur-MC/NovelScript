@@ -11,7 +11,7 @@ import logging
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from cli.llm_router import get_llm
+from cli.llm_router import get_llm, invoke_llm_with_retry
 from cli.models import Chapter
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,10 @@ def summarize_chapter(chapter: Chapter, max_chars: int = 10_000) -> str:
     llm = get_llm("chapter_summary", temperature=0.1, json_mode=False)
 
     try:
-        resp = llm.invoke(_PROMPT.invoke({
+        resp = invoke_llm_with_retry(llm, _PROMPT.invoke({
             "title": chapter.title,
             "text": chapter.text[:max_chars],
-        }))
+        }), "chapter_summary")
         raw = resp.content.strip()  # type: ignore[union-attr]
         # Trim to budget
         summary = raw[:_SUMMARY_MAX_CHARS]

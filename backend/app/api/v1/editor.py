@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from cli.llm_router import get_llm
+from cli.llm_router import get_llm, invoke_llm_with_retry
 
 from app.core.db import get_db
 from app.models.http import BaseResponse
@@ -338,7 +338,7 @@ def chat(
 
     try:
         llm = get_llm("ai_chat", 0.7)
-        ai_msg = llm.invoke(messages)
+        ai_msg = invoke_llm_with_retry(llm, messages, "ai_chat")
         reply_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
     except Exception as exc:
         logger.exception("LLM call failed for task %s", task_id)

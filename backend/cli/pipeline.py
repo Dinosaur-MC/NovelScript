@@ -271,23 +271,48 @@ def _generate_summary(scenes: list[Scene], kg: KnowledgeGraph) -> str:
 
 
 def main():
-    """CLI entry: uv run python -m cli.pipeline <input_file>"""
+    """CLI entry: uv run python -m cli.pipeline <INPUT> [-o OUTPUT] [--json]
+
+    When ``-o`` / ``--output`` is given the result is written to that
+    file (logs go to stderr only).  Otherwise it is printed to stdout.
+    ``--json`` exports JSON instead of the default YAML.
+    """
+    import argparse
+
     # On Windows the default console codepage cannot encode CJK characters.
-    # Reconfigure stdout for UTF-8 so the YAML output doesn't crash.
+    # Reconfigure stdout/stderr for UTF-8 so the YAML output doesn't crash.
     if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-    if len(sys.argv) < 2:
-        print("Usage: uv run python -m cli.pipeline <input_file>", file=sys.stderr)
-        sys.exit(2)
-
-    input_file = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="NovelScript Pipeline — convert a novel to a structured script.",
+    )
+    parser.add_argument("input", help="Path to a UTF-8 plain-text novel file.")
+    parser.add_argument(
+        "-o", "--output", metavar="OUTPUT", default=None,
+        help="Write result to this file instead of stdout.",
+    )
+    parser.add_argument(
+        "--json", dest="format_json", action="store_true",
+        help="Export as JSON instead of YAML.",
+    )
+    args = parser.parse_args()
 
     try:
-        script = asyncio.run(run(input_file))
-        yaml_output = to_yaml(script)
-        print(yaml_output)
+        script = asyncio.run(run(args.input))
+        if args.format_json:
+            from cli.exporter import to_json
+
+            output = to_json(script)
+        else:
+            output = to_yaml(script)
+
+        if args.output:
+            Path(args.output).write_text(output, encoding="utf-8")
+            logger.info("Output written to %s (%d chars).", args.output, len(output))
+        else:
+            print(output)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

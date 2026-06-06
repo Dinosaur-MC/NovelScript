@@ -1,4 +1,9 @@
-"""LLM router — model-to-task mapping and client factory for the DeepSeek API.
+"""LLM router — model-to-task mapping, client factory, and retry logic.
+
+All LLM invocations are wrapped in ``invoke_with_retry()`` which provides
+exponential backoff with jitter for transient failures (connection errors,
+rate limits, timeouts, server errors).  Retry counts are per-stage
+configurable via ``_RETRY_CONFIG`` and the ``LLM_MAX_RETRIES`` env var.
 
 Uses LangChain's ChatOpenAI as a compatibility layer.  All calls carry an
 httpx.Timeout to prevent hung requests in the pipeline.
@@ -14,9 +19,20 @@ from __future__ import annotations
 
 import logging
 import os
+import random
+import time
+from typing import Any
 
 import httpx
+from langchain_core.runnables import RunnableSerializable
 from langchain_openai import ChatOpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +65,23 @@ _MAX_TOKENS: dict[str, int] = {
     "consistency_check":  4000,   # same-size output as input batch
     "ai_chat":            2000,   # conversational reply
 }
+
+# Per-stage retry configuration.  Each stage gets this many extra attempts
+# (on top of the first try) before giving up.  Retries use exponential
+# backoff with jitter.
+_RETRY_CONFIG: dict[str, int] = {
+    "chapter_split":      1,
+    "chapter_summary":    1,
+    "global_extraction":  2,
+    "scene_conversion":   2,
+    "consistency_check":  3,   # higher — runs near the end, losing it is costly
+    "ai_chat":            1,
+}
+
+# Base delays for exponential backoff (seconds)
+_RETRY_BASE_DELAY = 1.0
+_RETRY_MAX_DELAY = 30.0
+_RETRY_BACKOFF_FACTOR = 2.0
 
 # ---------------------------------------------------------------------------
 # Per-model context / output limits
@@ -137,6 +170,130 @@ def context_chars(stage: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Retry logic
+# ---------------------------------------------------------------------------
+
+
+def _get_retry_count(stage: str) -> int:
+    """Return the max retry count for *stage*.
+
+    Can be overridden globally via ``LLM_MAX_RETRIES`` env var.
+    """
+    env_override = os.getenv("LLM_MAX_RETRIES")
+    if env_override:
+        try:
+            return int(env_override)
+        except ValueError:
+            logger.warning("LLM_MAX_RETRIES=%r is not an integer — ignoring.", env_override)
+    return _RETRY_CONFIG.get(stage, 1)
+
+
+def invoke_with_retry(
+    chain: RunnableSerializable[Any, Any],
+    inputs: dict[str, Any],
+    stage: str,
+) -> Any:
+    """Invoke an LCEL *chain* with exponential-backoff retry on transient failures.
+
+    Retries are attempted for:
+    - ``APIConnectionError``    — network / SSL errors
+    - ``APITimeoutError``       — request timed out
+    - ``RateLimitError``        — 429 Too Many Requests
+    - ``InternalServerError``   — 5xx from the API
+    - ``httpx.ConnectError``    — low-level transport failure
+    - ``httpx.ReadTimeout``     — read-side timeout
+
+    Non-retryable errors (400, 401, 403, etc.) are re-raised immediately.
+
+    Args:
+        chain:  A LangChain runnable (e.g. ``prompt | llm | parser``).
+        inputs: Dict of placeholder values for the prompt template.
+        stage:  Pipeline stage name (for per-stage retry count).
+
+    Returns:
+        The chain's output (parsed by the output parser if one is attached).
+
+    Raises:
+        The last exception if all retries are exhausted.
+    """
+    return _invoke_with_retry(lambda: chain.invoke(inputs), stage)
+
+
+def invoke_llm_with_retry(llm: ChatOpenAI, prompt: Any, stage: str) -> Any:
+    """Invoke a bare ``ChatOpenAI.invoke()`` call with retry.
+
+    Use this when the call site is ``llm.invoke(prompt)`` (no LCEL chain).
+
+    Args:
+        llm:    A ``ChatOpenAI`` instance from ``get_llm()``.
+        prompt: The input to pass to ``llm.invoke()`` (str or message list).
+        stage:  Pipeline stage name for retry-count lookup.
+
+    Returns:
+        The ``AIMessage`` returned by the LLM.
+    """
+    def _call():
+        return llm.invoke(prompt)
+    return _invoke_with_retry(_call, stage)
+
+
+def _invoke_with_retry(fn, stage: str) -> Any:
+    """Internal — shared retry loop for any callable."""
+    max_retries = _get_retry_count(stage)
+    last_exc: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except (
+            APIConnectionError,
+            APITimeoutError,
+            RateLimitError,
+            InternalServerError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = min(
+                    _RETRY_BASE_DELAY * (_RETRY_BACKOFF_FACTOR ** attempt),
+                    _RETRY_MAX_DELAY,
+                )
+                jitter = random.uniform(0, delay * 0.5)
+                total_delay = delay + jitter
+                logger.warning(
+                    "LLM call for stage=%s failed (attempt %d/%d): %s — "
+                    "retrying in %.1fs …",
+                    stage, attempt + 1, max_retries + 1, exc, total_delay,
+                )
+                time.sleep(total_delay)
+            else:
+                logger.error(
+                    "LLM call for stage=%s failed after %d attempt(s): %s",
+                    stage, max_retries + 1, exc,
+                )
+        except APIStatusError as exc:
+            if 400 <= exc.status_code < 500 and exc.status_code != 429:
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                delay = min(_RETRY_BASE_DELAY, _RETRY_MAX_DELAY)
+                jitter = random.uniform(0, delay * 0.5)
+                total_delay = delay + jitter
+                logger.warning(
+                    "LLM call for stage=%s failed (attempt %d/%d): HTTP %s — "
+                    "retrying in %.1fs …",
+                    stage, attempt + 1, max_retries + 1, exc.status_code, total_delay,
+                )
+                time.sleep(total_delay)
+            else:
+                raise
+
+    raise last_exc  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
 # Client factory
 # ---------------------------------------------------------------------------
 
@@ -156,6 +313,11 @@ def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> Ch
 
     Raises:
         ValueError: If *stage* is not found in MODEL_ROUTING.
+
+    Note:
+        The LangChain ``max_retries`` is set to 0 — all retry logic is
+        handled by ``invoke_with_retry()`` at the application layer so
+        that error classification, backoff, and logging are consistent.
     """
     model_name = MODEL_ROUTING.get(stage)
     if model_name is None:
@@ -175,7 +337,7 @@ def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> Ch
         api_key=api_key,
         temperature=temperature,
         timeout=_REQUEST_TIMEOUT,
-        max_retries=2,
+        max_retries=0,   # we handle retries ourselves in invoke_with_retry()
         max_tokens=max_tokens,
     )
     if json_mode:
@@ -183,9 +345,10 @@ def get_llm(stage: str, temperature: float = 0.3, json_mode: bool = False) -> Ch
 
     llm = ChatOpenAI(**kwargs)
     ctx = get_llm_context_window(stage)
+    retries = _get_retry_count(stage)
     logger.debug(
         "Created LLM client for stage=%s → model=%s json_mode=%s "
-        "max_tokens=%s context_window=%s",
-        stage, model_name, json_mode, max_tokens, ctx,
+        "max_tokens=%s context_window=%s max_retries=%s",
+        stage, model_name, json_mode, max_tokens, ctx, retries,
     )
     return llm

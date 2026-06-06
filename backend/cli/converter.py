@@ -12,7 +12,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from cli.llm_router import context_chars, get_llm
+from cli.llm_router import context_chars, get_llm, invoke_with_retry
 from cli.models import Chapter, KnowledgeGraph, Scene
 from cli.paragraph_splitter import split_paragraphs
 
@@ -53,7 +53,6 @@ def convert_chapter(
     kg: KnowledgeGraph,
     rag_context: list[str],
     chapter_summary: str = "",
-    max_retries: int = 1,
 ) -> list[Scene]:
     llm = get_llm("scene_conversion", temperature=0.5, json_mode=True)
 
@@ -77,30 +76,24 @@ def convert_chapter(
         )
 
     chain = _PROMPT | llm | _parser
+    prompt_inputs = {
+        "chapter_title": chapter.title,
+        "chapter_text": chapter_text,
+        "kg_summary": kg_summary,
+        "rag_context": rag_text,
+        "summary_section": summary_section,
+        "format_instructions": _parser.get_format_instructions(),
+    }
 
-    for attempt in range(max_retries + 1):
-        try:
-            raw = chain.invoke({
-                "chapter_title": chapter.title,
-                "chapter_text": chapter_text,
-                "kg_summary": kg_summary,
-                "rag_context": rag_text,
-                "summary_section": summary_section,
-                "format_instructions": _parser.get_format_instructions(),
-            })
-            result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
-            scenes = _inject_source_refs(result.scenes, chapter)
-            logger.info("Chapter %d converted to %d scene(s).", chapter.index, len(scenes))
-            return scenes
-        except Exception as exc:
-            if attempt < max_retries:
-                logger.warning(
-                    "Converter retry %d/%d for chapter %d: %s",
-                    attempt + 1, max_retries, chapter.index, exc,
-                )
-            else:
-                logger.exception("Converter failed for chapter %d: %s", chapter.index, exc)
-    return []
+    try:
+        raw = invoke_with_retry(chain, prompt_inputs, "scene_conversion")
+        result = SceneList.model_validate(raw) if isinstance(raw, dict) else raw
+        scenes = _inject_source_refs(result.scenes, chapter)
+        logger.info("Chapter %d converted to %d scene(s).", chapter.index, len(scenes))
+        return scenes
+    except Exception as exc:
+        logger.exception("Converter failed for chapter %d: %s", chapter.index, exc)
+        return []
 
 
 def _summarize_kg(kg: KnowledgeGraph) -> str:

@@ -19,7 +19,7 @@ from typing import Optional
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from cli.llm_router import context_chars, get_llm
+from cli.llm_router import context_chars, get_llm, invoke_with_retry
 from cli.models import Chapter, KnowledgeGraph
 from cli.paragraph_splitter import split_paragraphs
 
@@ -85,11 +85,11 @@ def extract_graph(
     chain = _PROMPT | llm | _parser
 
     try:
-        raw = chain.invoke({
+        raw = invoke_with_retry(chain, {
             "text": combined,
             "rag_context": rag_context,
             "format_instructions": _parser.get_format_instructions(),
-        })
+        }, "global_extraction")
         kg = KnowledgeGraph.model_validate(raw) if isinstance(raw, dict) else raw
         logger.info("GraphRAG: extracted %d node(s), %d edge(s).",
                      len(kg.nodes), len(kg.edges))

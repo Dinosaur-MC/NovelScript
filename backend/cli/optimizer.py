@@ -17,7 +17,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from cli.llm_router import get_llm
+from cli.llm_router import get_llm, invoke_with_retry
 from cli.models import KnowledgeGraph, Scene
 
 logger = logging.getLogger(__name__)
@@ -115,15 +115,17 @@ def _invoke_chain(
     format_instructions: str,
     context_note: str,
 ) -> dict:
-    """Shared LLM invocation — extracted so tests can patch it easily."""
+    """Shared LLM invocation — extracted so the batcher and tests can reuse it.
+    Uses ``invoke_with_retry`` for transient-failure resilience.
+    """
     llm = get_llm("consistency_check", temperature=0.2, json_mode=True)
     chain = _PROMPT | llm | _parser
-    return chain.invoke({
+    return invoke_with_retry(chain, {
         "scenes_json": scenes_json,
         "kg_summary": kg_summary,
         "format_instructions": format_instructions,
         "context_note": context_note,
-    })
+    }, "consistency_check")
 
 
 def _serialize_scenes(scenes: list[Scene]) -> str:
@@ -173,35 +175,26 @@ def _summarize_kg(kg: KnowledgeGraph) -> str:
 def _restore_source_refs(original: list[Scene], optimized: list[Scene]) -> list[Scene]:
     """Copy source_ref from *original* scenes onto *optimized* scenes.
 
-    The LLM round-trip strips ``source_ref`` during serialization, so we
-    rebuild it by matching elements on content within each scene pair.
+    The LLM round-trip strips ``source_ref`` and may alter ``scene_id``
+    values (e.g. ``s_007`` → ``s_007a``).  We therefore match **by
+    position**: ``original[i]`` ↔ ``optimized[i]``.
     """
-    # Build lookup: (scene_id, content) → source_ref
-    ref_map: dict[tuple[str, str], dict] = {}
-    for s in original:
-        for e in s.elements:
+    for idx, (orig, opt) in enumerate(zip(original, optimized)):
+        # Build a content→source_ref map for this original scene
+        ref_map: dict[str, dict] = {}
+        for e in orig.elements:
             if e.source_ref:
-                ref_map[(s.scene_id, e.content)] = e.source_ref
+                ref_map[e.content] = e.source_ref
 
-    for s in optimized:
-        # Index-based fallback for elements whose content changed
-        orig = _find_scene(original, s.scene_id)
-        orig_elems = orig.elements if orig else []
-        for i, e in enumerate(s.elements):
-            if e.source_ref is not None:
+        for ei, elem in enumerate(opt.elements):
+            if elem.source_ref is not None:
                 continue  # already has a ref
-            key = (s.scene_id, e.content)
-            if key in ref_map:
-                e.source_ref = ref_map[key]
-            elif i < len(orig_elems) and orig_elems[i].source_ref:
-                # Position-based fallback when content was modified
-                e.source_ref = orig_elems[i].source_ref
+            if elem.content in ref_map:
+                elem.source_ref = ref_map[elem.content]
+            elif ei < len(orig.elements) and orig.elements[ei].source_ref:
+                # Position-based fallback when the LLM lightly edited content
+                elem.source_ref = orig.elements[ei].source_ref
 
     return optimized
 
 
-def _find_scene(scenes: list[Scene], scene_id: str) -> Scene | None:
-    for s in scenes:
-        if s.scene_id == scene_id:
-            return s
-    return None
