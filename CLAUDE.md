@@ -57,7 +57,7 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 - **Context budget**: Auto-detected from model name + `.env` overrides (`LLM_CONTEXT_WINDOW`, `LLM_MAX_OUTPUT_TOKENS`)
 - **Concurrency**: `asyncio.Semaphore` gates concurrent LLM calls (default 20, configurable via `LLM_MAX_CONCURRENCY` or `-c` CLI flag)
 - **Paragraph splitter**: Boundary-aware (`\n\n+`), short paragraphs (≤32 chars) merged
-- **OpenRouter**: Embeddings only — `openai/text-embedding-3-small` via `https://openrouter.ai/api/v1/embeddings`
+- **OpenRouter**: Embeddings only — `nvidia/llama-nemotron-embed-vl-1b-v2:free` via `https://openrouter.ai/api/v1/embeddings`
 
 Full CLI documentation: `backend/cli/README.md`
 

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 EMBEDDING_MODEL = os.getenv(
-    "OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+    "OPENROUTER_EMBEDDING_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2:free"
 )
 
 

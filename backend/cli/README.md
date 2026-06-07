@@ -110,7 +110,7 @@ uv run python -m cli.pipeline novel/ -s "喜剧风格，对话要幽默有趣，
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
-| `OPENROUTER_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding 模型名称 |
+| `OPENROUTER_EMBEDDING_MODEL` | `nvidia/llama-nemotron-embed-vl-1b-v2:free` | Embedding 模型名称 |
 
 ## Pipeline 流程
 

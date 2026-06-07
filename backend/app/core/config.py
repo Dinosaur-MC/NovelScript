@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_EMBEDDING_MODEL: str = "openai/text-embedding-3-small"
+    OPENROUTER_EMBEDDING_MODEL: str = "nvidia/llama-nemotron-embed-vl-1b-v2:free"
 
     # -- Redis / Celery --------------------------------------------------------
     REDIS_URL: str = "redis://localhost:6379/0"

@@ -193,7 +193,7 @@ Pipeline 将小说→剧本转换分解为 7 个专业化阶段，阶段间**松
 
 ### 3.4 Stage 3: RAG 索引构建
 
-- **Embedding**：OpenRouter `openai/text-embedding-3-small`（`encoding_format=float`）
+- **Embedding**：OpenRouter `nvidia/llama-nemotron-embed-vl-1b-v2:free`（`encoding_format=float`）
 - **索引**：内存 FAISS（每章全文存为 Document）
 - **回退**：FAISS 失败 → 关键词字符重叠搜索（`fallback_texts` 传入章节全文）
 
