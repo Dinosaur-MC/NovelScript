@@ -46,7 +46,21 @@ _PROMPT = ChatPromptTemplate.from_messages([
 关系类型: friend_of, enemy_of, master_of, subordinate_of, family_of, lover_of, located_in, belongs_to, owns, used_by, participates_in, causes, leads_to
 
 每个实体必须有唯一的 id (n_01, n_02, ...)。人物实体的 properties 中必须包含 aliases (数组) 和 traits (数组)。
-关系权重 weight 在 0.0 到 1.0 之间。只提取明确在文本中出现或强烈暗示的实体和关系。
+
+=== 关系权重 (weight) 规则 (0.0-1.0) ===
+- 1.0：确定且强烈的关系（血亲、核心敌友、明确的师徒）
+- 0.8-0.9：确定但中等强度的关系（远亲、普通朋友、一般同门）
+- 0.5-0.7：隐含或单向的关系（单恋、暗中的竞争、间接关联）
+- 0.2-0.4：推测或微弱的关系（短暂互动、传闻、间接提及）
+
+示例：
+- 父女，核心血亲 → family_of 1.0
+- 父子，但叙事中有明显隔阂 → family_of 0.9
+- 单方面的嫉妒/爱慕，非双向 → lover_of 0.3
+- 表面友好，实际已破裂 → friend_of 0.3
+- 短暂的交易互动 → participates_in 0.4
+
+只提取明确在文本中出现或强烈暗示的实体和关系。
 
 {format_instructions}"""),
     ("human", """\
@@ -168,7 +182,14 @@ _INCREMENTAL_PROMPT = ChatPromptTemplate.from_messages([
 关系类型: friend_of, enemy_of, master_of, subordinate_of, family_of, lover_of, located_in, belongs_to, owns, used_by, participates_in, causes, leads_to
 
 每个实体必须有唯一的 id。人物实体的 properties 中必须包含 aliases (数组) 和 traits (数组)。
-关系权重 weight 在 0.0 到 1.0 之间。只提取明确在文本中出现或强烈暗示的实体和关系。
+
+=== 关系权重 (weight) 规则 (0.0-1.0) ===
+- 1.0：确定且强烈的关系（血亲、核心敌友、明确的师徒）
+- 0.8-0.9：确定但中等强度的关系（远亲、普通朋友、一般同门）
+- 0.5-0.7：隐含或单向的关系（单恋、暗中的竞争、间接关联）
+- 0.2-0.4：推测或微弱的关系（短暂互动、传闻、间接提及）
+
+只提取明确在文本中出现或强烈暗示的实体和关系。
 
 {prior_entities}
 

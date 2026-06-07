@@ -33,7 +33,38 @@ _PROMPT = ChatPromptTemplate.from_messages([
 elements (元素: action/dialogue/heading/transition/parenthetical/character/note,
 每元素含 type + content), characters_present (角色ID列表)。
 
-规则: 对白使用 dialogue 类型，去除小说化描写，心理活动转换为 action 或 dialogue。
+=== 场景标题 (heading) 格式规则 ===
+每个场景必须包含标准 slug line，格式严格遵循：
+  INT./EXT. LOCATION - TIME_OF_DAY
+
+规则：
+- 前缀用 INT. 或 EXT.，不能用中文"内景/外景"
+- 时间用英文：DAY, NIGHT, DUSK, DAWN, AFTERNOON, MORNING
+- 如果是回忆场景，在末尾添加 (FLASHBACK)：EXT. 徐家田地 - DUSK (FLASHBACK)
+- 如果是梦境，添加 (DREAM)：INT. 角色脑海 - NIGHT (DREAM)
+- 不要使用"闪回"、"回忆"等中文标记
+- 不要在一个 heading 中使用两个地点（用 / 分隔）
+- 时间跳跃用 LATER 或 CONTINUOUS：EXT. 后山山顶 - DAY (LATER)
+
+=== 叙事层级规则 ===
+如果你检测到以下模式，请在 heading 中明确标记：
+1. 第一人称叙述者框架 → heading 以 "FRAME:" 开头
+   例：FRAME: EXT. 乡间田野 - AFTERNOON
+2. 角色回忆/讲述的往事 → heading 末尾添加 (FLASHBACK)
+   例：EXT. 徐家田地 - DUSK (FLASHBACK)
+3. 回忆中的回忆（嵌套闪回）→ 使用 (FLASHBACK WITHIN FLASHBACK)
+4. 回到框架叙述 → heading 以 "FRAME:" 开头
+
+=== 对白保留规则（严格遵守）===
+1. 原文中的对话，必须逐字保留，不得改写或简化
+2. 不要添加原文没有的对话
+3. 不要将原文的对话"现代化"或"合理化"
+4. 如果原文的对话不完整或有歧义，保持原样，不要补充
+5. 仅在原文的叙述性描写需要转换为对白时，才可创建新的 dialogue 元素
+6. 创建的新对白必须在 source_ref 中标记 confidence: "inferred"
+
+=== 一般规则 ===
+对白使用 dialogue 类型，去除小说化描写，心理活动转换为 action 或 dialogue。
 {style_instruction}
 
 {format_instructions}"""),
