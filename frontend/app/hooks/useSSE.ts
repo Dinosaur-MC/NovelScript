@@ -64,7 +64,8 @@ export function useSSE() {
           const data = JSON.parse(e.data);
           const progress = data.progress ?? 0;
           const stage = data.stage as string | undefined;
-          updateProgress(progress, undefined, stage);
+          const status = data.status as string | undefined;
+          updateProgress(progress, status as never, stage);
         } catch { /* malformed event — ignore */ }
       });
 

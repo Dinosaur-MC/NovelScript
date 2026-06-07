@@ -22,7 +22,8 @@ export function useScriptEditor() {
     editorRef.current?.getModel()?.setValue(value);
   }, []);
 
-  /** Full-document replacement (used after AI patch / undo). */
+  /** Full-document replacement (used after AI patch / undo).
+   *  Forces a layout pass so the scroll dimensions match the new content. */
   const applyExternalEdit = useCallback((newYaml: string) => {
     const ed = editorRef.current;
     if (!ed) return;
@@ -35,6 +36,8 @@ export function useScriptEditor() {
       () => null,
     );
     ed.pushUndoStop();
+    // Force Monaco to remeasure after content changes
+    requestAnimationFrame(() => ed.layout());
   }, []);
 
   /** Highlight specific line numbers with a sidebar marker. */
@@ -76,10 +79,13 @@ export function useScriptEditor() {
   /** Scroll to a line in the editor (1-based), positioning it near the top. */
   const revealLineNearTop = useCallback((line: number) => {
     const ed = editorRef.current;
-    if (ed) ed.revealLineNearTop(line);
+    if (!ed) return;
+    ed.revealLineNearTop(line);
   }, []);
 
-  /** Select a range of lines (1-based, inclusive). */
+  /** Select the full range of lines (1-based, inclusive), scroll the
+   *  selection into view, and place the cursor at the end so the user
+   *  can start editing immediately. */
   const selectLines = useCallback((startLine: number, endLine: number) => {
     const ed = editorRef.current;
     if (!ed) return;
@@ -87,7 +93,10 @@ export function useScriptEditor() {
     if (!model) return;
     const m = (window as unknown as Record<string, unknown>).monaco as typeof import("monaco-editor") | undefined;
     if (!m) return;
+    // Select the entire element block
     ed.setSelection(new m.Range(startLine, 1, endLine, model.getLineMaxColumn(endLine)));
+    // Scroll the selection into view
+    ed.revealLineNearTop(startLine);
   }, []);
 
   return { bindEditor, getValue, setValue, applyExternalEdit, highlightLines, clearHighlights, triggerUndo, triggerRedo, revealLineNearTop, selectLines };

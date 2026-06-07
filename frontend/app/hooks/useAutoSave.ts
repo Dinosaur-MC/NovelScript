@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useEffect } from "react";
 import { message } from "antd";
 import { useTaskStore } from "../stores/task-store";
 import { useEditorStore } from "../stores/editor-store";
@@ -12,13 +12,28 @@ const DEBOUNCE_MS = 8_000; // 8s — gives user time to think before save fires
  * 8 seconds of inactivity, then fires PUT /api/v1/scripts/{taskId}.
  * Skips the API call if the value hasn't changed since the last successful save.
  * On 422, populates editor-store.validationErrors.
+ *
+ * Auto-cleans pending timers on unmount to prevent stale saves.
  */
 export function useAutoSave() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<string | null>(null);
+  const unmountedRef = useRef(false);
   const taskId = useTaskStore((s) => s.taskId);
   const setValidationErrors = useEditorStore((s) => s.setValidationErrors);
   const markDirty = useEditorStore((s) => s.markDirty);
+
+  // Cleanup pending timer on unmount
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
 
   const triggerSave = useCallback(
     (yaml: string) => {
@@ -29,11 +44,13 @@ export function useAutoSave() {
       markDirty(yaml !== lastSavedRef.current);
 
       timerRef.current = setTimeout(async () => {
+        if (unmountedRef.current) return;
         // Skip if nothing changed
         if (yaml === lastSavedRef.current) return;
 
         try {
           const result = await updateScript(taskId, yaml);
+          if (unmountedRef.current) return;
           if (!result.validation.valid) {
             setValidationErrors(
               result.validation.errors ? [result.validation.errors] : ["YAML 校验失败"],
@@ -45,6 +62,7 @@ export function useAutoSave() {
             message.success("已保存");
           }
         } catch (err) {
+          if (unmountedRef.current) return;
           console.error("Auto-save failed:", err);
           const msg = err instanceof ApiError && err.status === 401
             ? "登录已过期，请重新登录"
@@ -65,6 +83,7 @@ export function useAutoSave() {
 
       try {
         const result = await updateScript(taskId, yaml);
+        if (unmountedRef.current) return;
         if (!result.validation.valid) {
           setValidationErrors(
             result.validation.errors ? [result.validation.errors] : ["YAML 校验失败"],
@@ -76,6 +95,7 @@ export function useAutoSave() {
           message.success("已保存");
         }
       } catch (err) {
+        if (unmountedRef.current) return;
         console.error("Save failed:", err);
         const msg = err instanceof ApiError && err.status === 401
           ? "登录已过期，请重新登录"

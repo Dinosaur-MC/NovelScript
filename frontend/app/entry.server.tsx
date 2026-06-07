@@ -4,7 +4,7 @@ import { createReadableStreamFromReadable } from "@react-router/node";
 import { ServerRouter } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
 import { extractStyle } from "@ant-design/cssinjs";
-import { getCacheForExtraction } from "./ssr-cache";
+import { getCacheForExtraction, resetSSRCache } from "./ssr-cache";
 import type { EntryContext } from "react-router";
 
 export const streamTimeout = 5_000;
@@ -15,6 +15,8 @@ export default function handleRequest(
   responseHeaders: Headers,
   routerContext: EntryContext,
 ) {
+  // Reset antd CSS-in-JS cache to prevent cross-request style leakage
+  resetSSRCache();
   if (request.method.toUpperCase() === "HEAD") {
     return new Response(null, {
       status: responseStatusCode,

@@ -13,3 +13,12 @@ export function getSSRCache(): Cache {
 export function getCacheForExtraction(): ReturnType<typeof createCache> | null {
   return _cache;
 }
+
+/**
+ * Reset the cache before each SSR request.
+ * Prevents unbounded memory growth and style cross-contamination
+ * between successive requests.
+ */
+export function resetSSRCache(): void {
+  _cache = null;
+}

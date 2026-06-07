@@ -78,10 +78,8 @@ export function useTraceLinking(
             }
           }
 
-          // Reveal target line in upper third
+          // Reveal + select the full element block
           setTimeout(() => {
-            editorHook.revealLineNearTop(targetLine + 1);
-            // Select the entire element block
             editorHook.selectLines(elementStartLine + 1, elementEndLine + 1);
           }, 100);
         }
