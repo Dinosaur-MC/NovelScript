@@ -21,11 +21,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Startup / shutdown hook — disposes engine pool on exit."""
-    yield
-    from app.core.db import dispose_engine
+    """Startup / shutdown hook — init DB on startup, dispose pool on shutdown."""
+    # Startup
+    from app.core.db import init_db
+    init_db()
+    logger.info("Database initialised.")
 
+    yield
+
+    # Shutdown
+    from app.core.db import dispose_engine
     dispose_engine()
+    logger.info("Engine pool disposed.")
 
 
 # ========== 创建主应用实例 ==========

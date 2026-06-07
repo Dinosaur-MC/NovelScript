@@ -32,6 +32,7 @@ the 3 concurrent LLM stages so the API is never flooded.
 from __future__ import annotations
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 from app.core.config import settings
 
