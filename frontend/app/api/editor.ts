@@ -3,6 +3,8 @@ import { request } from "./client";
 export interface ChatResponse {
   reply: string;
   patch: PatchOp | null;
+  /** Optional reasoning/thinking content from the LLM (DeepSeek, etc.). */
+  thinking: string | null;
 }
 
 export interface PatchOp {

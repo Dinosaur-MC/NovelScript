@@ -28,6 +28,23 @@ export interface TaskFull {
   updated_at: string | null;
 }
 
+export interface KGNode {
+  id: string;
+  node_type: string;
+  name: string;
+  aliases: string[];
+  description: string | null;
+  properties: Record<string, unknown>;
+}
+
+export interface KGEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  relation: string;
+  weight: number;
+}
+
 export interface TaskStatus {
   task_id: string;
   status: string;

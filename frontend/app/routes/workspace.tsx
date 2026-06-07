@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router";
 import { message, Tag } from "antd";
 
 import { getTask } from "../api/tasks";
-import { getNovel } from "../api/novels";
+import { getNovel, getNovelKnowledgeGraph } from "../api/novels";
 import { ApiError } from "../api/types";
 import { useTaskStore } from "../stores/task-store";
 import { useNovelStore } from "../stores/novel-store";
@@ -37,6 +37,7 @@ export default function Workspace() {
   const setNovel = useNovelStore((s) => s.setNovel);
   const setChapters = useNovelStore((s) => s.setChapters);
   const loadScript = useScriptStore((s) => s.loadFromTaskResponse);
+  const setKnowledgeGraph = useScriptStore((s) => s.setKnowledgeGraph);
   const leftW = useUIStore((s) => s.leftWidth);
   const centerW = useUIStore((s) => s.centerWidth);
   const rightW = useUIStore((s) => s.rightWidth);
@@ -89,6 +90,18 @@ export default function Workspace() {
           if (!cancelled) {
             console.warn("Novel data unavailable:", novelErr);
             message.warning("小说原文加载失败，部分功能不可用");
+          }
+        }
+
+        // Phase 3: Fetch knowledge graph from novel endpoint (non-critical)
+        try {
+          const kgData = await getNovelKnowledgeGraph(taskData.novel_id);
+          if (!cancelled) {
+            setKnowledgeGraph({ nodes: kgData.nodes, edges: kgData.edges });
+          }
+        } catch (kgErr) {
+          if (!cancelled) {
+            console.warn("Knowledge graph unavailable:", kgErr);
           }
         }
       } catch (err) {

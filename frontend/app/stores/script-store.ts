@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { parse as parseYaml } from "yaml";
+import type { KGNode, KGEdge } from "../api/tasks";
 
 export interface SourceRef {
   document_id: string;
@@ -11,6 +12,8 @@ interface ScriptState {
   yaml: string | null;
   scenes: Record<string, unknown>[];
   characters: Record<string, unknown>[];
+  /** Full knowledge graph from the backend (all node types + edges). */
+  knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] } | null;
   /** elementId → SourceRef for O(1) forward trace lookup */
   sourceRefMap: Map<string, SourceRef>;
 
@@ -19,6 +22,7 @@ interface ScriptState {
     script_json?: Record<string, unknown> | null;
     characters_json?: Record<string, unknown>[] | null;
   }) => void;
+  setKnowledgeGraph: (kg: { nodes: KGNode[]; edges: KGEdge[] } | null) => void;
   /** Update yaml and re-parse scenes for live preview. */
   updateYaml: (yaml: string) => void;
   setYaml: (yaml: string) => void;
@@ -51,6 +55,7 @@ export const useScriptStore = create<ScriptState>((set) => ({
   yaml: null,
   scenes: [],
   characters: [],
+  knowledgeGraph: null,
   sourceRefMap: new Map(),
 
   loadFromTaskResponse: (data) => {
@@ -75,6 +80,8 @@ export const useScriptStore = create<ScriptState>((set) => ({
       sourceRefMap: map,
     });
   },
+
+  setKnowledgeGraph: (kg) => set({ knowledgeGraph: kg }),
 
   setYaml: (yaml) => set({ yaml }),
 
@@ -101,5 +108,5 @@ export const useScriptStore = create<ScriptState>((set) => ({
   },
 
   clearScript: () =>
-    set({ yaml: null, scenes: [], characters: [], sourceRefMap: new Map() }),
+    set({ yaml: null, scenes: [], characters: [], knowledgeGraph: null, sourceRefMap: new Map() }),
 }));

@@ -56,6 +56,15 @@ export function uploadNovelFile(file: File, title?: string, author?: string) {
   });
 }
 
+export interface NovelKG {
+  nodes: { id: string; node_type: string; name: string; aliases: string[]; description: string | null; properties: Record<string, unknown> }[];
+  edges: { id: string; source_node_id: string; target_node_id: string; relation: string; weight: number }[];
+}
+
+export function getNovelKnowledgeGraph(novelId: string) {
+  return request<NovelKG>(`/novels/${novelId}/knowledge-graph`);
+}
+
 export function deleteNovel(id: string) {
   return request<{ deleted_id: string }>(`/novels/${id}`, { method: "DELETE" });
 }
