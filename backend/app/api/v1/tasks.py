@@ -16,6 +16,7 @@ from typing import Optional
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -217,6 +218,130 @@ def list_tasks(
             "total": total,
             "page": page,
             "limit": limit,
+        },
+    )
+
+
+# ===================================================================
+# GET /api/tasks/dashboard — user-scoped aggregation (static route
+# declared BEFORE the /{task_id} parameterised routes below)
+# ===================================================================
+
+
+@router.get("/dashboard", response_model=BaseResponse)
+def get_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BaseResponse:
+    """Return user-scoped dashboard data — stats + recent items."""
+    user_id = current_user.id
+
+    # -- Stats (user-scoped counts) ------------------------------------
+    novel_count: int = (
+        db.query(func.count(Novel.id))  # type: ignore[name-defined]
+        .filter(Novel.user_id == user_id)
+        .scalar()
+    ) or 0
+
+    script_count: int = (
+        db.query(func.count(Script.id))  # type: ignore[name-defined]
+        .filter(Script.user_id == user_id)
+        .scalar()
+    ) or 0
+
+    task_counts = dict(
+        db.query(Task.status, func.count(Task.id))  # type: ignore[name-defined]
+        .filter(Task.user_id == user_id)
+        .group_by(Task.status)
+        .all()
+    )
+    in_progress = task_counts.get("preprocessing", 0) + task_counts.get("converting", 0)
+    completed = task_counts.get("completed", 0)
+    failed = task_counts.get("failed", 0)
+
+    # -- Recent tasks (latest 10, novel title + script_id pre-joined) -
+    recent_task_rows = (
+        db.query(
+            Task.id,
+            Task.script_id,
+            Task.status,
+            Task.progress,
+            Task.created_at,
+            Novel.title,
+        )
+        .join(Novel, Task.novel_id == Novel.id)
+        .filter(Task.user_id == user_id)
+        .order_by(Task.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    recent_tasks = [
+        {
+            "task_id": str(r.id),
+            "script_id": str(r.script_id) if r.script_id else None,
+            "novel_title": r.title or "未知小说",
+            "status": r.status,
+            "progress": r.progress,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in recent_task_rows
+    ]
+
+    # -- Recent scripts (latest 5) -------------------------------------
+    recent_script_rows = (
+        db.query(Script)
+        .filter(Script.user_id == user_id)
+        .order_by(Script.updated_at.desc())
+        .limit(5)
+        .all()
+    )
+    recent_scripts = [
+        {
+            "script_id": str(s.id),
+            "title": s.title,
+            "source_type": s.source_type,
+            "status": s.status,
+            "scene_count": (
+                len(s.script_json.get("scenes", [])) if s.script_json else 0
+            ),
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in recent_script_rows
+    ]
+
+    # -- Recent novels (latest 5) --------------------------------------
+    recent_novel_rows = (
+        db.query(Novel)
+        .filter(Novel.user_id == user_id)
+        .order_by(Novel.updated_at.desc())
+        .limit(5)
+        .all()
+    )
+    recent_novels = [
+        {
+            "id": str(n.id),
+            "title": n.title,
+            "word_count": n.word_count or 0,
+            "status": n.status,
+            "updated_at": n.updated_at.isoformat() if n.updated_at else None,
+        }
+        for n in recent_novel_rows
+    ]
+
+    return BaseResponse(
+        code=200,
+        message="OK",
+        data={
+            "stats": {
+                "novels": novel_count,
+                "scripts": script_count,
+                "in_progress": in_progress,
+                "completed": completed,
+                "failed": failed,
+            },
+            "recent_tasks": recent_tasks,
+            "recent_scripts": recent_scripts,
+            "recent_novels": recent_novels,
         },
     )
 
