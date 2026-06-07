@@ -20,24 +20,26 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 | Pipeline ↔ DB Integration | ✅ Complete — Celery worker (Redis broker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
 | Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; run_pipeline.apply_async() |
 | Auth & Security | ✅ Complete — get_current_user (blacklist→cache→DB), jti revocation, login rate limiting, require_ownership helper |
-| Tests | ✅ 158 passing, 0 skipped |
+| Tests | ✅ 288 passing, 0 skipped |
 | Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles) |
 
 **API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/`  (all write endpoints use auth middleware)
 
-### Pipeline Stages (v0.2.0)
+### Pipeline Stages (v0.3.0)
 
 ```
-1. Chunking      — regex split (第X章), LLM fallback (Flash)
-2. Summarize     — per-chapter objective summary (Flash, parallel)
-3. RAG Index     — FAISS via OpenRouter text-embedding-3-small
-4. GraphRAG      — KG extraction (Pro, with RAG cross-chapter context)
+1. Chunking               — regex split (第X章), LLM fallback (Flash)
+2. Summarize              — per-chapter objective summary (Flash, parallel)
+3. RAG Index              — FAISS via OpenRouter text-embedding-3-small
+4. GraphRAG               — KG extraction (Pro, with RAG cross-chapter context)
    • Single-shot  (≤5 chapters): all chapters in one prompt
    • Incremental  (>5 chapters): chapter-by-chapter with prior-entity context
-5. Conversion    — chapter → scenes (Flash, parallel, paragraph-group input + chapter summaries)
-6. Optimization  — cross-scene consistency (Pro, batched by scene)
-7. Narrative Summary — story overview from chapter summaries (Flash)
-→ Export (YAML/JSON)
+5. Conversion             — chapter → scenes (Flash, parallel, paragraph-group input + chapter summaries)
+5.5. Post-Processing      — deterministic (no LLM): scene_id assignment, heading normalization,
+                             element type fixing, embedded character splitting, micro-scene merging
+6. Optimization           — cross-scene consistency (Pro, batched by scene)
+7. Narrative Summary      — story overview from chapter summaries (Flash)
+→ Export (YAML/JSON/Fountain)
 → DB Cache: chapters + embeddings + KG persisted for reuse
 ```
 
@@ -72,6 +74,7 @@ uv run python -m cli.pipeline chapters/ -o out.yaml -n 3  # first 3 chapters, di
 |------|-------------|---------|
 | `-o`, `--output` | Write result to file instead of stdout | stdout |
 | `--json` | Export JSON instead of YAML | YAML |
+| `--fountain` | Export Fountain 1.1 (.fountain) screenplay format | YAML |
 | `-n N`, `--limit N` | Process only the first N chapters | all |
 | `-c C`, `--concurrency C` | Max concurrent LLM API calls | 20 |
 | `-s STYLE`, `--style STYLE` | AI scriptwriting direction injected into conversion prompts | (none) |
@@ -177,11 +180,17 @@ app/
     ├── rag_builder.py     # FAISS index, keyword fallback, embed_texts(), build_index_from_db_embeddings()
     ├── graphrag_builder.py # KG extraction: single-shot + incremental (chapter-by-chapter with entity dedup)
     ├── converter.py       # Chapter → scenes (Flash, paragraph groups, chapter_summary)
+    ├── heading_normalizer.py # Scene heading standardization (CN→EN prefix/ToD, FLASHBACK markers)
+    ├── element_fixer.py   # Element type corrections (internal monologue→dialogue, character split)
+    ├── scene_merger.py    # Micro-scene merger (same-location adjacent scene consolidation)
     ├── optimizer.py       # Batch consistency check (Pro, position-based source_ref restore)
+    ├── fountain_exporter.py # Fountain 1.1 format export (to_fountain())
     ├── llm_router.py      # Model routing, context/output limits, invoke_with_retry()
     ├── exporter.py        # to_yaml(), to_json()
     └── pipeline.py        # Orchestrator: run(), run_from_chapters(), run_from_text()
                            #   Optional faiss_index + kg params for cached reuse
+                           #   v0.3.0: _assign_scene_ids(), _validate_chapter_order(),
+                           #           _classify_narrative_layers(), post-processing integration
 ```
 
 **Key architectural patterns**:

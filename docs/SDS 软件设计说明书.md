@@ -1,8 +1,8 @@
 # NovelScript (析幕) 软件设计说明书
 
 - **项目名称**：NovelScript (析幕) – AI 驱动的长篇小说到结构化剧本转换系统
-- **文档版本**：v2.1.0
-- **日期**：2026-06-06
+- **文档版本**：v2.2.0
+- **日期**：2026-06-07
 - **作者**：Dinosaur_MC
 - **关联文档**：[SRS 需求规格说明书](./SRS%20需求规格说明书.md) · [YAML Schema 设计说明](./YAML_Schema_设计说明.md)
 
@@ -153,10 +153,14 @@ backend/cli/                    # Pipeline 引擎 (11 模块)
 ├── rag_builder.py              # FAISS 索引 (OpenRouter embedding) + 关键词回退
 ├── graphrag_builder.py         # 知识图谱提取 (Pro, RAG 跨章节上下文)
 ├── converter.py                # 章节→场景 (Flash, paragraph groups, 前情提要)
+├── heading_normalizer.py       # 场标标准化 (中→英前缀/时间, 闪回标记, INT./EXT. 启发式)
+├── element_fixer.py            # 元素类型修正 (内心独白→dialogue+V.O., 嵌入角色名拆分)
+├── scene_merger.py             # 微场景合并 (同地点相邻场景合并)
 ├── optimizer.py                # 分批一致性检查 (Pro, 位置索引 source_ref 恢复)
+├── fountain_exporter.py        # Fountain 1.1 格式导出 (Fountain 1.1 规范)
 ├── llm_router.py               # 模型路由, 上下文/输出限制, invoke_with_retry()
 ├── exporter.py                 # YAML/JSON 导出
-└── pipeline.py                 # 7 阶段编排 (3 入口: file/directory/chapters)
+└── pipeline.py                 # 8 阶段编排 + 确定性后处理 (3 入口: file/directory/chapters)
 ```
 
 **分层职责**：
@@ -171,16 +175,18 @@ backend/cli/                    # Pipeline 引擎 (11 模块)
 
 ### 3.1 7 阶段管道总览
 
-Pipeline 将小说→剧本转换分解为 7 个专业化阶段，阶段间**松耦合**，每个阶段有独立的前向依赖与回退策略：
+Pipeline 将小说→剧本转换分解为 7 个 LLM 阶段 + 1 个确定性后处理阶段，阶段间**松耦合**，每个阶段有独立的前向依赖与回退策略：
 
 ```
-1. Chunking      —— 正则 (第X章) + LLM 回退 (Flash)
-2. Summarize     —— 逐章客观摘要 (Flash, 并行)
-3. RAG Index     —— FAISS 向量索引 (OpenRouter embedding)
-4. GraphRAG      —— 知识图谱提取 (Pro, 带 RAG 跨章节上下文)
-5. Conversion    —— 章节→场景 (Flash, 并行, 段落组输入)
-6. Optimization  —— 跨场景一致性 (Pro, 按场景分批)
+1. Chunking          —— 正则 (第X章) + LLM 回退 (Flash)
+2. Summarize         —— 逐章客观摘要 (Flash, 并行)
+3. RAG Index         —— FAISS 向量索引 (OpenRouter embedding)
+4. GraphRAG          —— 知识图谱提取 (Pro, 带 RAG 跨章节上下文)
+5. Conversion        —— 章节→场景 (Flash, 并行, 段落组输入)
+5.5. Post-Processing —— 确定性后处理: scene_id 全局分配, heading 标准化, 元素修正, 微场景合并 (无 LLM)
+6. Optimization      —— 跨场景一致性 (Pro, 按场景分批)
 7. Narrative Summary —— 全局故事概述 (Flash, 从章摘要合成)
+8. Export            —— YAML / JSON / Fountain 1.1
 ```
 
 ### 3.2 Stage 1: 章节切分 (Chunking)
@@ -230,6 +236,26 @@ Pipeline 将小说→剧本转换分解为 7 个专业化阶段，阶段间**松
 - **source_ref 恢复**：优化后按**位置索引**（非 scene_id）从原始场景恢复溯源锚点
 - **回退**：批次失败保留原始场景
 - **重试**：最大 3 次（`consistency_check`）——管线末端，损失成本最高
+
+### 3.7.5 Stage 5.5: 确定性后处理 (Post-Processing, 无 LLM)
+
+在 Conversion 之后、Optimization 之前，运行 6 个确定性后处理步骤（**不调用 LLM**），修复 LLM 输出中的常见问题：
+
+| 步骤 | 模块 | 函数 | 功能 |
+|------|------|------|------|
+| 1. 全局 Scene ID | `pipeline.py` | `_assign_scene_ids()` | 分配全局唯一序号 `s_0001`, `s_0002`, … |
+| 2. Heading 标准化 | `heading_normalizer.py` | `normalize_heading()` | 中文→英文前缀/时间, 闪回标记 `(FLASHBACK)`, INT./EXT. 启发式检测 |
+| 3. 元素类型修正 | `element_fixer.py` | `fix_element_types()` | 内心独白→dialogue+(V.O.), 喃喃自语→dialogue |
+| 4. 角色名拆分 | `element_fixer.py` | `split_embedded_character()` | "Name(emotion)：content" → character+parenthetical+dialogue |
+| 5. 微场景合并 | `scene_merger.py` | `merge_tiny_scenes()` | 合并同地点相邻微场景（<2 元素） |
+| 6. 章节验证 | `pipeline.py` | `_validate_chapter_order()` | 检测时序倒置和章节断层 |
+| 7. 叙事框架检测 | `pipeline.py` | `_classify_narrative_layers()` | FRAME/FLASHBACK/FLASHBACK_NESTED 分层 |
+
+后处理结果注入 `Script.meta`：
+- `chapter_validation`: `{is_monotonic, warnings, chapter_indices, ...}`
+- `narrative_structure`: `{has_frame_narrative, layers: {FRAME, FLASHBACK, FLASHBACK_NESTED}}`
+- `null_source_ref_warnings`: 缺失溯源锚点的元素列表
+- `pipeline_version`: `"0.3.0"`
 
 ### 3.8 Stage 7: 叙事摘要 (Narrative Summary)
 
@@ -763,13 +789,18 @@ sequenceDiagram
 
 - **YAML 导出**：从 `tasks.script_yaml` 读取，通过 `/api/scripts/{id}/export?format=yaml` 返回文件流
 - **JSON 导出**：从 `tasks.script_json` 读取并序列化，通过 `/api/scripts/{id}/export?format=json` 返回
-- **Fountain 导出**：
-    1. 遍历 Scene 序列
-    2. Scene heading → `INT./EXT. 地点 - 时间`
-    3. Action element → 纯文本段落
-    4. Dialogue element → `角色名\n(括号提示)\n对白内容`
-    5. 在文件头部注入 Title Page 元数据
-    6. 一键下载 `.fountain` 文件
+- **Fountain 导出**（v0.3.0+: `fountain_exporter.py`，符合 https://fountain.io/syntax）：
+    1. Title Page (`Title:`, `Credit:`, `Source:`, `Notes:`)
+    2. Scene heading → 前后各一个空行
+    3. Character cue → UPPERCASE，前一个空行，后**无**空行（紧接 Dialogue/Parenthetical）
+    4. Dialogue → 紧接 Character 或 Parenthetical，无空行分隔
+    5. Parenthetical → 括号包裹，紧接 Character 或 Dialogue
+    6. Dialogue block 结束 → 一个空行
+    7. Transition → `> CUT TO:` 格式，前后空行
+    8. Lyric → `~ ` 前缀
+    9. Page breaks → `===`
+    10. 通过 `--fountain` CLI 标志或 `?format=fountain` API 端点导出
+    11. Celery 任务同步生成并存入 `task.script_fountain`
 
 ## 8. API 接口设计
 

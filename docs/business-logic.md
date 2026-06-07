@@ -3,7 +3,7 @@
 > AI-driven novel-to-script conversion pipeline.
 > Backed by an 8-table PostgreSQL All-in-One data layer.
 
-**Version:** 2.1.0  
+**Version:** 2.2.0  
 **Generated:** 2026-06-07
 
 ---
@@ -704,9 +704,10 @@ flowchart LR
     C --> D[3. RAG Index<br/>FAISS, OpenRouter embeddings]
     D --> E[4. GraphRAG<br/>Pro, incremental or single-shot]
     E --> F[5. Conversion<br/>chapter→scenes, parallel Flash]
-    F --> G[6. Optimization<br/>cross-scene consistency, Pro]
+    F --> P[5.5. Post-Processing<br/>scene_id, headings, elements, merge]
+    P --> G[6. Optimization<br/>cross-scene consistency, Pro]
     G --> H[7. Narrative Summary<br/>story overview, Flash]
-    H --> I[Script YAML/JSON]
+    H --> I[Script YAML/JSON/Fountain]
 ```
 
 ```mermaid
@@ -716,7 +717,8 @@ flowchart LR
     C --> D["25% rag"]
     D --> E["35% graphrag"]
     E --> F["35-75% converting"]
-    F --> G["90% optimizing"]
+    F --> P["78% post-processing"]
+    P --> G["90% optimizing"]
     G --> H["100% assembling"]
 ```
 
@@ -728,9 +730,10 @@ flowchart LR
 | 3. RAG Index | OpenRouter `text-embedding-3-small` | `build_index()` FAISS (or cached) | 25% |
 | 4. GraphRAG | DeepSeek Pro (single-shot ≤5ch, incremental >5ch) | `extract_graph()` / `extract_graph_incremental()` | 35% |
 | 5. Conversion | DeepSeek Flash (async parallel, with chapter summary) | `convert_chapter()` paragraph-group input | 35–75% |
+| 5.5. Post-Processing | Deterministic (no LLM) | `_assign_scene_ids()`, `normalize_heading()`, `fix_element_types()`, `split_embedded_character()`, `merge_tiny_scenes()` | 78% |
 | 6. Optimization | DeepSeek Pro (batched by scene) | `optimize()` cross-scene + source_ref restore | 90% |
 | 7. Narrative Summary | DeepSeek Flash | `_narrative_summary()` from chapter summaries | — |
-| — Assembly | — | Build `Script` model | 100% |
+| — Assembly | — | Build `Script` model, `_validate_chapter_order()`, `_classify_narrative_layers()` | 100% |
 
 ### 4.2 Data Flow
 
@@ -757,9 +760,10 @@ flowchart TD
     RAG --> CONV
     K --> CONV
     CONV --> SCENES["list[Scene]"]
-    SCENES --> OPT["optimize(all_scenes, kg)<br/>_restore_source_refs()"]
-    OPT --> SCR["Script { meta, summary,<br/>characters, scenes, kg }"]
-    SCR --> EXP["to_yaml() / to_json()<br/>→ Task.script_yaml / script_json"]
+    SCENES --> PP["Post-Processing<br/>_assign_scene_ids()<br/>normalize_heading()<br/>fix_element_types()<br/>split_embedded_character()<br/>merge_tiny_scenes()"]
+    PP --> OPT["optimize(all_scenes, kg)<br/>_restore_source_refs()"]
+    OPT --> SCR["Script { meta, summary,<br/>characters, scenes, kg }<br/>+ chapter_validation<br/>+ narrative_structure<br/>+ null_source_ref_warnings"]
+    SCR --> EXP["to_yaml() / to_json() / to_fountain()<br/>→ Task.script_yaml / script_json / script_fountain"]
 ```
 
 ### 4.3 Graceful Degradation
@@ -783,6 +787,37 @@ flowchart TD
 | `scene_conversion` | `deepseek-v4-flash` | Per-chapter scene generation (with chapter summary) |
 | `consistency_check` | `deepseek-v4-pro` | Cross-scene optimization (batched) |
 | `ai_chat` | `deepseek-v4-flash` | Editor AI chat assistant (GraphRAG-enhanced) |
+
+### 4.5 Post-Processing Pipeline (v0.3.0)
+
+After conversion and before optimization, six deterministic post-processing steps run
+with **no LLM calls**:
+
+| Step | Module | Function | Purpose |
+|------|--------|----------|---------|
+| Scene ID assignment | `pipeline.py` | `_assign_scene_ids()` | Globally unique sequential IDs (`s_0001`, `s_0002`, …) |
+| Heading normalisation | `heading_normalizer.py` | `normalize_heading()` | Chinese→English prefix/ToD, flashback markers, INT./EXT. heuristic |
+| Element type fixing | `element_fixer.py` | `fix_element_types()` | Internal monologue→dialogue+(V.O.), self-talk→dialogue |
+| Character split | `element_fixer.py` | `split_embedded_character()` | "Name(emotion)：content" → character+parenthetical+dialogue elements |
+| Scene merging | `scene_merger.py` | `merge_tiny_scenes()` | Merge adjacent same-location micro-scenes (<2 elements) |
+| Chapter validation | `pipeline.py` | `_validate_chapter_order()` | Detect non-monotonic indices and chapter gaps |
+| Narrative frame detection | `pipeline.py` | `_classify_narrative_layers()` | Classify scenes into FRAME/FLASHBACK/FLASHBACK_NESTED layers |
+
+### 4.6 Export Formats
+
+| Format | Exporter | CLI Flag | API Endpoint | Output |
+|--------|----------|----------|-------------|--------|
+| YAML | `exporter.py` → `to_yaml()` | (default) | `?format=yaml` | Full script with meta, scenes, KG |
+| JSON | `exporter.py` → `to_json()` | `--json` | `?format=json` | Pydantic `model_dump(mode="json")` |
+| Fountain 1.1 | `fountain_exporter.py` → `to_fountain()` | `--fountain` | `?format=fountain` | Industry-standard `.fountain` screenplay |
+
+The Fountain exporter complies with https://fountain.io/syntax:
+- Title page (`Title:`, `Credit:`, `Source:`)
+- Scene headings with blank line before and after
+- Character cues (UPPERCASE) → Dialogue (no blank line between)
+- Parentheticals immediately follow Character or Dialogue
+- Transitions (`> CUT TO:`), Lyrics (`~`) 
+- Page breaks (`===`)
 
 ---
 
