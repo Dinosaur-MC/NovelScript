@@ -9,20 +9,22 @@ export type TaskStatusValue =
 
 interface TaskState {
   taskId: string | null;
+  scriptId: string | null;
   novelId: string | null;
   status: TaskStatusValue | null;
   progress: number; // 0–100
-  stage: string | null; // e.g. "chunking", "graphrag", "converting"
+  stage: string | null;
   errorMessage: string | null;
 
-  setTask: (taskId: string, novelId: string, status: TaskStatusValue, progress?: number) => void;
+  setTask: (taskId: string, novelId: string, scriptId: string | null, status: TaskStatusValue, progress?: number) => void;
   updateProgress: (progress: number, status?: TaskStatusValue, stage?: string) => void;
   setError: (error: string) => void;
   clearTask: () => void;
 }
 
-const INITIAL: Pick<TaskState, "taskId" | "novelId" | "status" | "progress" | "stage" | "errorMessage"> = {
+const INITIAL: Pick<TaskState, "taskId" | "scriptId" | "novelId" | "status" | "progress" | "stage" | "errorMessage"> = {
   taskId: null,
+  scriptId: null,
   novelId: null,
   status: null,
   progress: 0,
@@ -33,8 +35,8 @@ const INITIAL: Pick<TaskState, "taskId" | "novelId" | "status" | "progress" | "s
 export const useTaskStore = create<TaskState>((set) => ({
   ...INITIAL,
 
-  setTask: (taskId, novelId, status, progress = 0) =>
-    set({ taskId, novelId, status, progress, stage: null, errorMessage: null }),
+  setTask: (taskId, novelId, scriptId, status, progress = 0) =>
+    set({ taskId, scriptId, novelId, status, progress, stage: null, errorMessage: null }),
 
   updateProgress: (progress, status, stage) =>
     set((s) => ({

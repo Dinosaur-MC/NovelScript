@@ -4,6 +4,7 @@ import { useTaskStore } from "../../stores/task-store";
 function reset() {
   useTaskStore.setState({
     taskId: null,
+    scriptId: null,
     novelId: null,
     status: null,
     progress: 0,
@@ -19,7 +20,7 @@ describe("task-store", () => {
     useTaskStore.getState().setError("old error");
     expect(useTaskStore.getState().errorMessage).toBe("old error");
 
-    useTaskStore.getState().setTask("t1", "n1", "converting", 42);
+    useTaskStore.getState().setTask("t1", "n1", null, "converting", 42);
 
     const s = useTaskStore.getState();
     expect(s.taskId).toBe("t1");
@@ -30,12 +31,12 @@ describe("task-store", () => {
   });
 
   it("setTask defaults progress to 0", () => {
-    useTaskStore.getState().setTask("t2", "n2", "pending");
+    useTaskStore.getState().setTask("t2", "n2", null, "pending");
     expect(useTaskStore.getState().progress).toBe(0);
   });
 
   it("updateProgress updates progress and optionally status", () => {
-    useTaskStore.getState().setTask("t", "n", "converting", 10);
+    useTaskStore.getState().setTask("t", "n", null, "converting", 10);
     useTaskStore.getState().updateProgress(35);
     expect(useTaskStore.getState().progress).toBe(35);
     // Status unchanged when not provided
@@ -47,14 +48,14 @@ describe("task-store", () => {
   });
 
   it("setError sets status to failed and records message", () => {
-    useTaskStore.getState().setTask("t", "n", "converting", 50);
+    useTaskStore.getState().setTask("t", "n", null, "converting", 50);
     useTaskStore.getState().setError("something went wrong");
     expect(useTaskStore.getState().status).toBe("failed");
     expect(useTaskStore.getState().errorMessage).toBe("something went wrong");
   });
 
   it("clearTask resets to initial state", () => {
-    useTaskStore.getState().setTask("t", "n", "completed", 100);
+    useTaskStore.getState().setTask("t", "n", null, "completed", 100);
     useTaskStore.getState().clearTask();
     expect(useTaskStore.getState().taskId).toBeNull();
     expect(useTaskStore.getState().novelId).toBeNull();

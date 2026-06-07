@@ -3,7 +3,6 @@ import { request } from "./client";
 export interface ChatResponse {
   reply: string;
   patch: PatchOp | null;
-  /** Optional reasoning/thinking content from the LLM (DeepSeek, etc.). */
   thinking: string | null;
 }
 
@@ -24,20 +23,23 @@ export interface UndoResult {
   rollback_operation_id: string;
 }
 
-export function sendChat(taskId: string, message: string, sceneId?: string) {
-  return request<ChatResponse>(`/editor/chat/${taskId}`, {
+/** Send a chat message scoped to a Script. */
+export function sendChat(scriptId: string, message: string, sceneId?: string) {
+  return request<ChatResponse>(`/editor/chat/${scriptId}`, {
     method: "POST",
     body: JSON.stringify({ message, scene_id: sceneId ?? null }),
   });
 }
 
-export function applyPatch(taskId: string, patch: PatchOp) {
-  return request<ApplyPatchResult>(`/editor/apply_patch/${taskId}`, {
+/** Apply a JSON Patch to the Script. */
+export function applyPatch(scriptId: string, patch: PatchOp) {
+  return request<ApplyPatchResult>(`/editor/apply_patch/${scriptId}`, {
     method: "POST",
     body: JSON.stringify(patch),
   });
 }
 
-export function undoEdit(taskId: string) {
-  return request<UndoResult>(`/editor/undo/${taskId}`, { method: "POST" });
+/** Undo the most recent patch on the Script. */
+export function undoEdit(scriptId: string) {
+  return request<UndoResult>(`/editor/undo/${scriptId}`, { method: "POST" });
 }

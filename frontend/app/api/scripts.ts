@@ -39,6 +39,19 @@ export interface ScriptUpdateResult {
   validation: { valid: boolean; errors: string | null };
 }
 
+/** Create a standalone or forked script. */
+export function createScript(title: string, sourceType: "standalone" | "forked" = "standalone", novelId?: string, forkFromId?: string) {
+  return request<{ script_id: string; title: string; source_type: string }>("/scripts/", {
+    method: "POST",
+    body: JSON.stringify({ title, source_type: sourceType, novel_id: novelId ?? null, fork_from_id: forkFromId ?? null }),
+  });
+}
+
+/** Fork an existing script. */
+export function forkScript(scriptId: string) {
+  return request<{ script_id: string; title: string }>(`/scripts/${scriptId}/fork`, { method: "POST" });
+}
+
 export function listScripts(novelId?: string, status?: string, page = 1, limit = 20) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
   if (novelId) params.set("novel_id", novelId);

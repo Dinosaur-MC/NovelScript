@@ -3,7 +3,6 @@ import { request } from "./client";
 export interface TaskLight {
   id: string;
   novel_id: string;
-  script_id: string | null;
   status: string;
   progress: number;
   summary: string | null;
@@ -20,16 +19,8 @@ export interface TaskFull {
   status: string;
   progress: number;
   summary: string | null;
-  characters_json: Record<string, unknown>[] | null;
-  script_yaml: string | null;
-  script_json: Record<string, unknown> | null;
-  script_fountain: string | null;
   error_message: string | null;
   pipeline_config: Record<string, unknown> | null;
-  knowledge_graph: {
-    nodes: KGNode[];
-    edges: KGEdge[];
-  } | null;
   created_at: string | null;
   updated_at: string | null;
 }

@@ -4,6 +4,7 @@ import { message, Tag } from "antd";
 
 import { getTask } from "../api/tasks";
 import { getNovel, getNovelKnowledgeGraph } from "../api/novels";
+import { getScript } from "../api/scripts";
 import { ApiError } from "../api/types";
 import { useTaskStore } from "../stores/task-store";
 import { useNovelStore } from "../stores/novel-store";
@@ -27,7 +28,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export default function Workspace() {
-  const { taskId } = useParams<{ taskId: string }>();
+  const { scriptId } = useParams<{ scriptId: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +37,7 @@ export default function Workspace() {
   const setTask = useTaskStore((s) => s.setTask);
   const setNovel = useNovelStore((s) => s.setNovel);
   const setChapters = useNovelStore((s) => s.setChapters);
-  const loadScript = useScriptStore((s) => s.loadFromTaskResponse);
+  const loadScript = useScriptStore((s) => s.loadScript);
   const setKnowledgeGraph = useScriptStore((s) => s.setKnowledgeGraph);
   const leftW = useUIStore((s) => s.leftWidth);
   const centerW = useUIStore((s) => s.centerWidth);
@@ -45,70 +46,78 @@ export default function Workspace() {
   const readerCollapsed = useUIStore((s) => s.readerCollapsed);
   const setReaderCollapsed = useUIStore((s) => s.setReaderCollapsed);
 
-  // Hooks — always called, safe with empty stores
+  // Hooks
   const autoSave = useAutoSave();
   const readerHook = useNovelReader();
   const editorHook = useScriptEditor();
   const traceHook = useTraceLinking(readerHook, editorHook);
 
-  // Progress polling
+  // Progress polling (SSE)
   useSSE();
 
-  // Async data load
+  // Async data load — Phase 1: Script, Phase 2: Novel, Phase 3: Task (legacy)
   useEffect(() => {
-    if (!taskId) return;
+    if (!scriptId) return;
     let cancelled = false;
 
     async function load() {
       try {
-        // Phase 1: Fetch task data (critical — must succeed)
-        const taskData = await getTask(taskId!);
+        // Phase 1: Fetch Script (primary v3 entity)
+        const scriptData = await getScript(scriptId!);
         if (cancelled) return;
 
-        setTask(taskId!, taskData.novel_id, taskData.status as never, taskData.progress);
-        loadScript({
-          script_yaml: taskData.script_yaml,
-          script_json: taskData.script_json,
-          characters_json: taskData.characters_json,
-          knowledge_graph: taskData.knowledge_graph ?? undefined,
-        });
+        loadScript(scriptData);
+        const novelId = scriptData.novel_id;
 
-        // Phase 2: Fetch novel data (non-critical — editor can work without it)
+        // Track task progress if this script has an associated task
+        // Legacy: try fetching the task that generated this script
         try {
-          const novelData = await getNovel(taskData.novel_id);
-          if (cancelled) return;
-
-          setNovel(novelData.novel.id, novelData.novel.title);
-          setChapters(
-            novelData.chapters.map((ch) => ({
-              index: ch.chapter_index,
-              title: ch.title ?? "",
-              content: ch.content,
-            })),
-          );
-        } catch (novelErr) {
-          // Novel data unavailable — editor still works, just without source text
+          const taskData = await getTask(scriptId!);
           if (!cancelled) {
-            console.warn("Novel data unavailable:", novelErr);
-            message.warning("小说原文加载失败，部分功能不可用");
+            setTask(taskData.id, taskData.novel_id, scriptId!, taskData.status as never, taskData.progress);
+          }
+        } catch {
+          // No task found — script may be standalone
+          if (!cancelled) {
+            setTask("", novelId ?? "", scriptId!, "completed", 100);
           }
         }
 
-        // Phase 3: Fetch knowledge graph from novel endpoint (non-critical)
-        try {
-          const kgData = await getNovelKnowledgeGraph(taskData.novel_id);
-          if (!cancelled) {
-            setKnowledgeGraph({ nodes: kgData.nodes, edges: kgData.edges });
+        // Phase 2: Fetch novel data (non-critical)
+        if (novelId) {
+          try {
+            const novelData = await getNovel(novelId);
+            if (cancelled) return;
+
+            setNovel(novelId, novelData.novel.title);
+            setChapters(
+              novelData.chapters.map((ch) => ({
+                index: ch.chapter_index,
+                title: ch.title ?? "",
+                content: ch.content,
+              })),
+            );
+          } catch (novelErr) {
+            if (!cancelled) {
+              console.warn("Novel data unavailable:", novelErr);
+              message.warning("小说原文加载失败，部分功能不可用");
+            }
           }
-        } catch (kgErr) {
-          if (!cancelled) {
-            console.warn("Knowledge graph unavailable:", kgErr);
+
+          // Phase 3: Fetch KG from novel endpoint
+          try {
+            const kgData = await getNovelKnowledgeGraph(novelId);
+            if (!cancelled) setKnowledgeGraph({ nodes: kgData.nodes, edges: kgData.edges });
+          } catch (kgErr) {
+            if (!cancelled) console.warn("Knowledge graph unavailable:", kgErr);
           }
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof ApiError && err.status === 404
-          ? "任务不存在（可能已被删除）"
-          : (err as Error).message || "加载失败，请检查网络后重试");
+        if (!cancelled) setError(
+          err instanceof ApiError && err.status === 404
+            ? "剧本不存在（可能已被删除）"
+            : (err as Error).message || "加载失败，请检查网络后重试"
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -116,7 +125,7 @@ export default function Workspace() {
 
     load();
     return () => { cancelled = true; };
-  }, [taskId, setTask, loadScript, setNovel, setChapters]);
+  }, [scriptId, loadScript, setTask, setNovel, setChapters, setKnowledgeGraph]);
 
   if (error) {
     return (
@@ -124,12 +133,7 @@ export default function Workspace() {
         <TaskBar loading={false} />
         <div className="ns-workspace-error-body">
           <p className="ns-workspace-error-text">{error}</p>
-          <button
-            onClick={() => navigate("/")}
-            className="ns-workspace-error-btn"
-          >
-            返回首页
-          </button>
+          <button onClick={() => navigate("/")} className="ns-workspace-error-btn">返回首页</button>
         </div>
         <StatusBar />
       </div>
@@ -143,13 +147,10 @@ export default function Workspace() {
         {loading ? (
           <div className="ns-workspace-loading">
             <div className="ns-spinner" />
-            <span className="ns-workspace-loading-text">
-              加载中...
-            </span>
+            <span className="ns-workspace-loading-text">加载中...</span>
           </div>
         ) : (
           <div className="ns-workspace-panels">
-            {/* Collapse tab — instant appearance */}
             <div
               className="ns-reader-collapse-tab"
               onClick={() => setReaderCollapsed(false)}
@@ -162,7 +163,6 @@ export default function Workspace() {
             >
               小说原文
             </div>
-            {/* Reader panel — smooth collapse animation */}
             <div
               className="ns-workspace-reader-panel"
               style={{
@@ -172,7 +172,6 @@ export default function Workspace() {
             >
               <NovelReader readerHook={readerHook} traceHook={traceHook} />
             </div>
-            {/* Splitter handle — always present for resizing */}
             <div
               onMouseDown={(e) => {
                 e.preventDefault();
@@ -201,7 +200,6 @@ export default function Workspace() {
               }}
               className="ns-workspace-resizer"
             />
-            {/* Editor + RightPanel */}
             <div className="ns-workspace-editor-area">
               <Splitter
                 direction="horizontal"

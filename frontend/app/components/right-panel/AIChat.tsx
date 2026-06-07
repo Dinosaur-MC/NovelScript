@@ -77,9 +77,10 @@ function startTypingAnimation(
 }
 
 export function AIChat({ editorHook }: Props) {
-  const taskId = useTaskStore((s) => s.taskId);
+  const scriptId = useScriptStore((s) => s.scriptId);
   const pushUndo = useEditorStore((s) => s.pushUndo);
   const scenes = useScriptStore((s) => s.scenes);
+  const scriptTitle = useScriptStore((s) => s.title);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -104,7 +105,7 @@ export function AIChat({ editorHook }: Props) {
   }, [messages]);
 
   const handleSend = useCallback(async () => {
-    if (!taskId || !input.trim() || sending) return;
+    if (!scriptId || !input.trim() || sending) return;
     const userMsg: MessageItem = {
       id: nextId(),
       role: "user",
@@ -118,7 +119,7 @@ export function AIChat({ editorHook }: Props) {
     setSending(true);
 
     try {
-      const res: ChatResponse = await sendChat(taskId, userMsg.content, sceneId);
+      const res: ChatResponse = await sendChat(scriptId, userMsg.content, sceneId);
 
       const assistantId = nextId();
       const assistantMsg: MessageItem = {
@@ -141,13 +142,13 @@ export function AIChat({ editorHook }: Props) {
       message.error("AI 服务暂时不可用");
       setSending(false);
     }
-  }, [taskId, input, sending, sceneId]);
+  }, [scriptId, input, sending, sceneId]);
 
   const handleApplyPatch = useCallback(
     async (patch: PatchOp) => {
-      if (!taskId) return;
+      if (!scriptId) return;
       try {
-        const res = await applyPatch(taskId, patch);
+        const res = await applyPatch(scriptId, patch);
         editorHook.applyExternalEdit(JSON.stringify(res.script_json, null, 2));
         pushUndo(patch);
         message.success("更改已应用");
@@ -155,19 +156,19 @@ export function AIChat({ editorHook }: Props) {
         message.error("应用更改失败");
       }
     },
-    [taskId, editorHook, pushUndo],
+    [scriptId, editorHook, pushUndo],
   );
 
   const handleUndo = useCallback(async () => {
-    if (!taskId) return;
+    if (!scriptId) return;
     try {
-      const res = await undoEdit(taskId);
+      const res = await undoEdit(scriptId);
       editorHook.applyExternalEdit(JSON.stringify(res.script_json, null, 2));
       message.success("已撤销");
     } catch {
       message.error("撤销失败");
     }
-  }, [taskId, editorHook]);
+  }, [scriptId, editorHook]);
 
   /** Custom rendering components for react-markdown — styles code fences. */
   const markdownComponents: Components = useMemo(

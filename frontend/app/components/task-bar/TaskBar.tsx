@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router";
-import { Button, Dropdown, Tag, Avatar, Popover } from "antd";
-import { ExportOutlined, HomeOutlined, UserOutlined, LogoutOutlined } from "@ant-design/icons";
+import { Button, Dropdown, Tag, Avatar, Popover, message } from "antd";
+import { ExportOutlined, ForkOutlined, HomeOutlined, UserOutlined, LogoutOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
+import { useScriptStore } from "../../stores/script-store";
 import { useAuthStore } from "../../stores/auth-store";
-import { exportScript } from "../../api/scripts";
+import { exportScript, forkScript } from "../../api/scripts";
 import { logout } from "../../api/auth";
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
@@ -16,7 +17,9 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
 
 export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
   const navigate = useNavigate();
-  const taskId = useTaskStore((s) => s.taskId);
+  const scriptId = useScriptStore((s) => s.scriptId);
+  const scriptStatus = useScriptStore((s) => s.sourceType);
+  const title = useScriptStore((s) => s.title);
   const status = useTaskStore((s) => s.status);
 
   const statusInfo = STATUS_MAP[status ?? ""] ?? { color: "default", label: "未知" };
@@ -24,8 +27,8 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
   const clearUser = useAuthStore((s) => s.clearUser);
 
   const handleExport = async (format: "yaml" | "json" | "fountain") => {
-    if (!taskId) return;
-    const content = await exportScript(taskId, format);
+    if (!scriptId) return;
+    const content = await exportScript(scriptId, format);
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -33,6 +36,16 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
     a.download = `script.${format === "fountain" ? "fountain" : format}`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleFork = async () => {
+    if (!scriptId) return;
+    try {
+      const res = await forkScript(scriptId);
+      message.success(`已创建副本: ${res.title}`);
+    } catch {
+      message.error("创建副本失败");
+    }
   };
 
   return (
@@ -44,6 +57,11 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
             NovelScript
           </span>
         </Button>
+        {title && (
+          <span className="ns-taskbar-title" title={title}>
+            {title.slice(0, 20)}{title.length > 20 ? "…" : ""}
+          </span>
+        )}
         {isLoading && <Tag color="processing">加载中...</Tag>}
         {!isLoading && status && <Tag color={statusInfo.color}>{statusInfo.label}</Tag>}
       </div>
@@ -95,7 +113,7 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
             登录
           </Button>
         )}
-        {taskId && status === "completed" && (
+        {scriptId && (
           <Dropdown
             menu={{
               items: [
@@ -108,6 +126,9 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
           >
             <Button icon={<ExportOutlined />}>导出</Button>
           </Dropdown>
+        )}
+        {scriptId && (
+          <Button icon={<ForkOutlined />} onClick={handleFork}>创建副本</Button>
         )}
       </div>
     </header>
