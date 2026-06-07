@@ -261,7 +261,7 @@ def _persist_embeddings(
     )
 
 
-def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID) -> None:
+def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID, script_id: uuid.UUID | None = None) -> None:
     """Persist CLI KnowledgeGraph nodes/edges to DB tables.
 
     Maps CLI string ids (``n_01``) → DB UUIDs, inserts nodes first
@@ -282,6 +282,7 @@ def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID) -> Non
         db_node = KnowledgeNode(
             id=db_id,
             novel_id=novel_id,
+            script_id=script_id,
             task_id=task_id,
             node_type=n.node_type,
             name=n.name,
@@ -301,6 +302,7 @@ def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID) -> Non
             continue
         db_edge = KnowledgeEdge(
             novel_id=novel_id,
+            script_id=script_id,
             task_id=task_id,
             source_node_id=src_id,
             target_node_id=tgt_id,

@@ -21,6 +21,7 @@ interface ScriptState {
     script_yaml?: string | null;
     script_json?: Record<string, unknown> | null;
     characters_json?: Record<string, unknown>[] | null;
+    knowledge_graph?: { nodes: KGNode[]; edges: KGEdge[] } | null;
   }) => void;
   setKnowledgeGraph: (kg: { nodes: KGNode[]; edges: KGEdge[] } | null) => void;
   /** Update yaml and re-parse scenes for live preview. */
@@ -72,11 +73,13 @@ export const useScriptStore = create<ScriptState>((set) => ({
       } catch { /* keep empty scenes on parse failure */ }
     }
 
+    const kg = data.knowledge_graph ?? null;
     const map = buildSourceRefMap(scenes);
     set({
       yaml: data.script_yaml ?? null,
       scenes,
       characters,
+      knowledgeGraph: kg,
       sourceRefMap: map,
     });
   },

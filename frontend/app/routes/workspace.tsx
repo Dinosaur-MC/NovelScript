@@ -70,6 +70,7 @@ export default function Workspace() {
           script_yaml: taskData.script_yaml,
           script_json: taskData.script_json,
           characters_json: taskData.characters_json,
+          knowledge_graph: taskData.knowledge_graph ?? undefined,
         });
 
         // Phase 2: Fetch novel data (non-critical — editor can work without it)

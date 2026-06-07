@@ -89,7 +89,8 @@ export function HomePage() {
   // Group scripts by novel_id
   const scriptsByNovel: Record<string, ScriptLight[]> = {};
   for (const s of scripts) {
-    (scriptsByNovel[s.novel_id] ??= []).push(s);
+    const key = s.novel_id ?? "_unlinked";
+    (scriptsByNovel[key] ??= []).push(s);
   }
 
   // Search & filter
@@ -160,7 +161,8 @@ export function HomePage() {
       setScripts((prev) => [
         ...prev,
         {
-          script_id: res.task_id, novel_id: novelId, status: "pending",
+          script_id: res.task_id, novel_id: novelId, title: "新剧本",
+          source_type: "generated", status: "pending",
           progress: 0, summary: null, scene_count: 0,
           created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         },

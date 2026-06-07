@@ -180,13 +180,40 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         task.updated_at = datetime.now(timezone.utc)
         session.add(task)
 
+        # v3: populate Script entity
+        from app.models.sql import Script as ScriptModel
+        if task.script_id:
+            script_row = session.get(ScriptModel, task.script_id)
+        else:
+            script_row = None
+        if script_row is None:
+            script_row = ScriptModel(
+                novel_id=nid,
+                user_id=task.user_id,
+                title=task.summary or "Generated Script",
+                source_type="generated",
+            )
+            session.add(script_row)
+            session.flush()
+            task.script_id = script_row.id
+            session.add(task)
+        script_row.script_yaml = task.script_yaml
+        script_row.script_json = task.script_json
+        script_row.script_fountain = task.script_fountain
+        script_row.characters_json = task.characters_json
+        script_row.summary = task.summary
+        script_row.token_usage = task.token_usage
+        script_row.status = "completed"
+        script_row.updated_at = datetime.now(timezone.utc)
+        session.add(script_row)
+
         # Cache for future runs
         if not chapters:
             _persist_chapters(session, nid, script.meta.get("chapter_summaries", []))
         if not embeddings_map and faiss_index is None:
             _persist_embeddings(session, nid, source, script)
         if cached_kg is None:
-            _persist_kg(session, script, tid, nid)
+            _persist_kg(session, script, tid, nid, script_row.id if script_row else None)
 
         session.commit()
         session.close()

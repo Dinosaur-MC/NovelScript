@@ -2,7 +2,9 @@ import { request } from "./client";
 
 export interface ScriptLight {
   script_id: string;
-  novel_id: string;
+  novel_id: string | null;
+  title: string;
+  source_type: string;
   status: string;
   progress: number;
   summary: string | null;
@@ -13,14 +15,20 @@ export interface ScriptLight {
 
 export interface ScriptFull {
   script_id: string;
-  novel_id: string;
+  novel_id: string | null;
+  user_id: string | null;
+  title: string;
+  source_type: string;
   status: string;
-  progress: number;
   summary: string | null;
   script_yaml: string | null;
   script_json: Record<string, unknown> | null;
   script_fountain: string | null;
   characters_json: Record<string, unknown>[] | null;
+  knowledge_graph: {
+    nodes: { id: string; node_type: string; name: string; aliases: string[]; description: string | null; properties: Record<string, unknown> }[];
+    edges: { id: string; source_node_id: string; target_node_id: string; relation: string; weight: number }[];
+  } | null;
   created_at: string | null;
   updated_at: string | null;
 }
