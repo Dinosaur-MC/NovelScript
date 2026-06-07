@@ -23,6 +23,7 @@ from app.core.security import (
     verify_password,
 )
 from app.services.token_blacklist import blacklist_token
+from app.services.rate_limiter import check_rate_limit, reset_rate_limit
 from app.models.http import BaseResponse
 from app.models.sql import User
 from app.services.base import BaseCRUD
@@ -90,14 +91,41 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/login")
-def login(body: LoginRequest, db: Session = Depends(get_db)):
-    """Authenticate user and return a JWT access token."""
+def login(
+    body: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    r=Depends(get_redis),
+):
+    """Authenticate user and return a JWT access token.
+
+    Rate-limited: 5 attempts per email + IP per 15-minute window.
+    On successful authentication the rate counters are cleared.
+    """
+    # ── rate limiting ──────────────────────────────────────────
+    client_ip = request.client.host if request.client else "unknown"
+
+    allowed_email, _ = check_rate_limit(r, "login-email", body.email)
+    allowed_ip, _ = check_rate_limit(r, "login-ip", client_ip)
+
+    if not (allowed_email and allowed_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="登录尝试过于频繁，请15分钟后再试",
+            headers={"Retry-After": "900"},
+        )
+
+    # ── credential check (existing logic) ──────────────────────
     user = db.execute(
         select(User).where(User.email == body.email)
     ).scalar_one_or_none()
 
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
+
+    # ── clear rate counters on success ─────────────────────────
+    reset_rate_limit(r, "login-email", body.email)
+    reset_rate_limit(r, "login-ip", client_ip)
 
     # Update last login
     user.last_login_at = datetime.now(timezone.utc)
