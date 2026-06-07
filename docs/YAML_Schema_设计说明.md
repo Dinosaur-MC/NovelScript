@@ -779,7 +779,7 @@ class GraphNode(BaseModel):
     id: str
     label: str
     type: Literal[
-        "character", "location", "prop", "event", "organization", "concept"
+        "character", "location", "item", "event", "organization", "concept"
     ]
     metadata: dict = Field(default_factory=dict)
 
@@ -1016,7 +1016,7 @@ script:
               type: "location"
             - id: "item_01"
               label: "旧式怀表"
-              type: "prop"
+              type: "item"
         edges:
             - source: "char_01"
               target: "char_02"

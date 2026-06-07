@@ -1,7 +1,7 @@
 # NovelScript Business Logic Documentation
 
 > AI-driven novel-to-script conversion pipeline.
-> Backed by an 8-table PostgreSQL All-in-One data layer.
+> Backed by a 9-table PostgreSQL All-in-One data layer.
 
 **Version:** 2.2.0  
 **Generated:** 2026-06-07
@@ -147,6 +147,7 @@ erDiagram
 | `script_fountain` | TEXT | NULL | Fountain format (future) |
 | `error_message` | TEXT | NULL | Pipeline failure details |
 | `pipeline_config` | JSONB | `'{}'` | Configuration overrides |
+| `token_usage` | JSONB | `'{}'` | LLM token usage tracking |
 | `created_at` | TIMESTAMPTZ | `now()` | |
 | `updated_at` | TIMESTAMPTZ | `now()` | |
 
@@ -881,7 +882,7 @@ stateDiagram-v2
 
 ### 6.1 BaseCRUD[T]
 
-Generic synchronous repository for all 8 tables.
+Generic synchronous repository for all 9 tables.
 
 ```
 create(db, obj)        → obj          (add, flush, refresh)
@@ -902,8 +903,8 @@ for incremental progress ticks**.
 
 ### 6.3 DB Cache Helpers
 
-The ``pipeline_executor`` module now provides **stateless DB helpers** for the
-Celery worker:
+The ``pipeline_executor`` module provides **stateless DB helpers** called from the
+Celery worker (not the FastAPI request path):
 
 - ``_load_chapters(session, novel_id)`` → (chapters, embeddings_map)
 - ``_load_cached_kg(session, novel_id)`` → KnowledgeGraph or None

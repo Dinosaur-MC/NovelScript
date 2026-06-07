@@ -48,7 +48,7 @@
 
 ### 2.1 总体架构
 
-系统摒弃传统的 "MySQL + FAISS + Neo4j" 多组件堆砌，采用 **PostgreSQL All-in-One** 架构：pgvector 替代 FAISS 做向量检索，JSONB + 独立点边表 (`knowledge_nodes`/`knowledge_edges`) 替代 Neo4j 做图存储与 GraphRAG 遍历，8 张关系表管理用户、小说、任务管线、操作历史、AI 对话与系统审计。
+系统摒弃传统的 "MySQL + FAISS + Neo4j" 多组件堆砌，采用 **PostgreSQL All-in-One** 架构：pgvector 替代 FAISS 做向量检索，JSONB + 独立点边表 (`knowledge_nodes`/`knowledge_edges`) 替代 Neo4j 做图存储与 GraphRAG 遍历，9 张关系表管理用户、小说、任务管线、操作历史、AI 对话与系统审计。
 
 ```mermaid
 flowchart TB
@@ -66,12 +66,13 @@ flowchart TB
 
     subgraph FastAPI["FastAPI Application Server (Python 3.13)"]
         direction TB
-        Auth["/api/auth/*<br/>（用户认证）"]
-        Novel["/api/novel/*<br/>（任务管线）"]
-        ScriptApi["/api/scripts/*<br/>（剧本管理）"]
-        EdApi["/api/editor/*<br/>（AI 编辑）"]
+        Auth["/api/v1/auth/*<br/>（用户认证）"]
+        Novel["/api/v1/novels/*<br/>（小说管理）"]
+        TasksApi["/api/v1/tasks/*<br/>（任务管线 + SSE）"]
+        ScriptApi["/api/v1/scripts/*<br/>（剧本管理）"]
+        EdApi["/api/v1/editor/*<br/>（AI 编辑）"]
         Router["LLM Router<br/>（Pro ↔ Flash）"]
-        DAL["Data Access Layer<br/>（Asyncpg + SQLModel）"]
+        DAL["Data Access Layer<br/>（psycopg2 + SQLModel）"]
     end
 
     FastAPI --> PostgreSQL
@@ -438,7 +439,7 @@ flowchart TB
 
 ### 5.5 持久化存储 DDL
 
-利用 pgvector 和 JSONB 实现 All-in-One 架构。相比 SRS v2.0.0 初版设计（4 表），重构后的数据模型扩展至 **8 张核心表**，覆盖用户鉴权、小说实体、任务管线、知识图谱、操作历史、AI 对话与系统审计七大领域。
+利用 pgvector 和 JSONB 实现 All-in-One 架构。相比 SRS v2.0.0 初版设计（4 表），重构后的数据模型扩展至 **9 张核心表**（users, novels, tasks, chapters, knowledge_nodes, knowledge_edges, operations, dialogues, audit_logs），覆盖用户鉴权、小说实体、任务管线、知识图谱、操作历史、AI 对话与系统审计七大领域。
 
 ```sql
 -- 启用必要插件
@@ -635,7 +636,7 @@ CREATE INDEX idx_audit_task ON audit_logs(task_id);
 | 版本    | 表数 | 覆盖领域                                                          |
 | :------ | :--- | :---------------------------------------------------------------- |
 | v1 (旧) | 4    | 任务 + 章节 + 操作 + 对话（小说原文内嵌于任务）                   |
-| v2 (新) | 8    | 用户 + 小说 + 任务 + 章节 + 知识图谱点边 + 操作 + 对话 + 审计日志 |
+| v2 (新) | 9    | 用户 + 小说 + 任务 + 章节 + 知识图谱点边 + 操作 + 对话 + 审计日志 |
 
 **表关系概览**：
 
@@ -669,14 +670,14 @@ erDiagram
 stateDiagram-v2
     [*] --> PENDING
 
-    PENDING --> PREPROCESSING : POST /api/novel/preprocess/{id}
+    PENDING --> PREPROCESSING : POST /api/v1/tasks/{id} create
     note right of PREPROCESSING
-        Stage 1: 章节切分 + 实体提取 + 向量入库
+        Stage 1-4: 章节切分 + 摘要 + RAG + GraphRAG
     end note
 
     PREPROCESSING --> CONVERTING
 
-    CONVERTING --> CONVERTING : 失败 + 可恢复（网络波动）<br>→ POST /api/novel/resume/{id}
+    CONVERTING --> CONVERTING : 失败 + 可恢复（网络波动）<br>→ POST /api/v1/tasks/{id}/resume
     note right of CONVERTING
         Stage 2+3: 场景生成 + 校验 + 优化
     end note
@@ -725,7 +726,7 @@ sequenceDiagram
     participant Client as 🖥 Client
     participant Server as ⚙️ Server
 
-    Client->>Server: GET /api/novel/status/{id}<br/>Accept: text/event-stream
+    Client->>Server: GET /api/v1/tasks/{id}/stream<br/>Accept: text/event-stream
 
     Server-->>Client: event: progress<br/>data: {"progress": 15, "stage": "preprocessing"}
     Server-->>Client: event: progress<br/>data: {"progress": 45, "stage": "converting"}
@@ -733,14 +734,14 @@ sequenceDiagram
     Server-->>Client: event: complete<br/>data: {"progress": 100, "script_yaml": "..."}
 ```
 
-- **实现**：`sse-starlette` 库，后端通过 `asyncio.Queue` 收集 Pipeline 各阶段进度事件并推流
+- **实现**：Celery `self.update_state()` 写入 Redis → `AsyncResult(task_id)` 轮询 → SSE 端点推送
 - **前端**：使用 `EventSource` API 订阅，实时更新 Zustand `task-store`
 
 ### 6.4 断点续传
 
 - **触发条件**：转换过程中网络波动或 LLM 调用超时
-- **恢复机制**：`POST /api/novel/resume/{task_id}` 读取 `chapters` 表中已成功转换的 `chapter_index`，从下一个未完成 Chunk 处继续，避免全盘重跑
-- **幂等性**：已完成章节的 Scene 数据不被覆盖，仅追加新增部分
+- **恢复机制**：`POST /api/v1/tasks/{task_id}/resume` 重新调度 Celery pipeline（已有章节数据从 DB 复用）
+- **幂等性**：已持久化的章节和 KG 数据在 DB 中复用，KG 和 embeddings 跳过 API 调用
 
 ## 7. 模块详细设计
 
@@ -806,16 +807,16 @@ sequenceDiagram
 
 ### 8.1 RESTful 端点签名
 
-#### 8.1.0 用户认证 (`/api/auth`)
+#### 8.1.0 用户认证 (`/api/v1/auth`)
 
-| 方法   | 路径                 | 说明                                   |
-| :----- | :------------------- | :------------------------------------- |
-| `POST` | `/api/auth/register` | 用户注册 (username + email + password) |
-| `POST` | `/api/auth/login`    | 用户登录，返回 session token           |
-| `POST` | `/api/auth/logout`   | 注销当前会话                           |
-| `GET`  | `/api/auth/me`       | 获取当前用户信息                       |
+| 方法   | 路径                      | 说明                                   |
+| :----- | :------------------------ | :------------------------------------- |
+| `POST` | `/api/v1/auth/register`   | 用户注册 (username + email + password) |
+| `POST` | `/api/v1/auth/login`      | 用户登录，返回 JWT token               |
+| `POST` | `/api/v1/auth/logout`     | 注销当前会话 (Redis jti 黑名单)        |
+| `GET`  | `/api/v1/auth/me`         | 获取当前用户信息                       |
 
-**POST /api/auth/register**
+**POST /api/v1/auth/register**
 
 ```json
 // Request
@@ -827,7 +828,7 @@ sequenceDiagram
 { "code": 0, "data": { "user_id": "uuid", "username": "writer01" } }
 ```
 
-**POST /api/auth/login**
+**POST /api/v1/auth/login**
 
 ```json
 // Request
@@ -849,18 +850,20 @@ sequenceDiagram
 - **密码存储**：bcrypt / argon2 哈希
 - **P2 预留**：OAuth2 (GitHub/Google) 第三方登录
 
-#### 8.1.1 任务管理 (`/api/novel`)
+#### 8.1.1 小说与任务管理 (`/api/v1/novels`, `/api/v1/tasks`)
 
 | 方法   | 路径                              | 说明                                                           |
 | :----- | :-------------------------------- | :------------------------------------------------------------- |
-| `POST` | `/api/novel/upload`               | 上传小说文本 (multipart 或 JSON)                               |
-| `POST` | `/api/novel/preprocess/{task_id}` | 启动预处理 (章节切分 + 实体提取)                               |
-| `GET`  | `/api/novel/status/{task_id}`     | 查询任务状态 (支持 SSE 流式进度)                               |
-| `POST` | `/api/novel/convert/{task_id}`    | 启动剧本转换                                                   |
-| `POST` | `/api/novel/resume/{task_id}`     | 断点续传                                                       |
-| `GET`  | `/api/novel/export/{task_id}`     | 导出剧本文件（快捷方式 → 重定向至 `/api/scripts/{id}/export`） |
+| `POST` | `/api/v1/novels/upload`           | 上传小说文本 (JSON body)                                       |
+| `POST` | `/api/v1/novels/upload/file`      | 上传小说文件 (multipart)                                       |
+| `GET`  | `/api/v1/novels/`                 | 小说列表 (分页)                                                |
+| `POST` | `/api/v1/tasks/`                  | 创建任务 + 调度 Celery pipeline                                |
+| `GET`  | `/api/v1/tasks/{id}/stream`       | SSE 进度流 (polls Redis AsyncResult)                           |
+| `GET`  | `/api/v1/tasks/{id}/status`       | 任务状态 (轻量)                                                |
+| `POST` | `/api/v1/tasks/{id}/resume`       | 恢复失败任务                                                   |
+| `GET`  | `/api/v1/scripts/{id}/export`     | 导出剧本 (yaml/json/fountain)                                  |
 
-**POST /api/novel/upload**
+**POST /api/v1/novels/upload**
 
 ```json
 // Request (JSON body)
@@ -897,15 +900,15 @@ event: complete
 data: {"progress": 100, "novel_id": "uuid-novel", "task_id": "uuid-task", "status": "completed", "script_yaml": "..."}
 ```
 
-#### 8.1.2 AI 编辑 (`/api/editor`)
+#### 8.1.2 AI 编辑 (`/api/v1/editor`)
 
-| 方法   | 路径                                | 说明                 |
-| :----- | :---------------------------------- | :------------------- |
-| `POST` | `/api/editor/chat/{task_id}`        | AI 对话 (上下文感知) |
-| `POST` | `/api/editor/apply_patch/{task_id}` | 应用 AI 生成的 Patch |
-| `POST` | `/api/editor/undo/{task_id}`        | 撤销最近操作         |
+| 方法   | 路径                                     | 说明                 |
+| :----- | :--------------------------------------- | :------------------- |
+| `POST` | `/api/v1/editor/chat/{task_id}`          | AI 对话 (上下文感知 + GraphRAG) |
+| `POST` | `/api/v1/editor/apply_patch/{task_id}`   | 应用 JSON Patch       |
+| `POST` | `/api/v1/editor/undo/{task_id}`          | 撤销最近操作          |
 
-**POST /api/editor/chat/{task_id}**
+**POST /api/v1/editor/chat/{task_id}**
 
 ```json
 // Request
@@ -927,20 +930,19 @@ data: {"progress": 100, "novel_id": "uuid-novel", "task_id": "uuid-task", "statu
 }
 ```
 
-#### 8.1.3 剧本管理 (`/api/scripts`)
+#### 8.1.3 剧本管理 (`/api/v1/scripts`)
 
 剧本作为独立资源暴露 CRUD 端点，与任务管线解耦——用户从 Monaco 编辑器的直接修改、剧本版本对比、跨任务复用均通过此组端点完成。
 
-| 方法     | 路径                            | 说明                                          |
-| :------- | :------------------------------ | :-------------------------------------------- |
-| `GET`    | `/api/scripts`                  | 剧本列表 (`?novel_id=&status=&page=&limit=`)  |
-| `GET`    | `/api/scripts/{script_id}`      | 获取剧本详情 (含完整 YAML/JSON/Fountain)      |
-| `PUT`    | `/api/scripts/{script_id}`      | 更新剧本 YAML（Monaco 编辑器手动保存）        |
-| `DELETE` | `/api/scripts/{script_id}`      | 删除剧本及关联数据                            |
-| `GET`    | `/api/scripts/{script_id}/diff` | 对比两次保存的差异（`?from=&to=`）            |
-| `GET`    | `/api/scripts/{id}/export`      | 导出指定格式 (`?format=yaml\|json\|fountain`) |
+| 方法     | 路径                               | 说明                                          |
+| :------- | :--------------------------------- | :-------------------------------------------- |
+| `GET`    | `/api/v1/scripts/`                 | 剧本列表 (`?novel_id=&status=&page=&limit=`)  |
+| `GET`    | `/api/v1/scripts/{script_id}`      | 获取剧本详情 (含完整 YAML/JSON/Fountain)      |
+| `PUT`    | `/api/v1/scripts/{script_id}`      | 更新剧本 YAML（Monaco 编辑器手动保存）        |
+| `DELETE` | `/api/v1/scripts/{script_id}`      | 删除剧本及关联数据                            |
+| `GET`    | `/api/v1/scripts/{id}/export`      | 导出指定格式 (`?format=yaml\|json\|fountain`) |
 
-**GET /api/scripts?novel_id=uuid**
+**GET /api/v1/scripts?novel_id=uuid**
 
 ```json
 // Response 200
@@ -1193,84 +1195,77 @@ flowchart TB
 ### 10.1 Docker Compose 编排
 
 ```yaml
-# docker-compose.yml
-version: "3.9"
+# docker-compose.yml (production)
 services:
     db:
         image: pgvector/pgvector:pg18
         environment:
             POSTGRES_USER: novelscript
-            POSTGRES_PASSWORD: ${DB_PASSWORD}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-novelscript}
             POSTGRES_DB: novelscript
         volumes:
             - pgdata:/var/lib/postgresql/data
-            - ./backend/app/db/init.sql:/docker-entrypoint-initdb.d/init.sql
-        ports:
-            - "5432:5432"
+            - ./backend/app/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+        # production: no ports exposed (internal network only)
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U novelscript -d novelscript"]
+            interval: 5s
+            retries: 10
 
-    backend:
-        build: ./backend
-        environment:
-            DATABASE_URL: postgresql://novelscript:${DB_PASSWORD}@db:5432/novelscript
-            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+    redis:
+        image: redis:7-alpine
+        volumes:
+            - redisdata:/data
+        command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            retries: 5
+
+    api:
+        build:
+            context: ./backend
+            target: api
         depends_on:
-            - db
-        ports:
-            - "8000:8000"
+            db: { condition: service_healthy }
+            redis: { condition: service_healthy }
+        env_file: ./backend/.env
+        environment:
+            DATABASE_URL: postgresql://novelscript:${DB_PASSWORD:-novelscript}@db:5432/novelscript
+            REDIS_URL: redis://redis:6379/0
+        command: uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+
+    worker:
+        build:
+            context: ./backend
+            target: worker
+        depends_on:
+            db: { condition: service_healthy }
+            redis: { condition: service_healthy }
+            api: { condition: service_healthy }
+        env_file: ./backend/.env
+        command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2
+        # Scale: docker compose up -d --scale worker=3
 
     frontend:
         build: ./frontend
         depends_on:
-            - backend
+            - api
+        environment:
+            API_URL: http://api:8000
         ports:
-            - "5173:5173"
-
-    nginx:
-        image: nginx:alpine
-        volumes:
-            - ./nginx.conf:/etc/nginx/nginx.conf
-        ports:
-            - "80:80"
-        depends_on:
-            - backend
-            - frontend
+            - "${FRONTEND_PORT:-3000}:3000"
 
 volumes:
     pgdata:
+    redisdata:
 ```
 
-### 10.2 Nginx 反向代理
+### 10.2 网络与代理架构
 
-```nginx
-server {
-    listen 80;
-    server_name novelscript.local;
+生产模式中，仅前端端口（3000）暴露至宿主机。前端 React Router SSR 通过 `API_URL=http://api:8000` 反向代理后端请求。所有服务间通信在 Docker 内部网络 `novelscript` 中进行。
 
-    # 前端静态资源 + SSR
-    location / {
-        proxy_pass http://frontend:5173;
-        proxy_set_header Host $host;
-    }
-
-    # 后端 API
-    location /api/ {
-        proxy_pass http://backend:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        # SSE 长连接
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 3600s;
-    }
-
-    # Swagger / ReDoc
-    location /docs { proxy_pass http://backend:8000/docs; }
-    location /redoc { proxy_pass http://backend:8000/redoc; }
-    location /openapi.json { proxy_pass http://backend:8000/openapi.json; }
-}
-```
-
-- **SSE 关键配置**：`proxy_buffering off; proxy_cache off;` 确保事件流不被 Nginx 缓冲
+- **SSE 关键配置**：前端 EventSource 直连 API `/api/v1/tasks/{id}/stream`，SSR express 层透传。
 
 ## 11. 测试设计
 

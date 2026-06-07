@@ -11,8 +11,8 @@
 - psycopg2 | https://www.psycopg.org/docs/
 - Pydantic V2 | https://docs.pydantic.dev/
 - sse-starlette | https://github.com/sysid/sse-starlette
-- Redis | https://redis.io/docs/
-- Celery | https://docs.celeryq.dev/
+- Redis | https://redis.io/docs/latest/
+- Celery | https://docs.celeryq.dev/en/stable/
 - Docker | https://docs.docker.com/
 - Docker Compose | https://docs.docker.com/compose/
 
@@ -27,11 +27,14 @@
 ### Frontend
 - Vite | https://cn.vite.dev/guide/
 - React | https://react.dev/
-- React Router | https://reactrouter.com/home
-- Ant Design | https://ant.design/docs/react/introduce
-- React Flow | https://reactflow.dev/
+- React Router v7 | https://reactrouter.com/home
+- Ant Design 6 | https://ant.design/docs/react/introduce
+- @xyflow/react (ReactFlow) | https://reactflow.dev/
 - TipTap | https://tiptap.dev/docs
 - Monaco Editor | https://microsoft.github.io/monaco-editor/docs.html
+- Zustand | https://zustand.docs.pmnd.rs/
+- Tailwind CSS v4 | https://tailwindcss.com/docs
+- react-markdown | https://github.com/remarkjs/react-markdown
 
 ### Industry Standards
 - Fountain | https://fountain.io/

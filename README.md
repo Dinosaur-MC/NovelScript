@@ -7,9 +7,10 @@
   <p align="center">
     <img src="https://img.shields.io/badge/Python-3.13-blue?logo=python" alt="Python">
     <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-    <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
-    <img src="https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql&logoColor=white" alt="PostgreSQL">
+    <img src="https://img.shields.io/badge/Celery-37814A?logo=celery&logoColor=white" alt="Celery">
     <img src="https://img.shields.io/badge/LangChain-🦜️🔗-1C3C3C" alt="LangChain">
+    <img src="https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql&logoColor=white" alt="PostgreSQL">
+    <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
     <img src="https://img.shields.io/badge/License-GPL%20v3-green" alt="License">
   </p>
 </p>
@@ -57,53 +58,69 @@ NovelScript 摒弃了“一个 Prompt 搞定一切”的玩具思维，构建了
 
 ## 🏗️ 系统架构 (Architecture)
 
-系统采用**前后端分离 + All-in-One 数据底座**的极简微服务架构。
+系统采用**前后端分离 + Celery 异步任务队列 + All-in-One 数据底座**的微服务架构。
 
 ```mermaid
 graph TD
-    subgraph 前端工作台 React 19 TS
+    subgraph 前端工作台["前端工作台 (React 19 + TypeScript)"]
         A[TipTap 原文阅读器]
         B[Monaco YAML 编辑器]
-        C[剧本可视化预览]
-        D[ReactFlow 知识图谱]
+        C[剧本可视化预览 / ReactFlow 知识图谱]
+        D[AI 对话面板]
 
         A <-->|双向溯源| B
         B <-->|实时渲染| C
         D <-->|联动| C
     end
 
-    subgraph 后端引擎 FastAPI
-        E[RESTful API 和 SSE 进度推送]
-        F[LLM Router]
-        G[7-Stage Pipeline:<br/>Chunking → Summarize → RAG →<br/>GraphRAG → Conversion →<br/>Optimize → Narrative Summary]
+    subgraph 后端引擎["后端引擎 (FastAPI + Celery)"]
+        E[RESTful API (SSE 进度推送)]
+        F[LLM Router (Pro ↔ Flash)]
+        G[8-Stage Pipeline:<br/>Chunking → Summarize → RAG →<br/>GraphRAG → Conversion →<br/>Post-Processing → Optimize → Narrative Summary]
+        H[Celery Worker (Redis broker)]
     end
 
-    subgraph 数据底座 PostgreSQL
-        H[(关系数据: tasks, operations)]
-        I[(向量数据: pgvector KNN)]
-        J[(图或文档: JSONB 图谱与剧本)]
+    subgraph 数据底座["数据底座 (PostgreSQL 18 All-in-One)"]
+        I[(关系数据: users, novels, tasks)]
+        J[(向量数据: pgvector HNSW)]
+        K[(图数据: knowledge_nodes + knowledge_edges)]
     end
 
-    A --> E
-    B --> E
-    C --> E
-    D --> E
+    subgraph 中间件["消息与缓存 (Redis 7)"]
+        L[(Celery Broker + Result Backend)]
+        M[(JWT 黑名单 + 限流 + 用户缓存)]
+    end
+
+    A -->|REST + SSE| E
+    B -->|REST| E
+    C -->|REST| E
+    D -->|SSE| E
     E --> F
     F --> G
-    G --> H
+    E -->|apply_async()| H
+    H -->|update_state()| L
+    E -->|SSE poll| L
+    E --> I
+    E --> J
+    E --> K
     G --> I
     G --> J
+    G --> K
+    H --> I
+    H --> J
+    H --> K
 ```
 
 ## 🛠️ 技术栈 (Tech Stack)
 
 | 领域        | 技术选型                                                                   | 说明                                 |
 | :---------- | :------------------------------------------------------------------------- | :----------------------------------- |
-| **前端**    | React 19, TypeScript, Vite, Ant Design 6, TipTap, Monaco Editor, ReactFlow | 构建 Web IDE 级别的三栏协同编辑体验  |
-| **后端**    | Python 3.13, FastAPI (sync psycopg2), Pydantic V2, Uvicorn                 | 同步数据层 + 异步管道引擎并行        |
-| **AI 编排** | LangChain, DeepSeek API (v4-pro / v4-flash), Celery + Redis | 多阶段 Pipeline 编排与智能模型路由，异步任务队列 |
-| **数据库**  | PostgreSQL 18 (`pgvector`, `uuid-ossp`)                    | 关系型 + 向量检索 + JSONB 多模态融合 |
-| **部署**    | Docker, Docker Compose (dev/prod profiles)                 | 一键容器化编排，仅前端端口暴露至宿主机 |
+| **前端**    | React 19, TypeScript, Vite, React Router v7, Ant Design 6, TipTap, Monaco Editor, @xyflow/react, Zustand | Web IDE 三栏协同编辑体验 (SSR + API proxy) |
+| **后端**    | Python 3.13, FastAPI (sync psycopg2), Pydantic V2/SQLModel, Uvicorn        | 同步数据层 + 异步管道引擎并行        |
+| **AI 编排** | LangChain / LangGraph, DeepSeek API (v4-pro / v4-flash), OpenRouter (embeddings) | 双模型路由，应用层重试，上下文预算感知 |
+| **任务队列**| Celery + Redis 7                                               | 异步 Pipeline 执行，SSE 进度推送 (AsyncResult 轮询) |
+| **数据库**  | PostgreSQL 18 (`pgvector` HNSW, `pg_trgm` GIN, `uuid-ossp`)   | All-in-One: 关系 + 向量 + 图 (JSONB + 点边表) |
+| **部署**    | Docker, Docker Compose (5 services: db, redis, api, worker, frontend) | 一键编排，仅前端端口 (3000) 暴露 |
 
 ## 🚀 快速开始 (Quick Start)
 
@@ -141,35 +158,40 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 ```text
 NovelScript/
-├── docker-compose.yml          # 生产编排 (内部网络，仅前端公网)
-├── docker-compose.dev.yml      # 开发覆盖 (暴露 DB/Redis/API 端口)
+├── docker-compose.yml          # 生产编排 (5 services, 内部网络，仅前端 :3000)
+├── docker-compose.dev.yml      # 开发覆盖 (额外暴露 DB:5432, Redis:6379, API:8000)
 │
-├── backend/                    # 🐍 FastAPI + Celery
+├── backend/                    # 🐍 FastAPI + Celery Worker
 │   ├── app/
-│   │   ├── api/                # RESTful 路由与 SSE 推送
-│   │   ├── core/               # 配置、安全、DB 连接、Celery App
-│   │   ├── models/             # Pydantic V2 + SQLModel
-│   │   ├── services/           # BaseCRUD, DB 缓存辅助函数
-│   │   ├── tasks/              # Celery 后台任务 (pipeline)
-│   │   └── db/                 # PostgreSQL DDL 初始化脚本
-│   ├── cli/                    # Pipeline 引擎 (7 阶段)
-│   ├── tests/
-│   ├── Dockerfile              # 多阶段构建 (api / worker target)
+│   │   ├── api/v1/             # 25 RESTful 端点 (auth, novels, scripts, tasks, editor)
+│   │   ├── core/               # 配置, JWT, DB 连接, Redis, Celery App
+│   │   ├── models/             # Pydantic V2 + SQLModel (9 表)
+│   │   ├── services/           # BaseCRUD, DB 缓存, 限流, 黑名单, 用户缓存
+│   │   ├── tasks/              # Celery 后台任务 (run_pipeline)
+│   │   └── db/                 # DDL (init.sql), 连接工具
+│   ├── cli/                    # Pipeline 引擎 (8 阶段, 16 文件)
+│   ├── tests/                  # 288 测试 (5 目录, 27 文件)
+│   ├── Dockerfile              # 多阶段 (api + worker targets)
 │   └── pyproject.toml
 │
-├── frontend/                   # ⚛️ React 19 SSR
+├── frontend/                   # ⚛️ React 19 + React Router v7 (SSR)
 │   ├── app/
-│   │   ├── components/         # Monaco, TipTap, ReactFlow 面板
-│   │   ├── routes/             # 路由与布局
-│   │   └── stores/             # Zustand 状态管理
+│   │   ├── api/                # API 客户端 (6 模块)
+│   │   ├── components/         # UI 组件 (11 文件, 含 TipTap/Monaco/ReactFlow)
+│   │   ├── hooks/              # 自定义 Hooks (6 个)
+│   │   ├── routes/             # 路由页面 (4 个)
+│   │   └── stores/             # Zustand 状态管理 (6 stores)
 │   ├── Dockerfile
 │   └── package.json
 │
-└── docs/                       # 📄 架构文档与设计说明书
-    ├── business-logic.md       # 完整 API 参考 + 活动图
-    ├── SRS 需求规格说明书.md
-    ├── SDS 软件设计说明书.md
-    └── dev_references.md
+├── docs/                       # 📄 架构文档与设计说明书
+│   ├── business-logic.md       # 完整 API 参考 + 活动图 + 状态机
+│   ├── SRS 需求规格说明书.md
+│   ├── SDS 软件设计说明书.md
+│   ├── YAML_Schema_设计说明.md
+│   └── dev_references.md
+│
+└── reports/                    # 📊 行业报告 (PDF)
 ```
 
 ## 🗺️ 演进路线 (Roadmap)

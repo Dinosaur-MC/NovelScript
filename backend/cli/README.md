@@ -33,6 +33,9 @@ uv run python -m cli.pipeline chapters/ -n 3 -c 10 -o output.yaml
 
 # JSON 输出
 uv run python -m cli.pipeline novel.txt --json -o output.json
+
+# Fountain 输出
+uv run python -m cli.pipeline novel.txt --fountain -o output.fountain
 ```
 
 ## 命令行参数
@@ -52,6 +55,7 @@ uv run python -m cli.pipeline <INPUT> [选项]
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `-o`, `--output OUTPUT` | `str` | stdout | 结果写入文件（不在终端打印） |
+| `--fountain` | flag | — | 输出 Fountain 1.1 (.fountain) 剧本格式 |
 | `--json` | flag | — | 输出 JSON 格式（默认 YAML） |
 | `-n N`, `--limit N` | `int` | 全部 | 仅处理前 N 个章节 |
 | `-c C`, `--concurrency C` | `int` | 20 | 最大并发 LLM API 调用数 |
@@ -114,7 +118,7 @@ uv run python -m cli.pipeline novel/ -s "喜剧风格，对话要幽默有趣，
 
 ## Pipeline 流程
 
-每次运行经历 7 个 LLM 阶段 + 1 个导出阶段（共 8 步）：
+每次运行经历 7 个 LLM 阶段 + 1 个确定性后处理阶段 + 1 个导出阶段（共 9 步）：
 
 ```
 源文本
@@ -145,6 +149,13 @@ uv run python -m cli.pipeline novel/ -s "喜剧风格，对话要幽默有趣，
   │    输入: 段落组 + 前情摘要 + KG + RAG 上下文
   │    输出: 每章 N 个场景 (scene_id + heading + elements)
   │
+  ├─ 5.5. Post-Processing ──────────── 确定性清理 (无 LLM)
+  │    • _assign_scene_ids() — 全局唯一 ID (s_0001, s_0002, ...)
+  │    • normalize_heading() — 中→英场标前缀/时间, 闪回标记
+  │    • fix_element_types() — 内心独白→dialogue+V.O.
+  │    • split_embedded_character() — "Name(emotion)：content" 拆分
+  │    • merge_tiny_scenes() — 同地点相邻微场景合并
+  │
   ├─ 6. Optimization ───────────────── 跨场景一致性检查
   │    模型: Pro, 批次并发
   │    检查: 人物弧光 / 地点连续性 / 时间线 / 对白风格
@@ -168,6 +179,7 @@ uv run python -m cli.pipeline novel/ -s "喜剧风格，对话要幽默有趣，
  25%  rag           (FAISS 索引构建完成)
  35%  graphrag      (KG 提取完成)
  35-75% converting  (每章转换完成一个 梯度上升)
+ 78%  post-processing (确定性清理完成)
  90%  optimizing    (优化完成)
 100%  complete
 ```
@@ -189,7 +201,7 @@ meta:
   source_chars: 11261
   chapter_count: 4
   scene_count: 19
-  pipeline_version: 0.2.0
+  pipeline_version: 0.3.0
   chapter_summaries:
   - 李浮尘在练武场上被李云河三招击败...
   - 李浮尘在后山被一道金色流光击中眉心...
@@ -413,6 +425,8 @@ cli/
 ├── __init__.py              # 包标记
 ├── pipeline.py              # 主编排器 — run(), run_from_text(),
 │                            #   run_from_chapters(), main() CLI
+│                            #   + _assign_scene_ids(), _validate_chapter_order(),
+│                            #     _classify_narrative_layers(), _narrative_summary()
 ├── models.py                # Pydantic V2 数据模型 — Chapter, Scene,
 │                            #   Element, Script, KnowledgeGraph 等
 ├── chunker.py               # 章节切分 — 正则 + LLM 回退
@@ -423,7 +437,11 @@ cli/
 ├── graphrag_builder.py      # 知识图谱 — 单次 + 增量提取,
 │                            #   5 种实体类型, 12 种关系类型
 ├── converter.py             # 场景转换 — 章节 → 剧本场景 (Flash)
+├── heading_normalizer.py    # 后处理 — 场标标准化 (中→英, FLASHBACK)
+├── element_fixer.py         # 后处理 — 元素类型修正, 嵌入角色名拆分
+├── scene_merger.py          # 后处理 — 同地点相邻微场景合并
 ├── optimizer.py             # 一致性检查 — 批次并发 (Pro)
+├── fountain_exporter.py     # Fountain 1.1 格式导出 — to_fountain()
 ├── exporter.py              # 序列化 — to_yaml(), to_json()
 └── llm_router.py            # LLM 基础设施 — 模型路由, 上下文预算,
                              #   重试, 并发信号量, 超时

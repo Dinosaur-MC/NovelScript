@@ -8,20 +8,29 @@ NovelScript (析幕) is an AI-driven pipeline that converts long-form novels (3+
 
 ## Development Status
 
-See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API modules, 6 Zustand stores, 6 hooks, 52 tests).
-
 ### Backend Status Summary
 
 | Layer | Status |
 |-------|--------|
-| Pipeline CLI | ✅ Complete — 7 stages, JSON mode, retry, paragraph splitter, chapter summaries, narrative summary, directory input |
-| Database | ✅ Complete — 9 tables, pgvector HNSW, pg_trgm, sync psycopg2, KG persistence, embedding caching |
+| Pipeline CLI | ✅ Complete — 8 stages (incl. post-processing), JSON mode, retry, paragraph splitter, chapter summaries, narrative summary, directory input |
+| Database | ✅ Complete — 9 tables, pgvector HNSW, pg_trgm, sync psycopg2, KG persistence, embedding caching, token_usage tracking |
 | API (25 endpoints) | ✅ Complete — auth (JWT+argon2, ownership checks), novels, scripts, tasks (SSE), editor (GraphRAG-enhanced) |
 | Pipeline ↔ DB Integration | ✅ Complete — Celery worker (Redis broker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
 | Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; run_pipeline.apply_async() |
 | Auth & Security | ✅ Complete — get_current_user (blacklist→cache→DB), jti revocation, login rate limiting, require_ownership helper |
-| Tests | ✅ 288 passing, 0 skipped |
-| Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles) |
+| Tests | ✅ 288 backend (27 test files, 5 subdirs) + 9 frontend (Vitest), 0 skipped |
+| Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles, 5 services) |
+
+### Frontend Status Summary
+
+| Layer | Status |
+|-------|--------|
+| Routes | 4 (home, login, dashboard, workspace) |
+| Components | 11 (NovelReader, ScriptEditor, ScriptPreview, KnowledgeGraph, AIChat, RightPanel, TaskBar, StatusBar, Splitter, HomePage, ClientOnly) |
+| API Modules | 6 (auth, novels, scripts, tasks, editor, types) |
+| Zustand Stores | 6 (auth, novel, script, editor, task, ui) |
+| Hooks | 6 (useAutoSave, useKeyboard, useNovelReader, useSSE, useScriptEditor, useTraceLinking) |
+| Frontend Tests | 9 (3 hooks, 6 stores) |
 
 **API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/`  (all write endpoints use auth middleware)
 
@@ -95,7 +104,7 @@ Work in the corresponding subdirectory (`backend/` or `frontend/`) before runnin
 ```bash
 cd backend
 uv sync                                         # Install dependencies
-uv run main.py                                  # Start dev server (uvicorn, port 8000, reload on DEBUG)
+uv run python main.py                           # Start dev server (uvicorn, port 8000, reload on DEBUG)
 
 # Celery Worker (separate terminal — required for pipeline tasks):
 celery -A app.core.celery_app worker --loglevel=info --concurrency=2
@@ -131,66 +140,76 @@ pnpm run dev                                    # Start dev server (Vite HMR, po
 pnpm run build                                  # Production build (SSR)
 pnpm run start                                  # Serve production build
 pnpm run typecheck                              # TypeScript type checking
-pnpm run test                                   # Vitest (52 tests)
+pnpm run test                                   # Vitest (9 tests)
+pnpm run test:watch                             # Vitest watch mode
 ```
 
 ## Architecture
 
-### Backend (`backend/app/`)
+### Backend (`backend/`)
 
 ```
-app/
-├── main.py                # FastAPI app factory — lifespan, CORS, exception handlers
-├── api/v1/                # 25 endpoints: auth, novels, scripts, tasks, editor
-│   ├── __init__.py        # Single router tree → /api/v1/*
-│   ├── auth.py            # register, login, logout, me (JWT + argon2)
-│   ├── novels.py          # upload (JSON/file, auto-create Task), list, get, update, delete
-│   ├── scripts.py         # list, get, update (YAML validate), delete, export
-│   ├── tasks.py           # create, list, stream (SSE via AsyncResult), status, update, resume, get
-│   └── editor.py          # chat (LLM + GraphRAG context), apply_patch (RFC 6901), undo
-├── core/
-│   ├── config.py          # pydantic-settings — DATABASE_URL, REDIS_URL, API keys, ADMIN_*
-│   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
-│   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
-│   ├── redis.py           # Redis connection pool (lazy, thread-safe), get_redis() DI
-│   ├── security.py        # argon2 hashing, JWT create/decode (jti claim), configure_jwt()
-│   ├── auth_middleware.py # get_current_user (blacklist → cache → DB), require_ownership
-│   └── celery_app.py      # Celery singleton (Redis broker + backend)
-├── tasks/
-│   └── pipeline.py        # Celery task: run_pipeline with self.update_state() for SSE
-├── models/
-│   ├── http.py            # BaseResponse(code, message, data), ErrorResponse
-│   └── sql.py             # 9 SQLModel tables (users…audit_logs)
-├── services/
-│   ├── base.py            # BaseCRUD[T] — create/get/list/update/delete
-│   ├── progress.py        # ProgressManager no-op compat stub
-│   ├── pipeline_executor.py  # DB cache helpers (no threading): _load_chapters,
-│   │                      #   _load_cached_kg, _persist_kg, _persist_embeddings, _persist_chapters
-│   ├── sse.py             # push_progress() → ProgressManager (deprecated)
-│   ├── token_blacklist.py # JWT revocation — bl:{jti} Redis key with auto-TTL
-│   ├── rate_limiter.py    # Fixed-window rate limiter — INCR + SET NX EX
-│   └── user_cache.py      # User profile cache — user:{id}, 300s TTL
-├── db/
-│   └── init.sql           # 9-table DDL, 3 extensions, HNSW + GIN indexes
-└── cli/                   # Pipeline engine — 11 modules
-    ├── models.py          # Chapter, ParagraphGroup, Scene, Script, KG, etc.
-    ├── chunker.py         # Regex (第X章) + LLM fallback with JSON mode
-    ├── paragraph_splitter.py  # Boundary-aware paragraph grouping (≤32-char merge)
-    ├── summarizer.py      # Per-chapter objective summary (Flash, 100-200 chars, anti-markdown)
-    ├── rag_builder.py     # FAISS index, keyword fallback, embed_texts(), build_index_from_db_embeddings()
-    ├── graphrag_builder.py # KG extraction: single-shot + incremental (chapter-by-chapter with entity dedup)
-    ├── converter.py       # Chapter → scenes (Flash, paragraph groups, chapter_summary)
-    ├── heading_normalizer.py # Scene heading standardization (CN→EN prefix/ToD, FLASHBACK markers)
-    ├── element_fixer.py   # Element type corrections (internal monologue→dialogue, character split)
-    ├── scene_merger.py    # Micro-scene merger (same-location adjacent scene consolidation)
-    ├── optimizer.py       # Batch consistency check (Pro, position-based source_ref restore)
-    ├── fountain_exporter.py # Fountain 1.1 format export (to_fountain())
-    ├── llm_router.py      # Model routing, context/output limits, invoke_with_retry()
-    ├── exporter.py        # to_yaml(), to_json()
-    └── pipeline.py        # Orchestrator: run(), run_from_chapters(), run_from_text()
-                           #   Optional faiss_index + kg params for cached reuse
-                           #   v0.3.0: _assign_scene_ids(), _validate_chapter_order(),
-                           #           _classify_narrative_layers(), post-processing integration
+backend/
+├── app/
+│   ├── main.py                # FastAPI app factory — lifespan, CORS, exception handlers
+│   ├── api/v1/                # 25 endpoints: auth, novels, scripts, tasks, editor
+│   │   ├── __init__.py        # Single router tree → /api/v1/*
+│   │   ├── auth.py            # register, login, logout, me (JWT + argon2)
+│   │   ├── novels.py          # upload (JSON/file, auto-create Task), list, get, update, delete
+│   │   ├── scripts.py         # list, get, update (YAML validate), delete, export
+│   │   ├── tasks.py           # create, list, stream (SSE via AsyncResult), status, update, resume, get
+│   │   └── editor.py          # chat (LLM + GraphRAG context), apply_patch (RFC 6901), undo
+│   ├── core/
+│   │   ├── config.py          # pydantic-settings — DATABASE_URL, REDIS_URL, API keys, ADMIN_*
+│   │   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
+│   │   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
+│   │   ├── redis.py           # Redis connection pool (lazy, thread-safe), get_redis() DI
+│   │   ├── security.py        # argon2 hashing, JWT create/decode (jti claim), configure_jwt()
+│   │   ├── auth_middleware.py # get_current_user (blacklist → cache → DB), require_ownership
+│   │   └── celery_app.py      # Celery singleton (Redis broker + backend, 7 config keys)
+│   ├── tasks/
+│   │   └── pipeline.py        # Celery task: run_pipeline() with self.update_state() for SSE
+│   ├── models/
+│   │   ├── http.py            # BaseResponse(code, message, data), ErrorResponse
+│   │   ├── sql.py             # 9 SQLModel tables (users…audit_logs), TaskModel.token_usage
+│   │   └── patch.py           # JSON Patch models (RFC 6902)
+│   ├── services/
+│   │   ├── base.py            # BaseCRUD[T] — create/get/list/update/delete
+│   │   ├── progress.py        # ProgressManager no-op compat stub
+│   │   ├── pipeline_executor.py  # Stateless DB helpers for Celery worker: _load_chapters,
+│   │   │                      #   _load_cached_kg, _persist_kg, _persist_embeddings, _persist_chapters
+│   │   ├── sse.py             # push_progress() → ProgressManager (deprecated — use Celery)
+│   │   ├── token_blacklist.py # JWT revocation — bl:{jti} Redis key with auto-TTL
+│   │   ├── rate_limiter.py    # Fixed-window rate limiter — INCR + SET NX EX
+│   │   └── user_cache.py      # User profile cache — user:{id}, 300s TTL
+│   └── db/
+│       ├── init.sql           # 9-table DDL, 3 extensions, HNSW + GIN indexes
+│       └── connection.py      # DB session utilities
+├── cli/                       # Pipeline engine — 16 files (14 functional modules)
+│   ├── models.py              # Chapter, ParagraphGroup, Scene, Script, KG, etc.
+│   ├── chunker.py             # Regex (第X章) + LLM fallback with JSON mode
+│   ├── paragraph_splitter.py  # Boundary-aware paragraph grouping (≤32-char merge)
+│   ├── summarizer.py          # Per-chapter objective summary (Flash, 100-200 chars, anti-markdown)
+│   ├── rag_builder.py         # FAISS index, keyword fallback, embed_texts(), build_index_from_db_embeddings()
+│   ├── graphrag_builder.py    # KG extraction: single-shot + incremental (chapter-by-chapter with entity dedup)
+│   ├── converter.py           # Chapter → scenes (Flash, paragraph groups, chapter_summary)
+│   ├── heading_normalizer.py  # Scene heading standardization (CN→EN prefix/ToD, FLASHBACK markers)
+│   ├── element_fixer.py       # Element type corrections (internal monologue→dialogue, character split)
+│   ├── scene_merger.py        # Micro-scene merger (same-location adjacent scene consolidation)
+│   ├── optimizer.py           # Batch consistency check (Pro, position-based source_ref restore)
+│   ├── fountain_exporter.py   # Fountain 1.1 format export (to_fountain())
+│   ├── llm_router.py          # Model routing, context/output limits, invoke_with_retry()
+│   ├── exporter.py            # to_yaml(), to_json()
+│   └── pipeline.py            # Orchestrator: run(), run_from_chapters(), run_from_text()
+│                              #   Optional faiss_index + kg params for cached reuse
+│                              #   v0.3.0: _assign_scene_ids(), _validate_chapter_order(),
+│                              #           _classify_narrative_layers(), post-processing integration
+└── tests/                     # 288 tests (27 test files across 5 subdirectories)
+    ├── test_api/              # 7 test files — auth, editor, novel, scripts, sse, tasks
+    ├── test_cli/              # 13 test files — pipeline, models, chunker, converter, etc.
+    ├── test_core/             # 1 test file — security
+    ├── test_db/               # 2 test files — constraints, init
+    └── test_services/         # 6 test files — base_crud, pipeline_executor, rate_limiter, etc.
 ```
 
 **Key architectural patterns**:
@@ -248,10 +267,11 @@ This project participates in a judged competition. Important rules:
 
 ## Related Documentation
 
-- `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines (v2.1.0)
-- `docs/SRS 需求规格说明书.md` — Software requirements specification
-- `docs/SDS 软件设计说明书.md` — Software design specification
-- `docs/YAML_Schema_设计说明.md` — YAML schema design rationale
+- `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines (v2.2.0)
+- `docs/SRS 需求规格说明书.md` — Software requirements specification (v2.4.0)
+- `docs/SDS 软件设计说明书.md` — Software design specification (v2.2.0)
+- `docs/YAML_Schema_设计说明.md` — YAML schema design rationale (v2.0.0)
 - `docs/dev_references.md` — External documentation index
-- `.temp/DEVELOPMENT_STATUS.md` — Frontend development status (files, routes, stores, hooks, tests)
+- `backend/cli/README.md` — Full CLI documentation and options
 - `.temp/novel_samples/` — Sample Chinese novel files for testing
+- `.temp/docs/` — Architecture review docs, UI design blueprint

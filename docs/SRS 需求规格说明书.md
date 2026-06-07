@@ -203,7 +203,7 @@ INT. 废弃飞船驾驶舱 - 夜晚
 
 ### 6.4 持久化存储结构
 
-存储层以 PostgreSQL 18 作为唯一数据底座，包含 8 张核心表：`users`（用户账户与鉴权）、`novels`（小说原文独立实体）、`tasks`（任务主表，一次 Pipeline 运行）、`chapters`（章节 + pgvector 向量，HNSW 索引加速 KNN）、`knowledge_nodes` + `knowledge_edges`（知识图谱点边表，支持 GraphRAG 图遍历）、`operations`（操作日志，JSON Patch + YAML 快照混合）、`dialogues`（AI 对话记录）、`audit_logs`（系统审计日志）。
+存储层以 PostgreSQL 18 作为唯一数据底座，包含 9 张核心表：`users`（用户账户与鉴权）、`novels`（小说原文独立实体）、`tasks`（任务主表，一次 Pipeline 运行）、`chapters`（章节 + pgvector 向量，HNSW 索引加速 KNN）、`knowledge_nodes` + `knowledge_edges`（知识图谱点边表，支持 GraphRAG 图遍历）、`operations`（操作日志，JSON Patch + YAML 快照混合）、`dialogues`（AI 对话记录）、`audit_logs`（系统审计日志）。
 
 > 完整 DDL、表关系、HNSW 索引配置详见 **[SDS §5.5 持久化存储 DDL](./SDS%20软件设计说明书.md#55-持久化存储-ddl)** 。
 
