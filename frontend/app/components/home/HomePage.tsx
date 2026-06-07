@@ -1,7 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-// Guard against popconfirm portal clicks leaking to card onClick
-const blockNav = { current: false } as { current: boolean };
 import { useNavigate } from "react-router";
 import { Card, Tag, Button, Modal, Input, Upload, Collapse, message, Select, Avatar, Popover, Popconfirm } from "antd";
 import {
@@ -43,6 +41,8 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function HomePage() {
   const navigate = useNavigate();
+  // Guard against popconfirm portal clicks leaking to card onClick
+  const blockNav = useRef(false);
   const [novels, setNovels] = useState<Novel[]>([]);
   const [scripts, setScripts] = useState<ScriptLight[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,11 +98,21 @@ export function HomePage() {
 
   const filteredNovels = novels.filter((n) => {
     if (searchText && !n.title.includes(searchText)) return false;
+
+    const novelScripts = scriptsByNovel[n.id] ?? [];
+
     if (statusFilter === "with_scripts") {
-      return scriptsByNovel[n.id]?.length > 0;
+      return novelScripts.length > 0;
     }
     if (statusFilter === "without_scripts") {
-      return !scriptsByNovel[n.id] || scriptsByNovel[n.id].length === 0;
+      return novelScripts.length === 0;
+    }
+    // Filter by pipeline status
+    if (["completed", "processing", "failed", "pending"].includes(statusFilter)) {
+      const statuses = statusFilter === "processing"
+        ? ["preprocessing", "converting"]
+        : [statusFilter];
+      return novelScripts.some((s) => statuses.includes(s.status));
     }
     return true;
   });
@@ -305,6 +315,10 @@ export function HomePage() {
             { value: "all", label: "全部小说" },
             { value: "with_scripts", label: "已有剧本" },
             { value: "without_scripts", label: "暂无剧本" },
+            { value: "completed", label: "已完成" },
+            { value: "processing", label: "进行中" },
+            { value: "failed", label: "失败" },
+            { value: "pending", label: "待开始" },
           ]}
         />
       </div>

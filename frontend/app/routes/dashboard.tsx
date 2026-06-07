@@ -232,6 +232,8 @@ export default function Dashboard() {
                 return (
                   <List.Item
                     className="ns-dashboard-task-item"
+                    onClick={() => navigate(`/workspace/${item.key}`)}
+                    style={{ cursor: "pointer" }}
                   >
                     <List.Item.Meta
                       title={
