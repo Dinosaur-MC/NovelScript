@@ -39,6 +39,7 @@ from app.models.sql import (
     Task,
 )
 from cli.exporter import to_yaml
+from cli.fountain_exporter import to_fountain
 from cli.models import Chapter, KnowledgeEdge as CLIEdge
 from cli.models import KnowledgeGraph, KnowledgeNode as CLINode
 
@@ -169,6 +170,7 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         task.summary = script.summary
         task.script_yaml = to_yaml(script)
         task.script_json = script.model_dump(mode="json")
+        task.script_fountain = to_fountain(script)
         task.characters_json = [
             {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties}
             for c in script.characters
