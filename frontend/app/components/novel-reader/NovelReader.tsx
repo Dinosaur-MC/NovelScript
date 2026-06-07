@@ -80,6 +80,14 @@ function ReaderContent({ readerHook, traceHook }: Props) {
     readerHook.bindEditor(editor);
   }, [editor, readerHook]);
 
+  // Cache plain-text chapter content so useTraceLinking can resolve
+  // source_ref offsets back to DOM positions for scroll-to-highlight
+  useEffect(() => {
+    for (const ch of chapters) {
+      readerHook.setChapterContent(ch.index, ch.content);
+    }
+  }, [chapters, readerHook]);
+
   // Update TipTap content when chapter changes
   useEffect(() => {
     if (editor && selectedChapter) {

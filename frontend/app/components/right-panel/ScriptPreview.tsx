@@ -12,12 +12,26 @@ const mke = (ch: string) => (
   <span className="ns-preview-mk-close">{ch}</span>
 );
 
+/** Extract a short source-ref label like "ch_01" from an element. */
+function sourceBadge(el: Record<string, unknown>): string | null {
+  const sr = el.source_ref as { chapter_id?: string } | undefined;
+  if (!sr?.chapter_id) return null;
+  return sr.chapter_id.replace(/^ch_0?/, "#");
+}
+
 export function ScriptPreview({ traceHook }: Props) {
   const scenes = useScriptStore((s) => s.scenes);
   const onEl = useCallback(
     (id: string, sid: string, ei: number) => traceHook.onElementClick(id, sid, ei),
     [traceHook],
   );
+
+  /** Renders a small source badge on elements that have a source_ref. */
+  function refBadge(el: Record<string, unknown>) {
+    const label = sourceBadge(el);
+    if (!label) return null;
+    return <span className="ns-preview-ref-badge" title="点击跳转到原文">{label}</span>;
+  }
 
   if (scenes.length === 0) {
     return (
@@ -54,7 +68,7 @@ export function ScriptPreview({ traceHook }: Props) {
               {els?.map((el, ei) => {
                 const type = (el.type as string) || "";
                 const text = (el.content as string) || (el.text as string) || "";
-                const elId = (el.id as string) || `${scene.scene_id}_${ei}`;
+                const elId = (el.id as string | undefined) ?? `${scene.scene_id}_${ei}`;
                 const sid  = String(scene.scene_id ?? si);
 
                 /* ----- action ----- */
@@ -65,6 +79,7 @@ export function ScriptPreview({ traceHook }: Props) {
                     <div key={ei} className="ns-preview-el ns-preview-action ns-preview-el-hover" onClick={() => onEl(elId, sid, ei)}
                       style={{ borderLeftColor: forced ? "var(--color-accent-danger)" : centered ? "rgba(253,203,110,.25)" : "rgba(108,92,231,.20)" }}>
                       <div style={{ lineHeight:1.7, textAlign:centered ? "center" : "justify", fontStyle:centered ? "italic" : "normal" }}>
+                        {refBadge(el)}
                         {centered ? mk(">", forced) : mk("!", forced)}
                         {text}
                         {centered && mke("<")}
@@ -96,6 +111,7 @@ export function ScriptPreview({ traceHook }: Props) {
                     <div key={ei} className="ns-preview-el ns-preview-dialogue ns-preview-el-hover" onClick={() => onEl(elId, sid, ei)}>
                       {par && <div className="ns-preview-parenthetical" style={{ marginBottom: 6 }}>({par})</div>}
                       <div style={{ lineHeight:1.55 }}>
+                        {refBadge(el)}
                         {text}
                         {dual && <span style={{ color:"var(--color-accent-warning)", fontWeight:700 }}> ^</span>}
                       </div>
@@ -117,6 +133,7 @@ export function ScriptPreview({ traceHook }: Props) {
                       <div className="ns-preview-dlgblock-char">
                         {mk("@", charF)}
                         {cn}
+                        {refBadge(el)}
                         {ce && <span className="ns-preview-character-ext">({ce})</span>}
                       </div>
                       {par && <div className="ns-preview-parenthetical" style={{ marginBottom: 4 }}>({par})</div>}
@@ -133,6 +150,7 @@ export function ScriptPreview({ traceHook }: Props) {
                   const forced = !!el.is_forced;
                   return (
                     <div key={ei} className="ns-preview-el ns-preview-transition ns-preview-el-hover" onClick={() => onEl(elId, sid, ei)}>
+                      {refBadge(el)}
                       <div className="ns-preview-transition-content">
                         {mk(">", forced)}{text}
                       </div>
@@ -144,6 +162,7 @@ export function ScriptPreview({ traceHook }: Props) {
                 if (type === "lyric") {
                   return (
                     <div key={ei} className="ns-preview-el ns-preview-lyric ns-preview-el-hover" onClick={() => onEl(elId, sid, ei)}>
+                      {refBadge(el)}
                       <div className="ns-preview-lyric-content">
                         {mk("~")}{text}
                       </div>

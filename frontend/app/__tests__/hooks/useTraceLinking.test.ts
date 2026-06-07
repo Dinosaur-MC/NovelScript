@@ -11,7 +11,7 @@ beforeEach(() => {
 
 describe("useTraceLinking", () => {
   function makeReader(scrollFn = vi.fn()) {
-    return { bindEditor: vi.fn(), scrollToOffset: scrollFn };
+    return { bindEditor: vi.fn(), scrollToOffset: scrollFn, setChapterContent: vi.fn() };
   }
   function makeEditor(highlightFn = vi.fn()) {
     return {
@@ -58,9 +58,9 @@ describe("useTraceLinking", () => {
       );
 
       result.current.onElementClick("el_alpha", "s1", 0);
-      // rAF fires → setTimeout(50) → scrollToOffset called
+      // rAF fires → setTimeout(50) → scrollToOffset called with (offset, chapterIndex)
       vi.advanceTimersByTime(100);
-      expect(scrollToOffset).toHaveBeenCalledWith(500);
+      expect(scrollToOffset).toHaveBeenCalledWith(500, 2);
       vi.useRealTimers();
     });
 
@@ -99,7 +99,7 @@ describe("useTraceLinking", () => {
       result.current.onElementClick("el_x", "s1", 0);
       expect(useNovelStore.getState().selectedChapterId).toBe("2");
       vi.advanceTimersByTime(100);
-      expect(scrollToOffset).toHaveBeenCalledWith(1200);
+      expect(scrollToOffset).toHaveBeenCalledWith(1200, 2);
       vi.useRealTimers();
     });
   });

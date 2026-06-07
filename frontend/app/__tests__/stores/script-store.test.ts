@@ -86,18 +86,19 @@ describe("script-store", () => {
       useScriptStore.getState().loadFromTaskResponse(payload);
 
       const map = useScriptStore.getState().sourceRefMap;
-      // 2 elements with source_ref × 2 keys each (id + positional fallback) = 4
+      // 2 valid source_ref elements x (1 positional + 1 explicit id each) = 4 entries
       expect(map.size).toBe(4);
       expect(map.get("el_a")).toEqual({
         chapter_id: "ch_01",
         offset: [0, 50],
         document_id: "d1",
       });
+      expect(map.get("s1_0")!.offset).toEqual([0, 50]);
       expect(map.get("el_b")!.offset).toEqual([200, 300]);
-      expect(map.has("el_c")).toBe(false);
+      expect(map.get("s2_0")!.offset).toEqual([200, 300]);
     });
 
-    it("skips source_ref without chapter_id", () => {
+    it("skips elements without valid source_ref", () => {
       const payload = {
         script_json: {
           scenes: [
@@ -114,6 +115,7 @@ describe("script-store", () => {
         },
       };
       useScriptStore.getState().loadFromTaskResponse(payload);
+      // Element without valid source_ref is simply skipped — no entry registered
       expect(useScriptStore.getState().sourceRefMap.size).toBe(0);
     });
   });

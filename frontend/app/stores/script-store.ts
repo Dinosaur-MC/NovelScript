@@ -38,14 +38,14 @@ function buildSourceRefMap(scenes: Record<string, unknown>[]): Map<string, Sourc
     for (let ei = 0; ei < elements.length; ei++) {
       const el = elements[ei];
       const sr = el.source_ref as SourceRef | undefined | null;
-      if (!sr || !sr.chapter_id || !Array.isArray(sr.offset) || sr.offset.length !== 2) continue;
+      if (!sr?.chapter_id || !Array.isArray(sr.offset) || sr.offset.length !== 2) continue;
 
-      // Register by element's own id (primary key — from YAML/backend)
-      const id = (el.id ?? `${sceneId}_${el.type}`) as string;
-      map.set(id, sr);
-
-      // Also register by positional index (fallback for ScriptPreview click handler)
+      // Primary key: positional index (always works regardless of explicit id)
       map.set(`${sceneId}_${ei}`, sr);
+
+      // Secondary key: explicit element id if present (backward compat)
+      const explicitId = el.id as string | undefined;
+      if (explicitId) map.set(explicitId, sr);
     }
   }
   return map;

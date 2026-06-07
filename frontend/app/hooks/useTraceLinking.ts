@@ -38,7 +38,7 @@ export function useTraceLinking(
         selectChapter(chIdx);
       }
       requestAnimationFrame(() => {
-        setTimeout(() => readerHook.scrollToOffset(ref.offset[0]), 50);
+        setTimeout(() => readerHook.scrollToOffset(ref.offset[0], chIdx), 50);
       });
 
       // Editor: find the exact element line within the scene
