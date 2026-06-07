@@ -126,8 +126,11 @@ backend/app/
 │   └── editor.py               # /api/v1/editor/* (chat/apply_patch/undo)
 ├── core/
 │   ├── config.py               # pydantic-settings (DB URL, API Key, ADMIN_*, LLM_*)
-│   ├── security.py             # argon2 哈希, JWT 创建/解码 (sync)
-│   └── db.py                   # 同步 psycopg2 引擎, get_db(), init_db(), dispose_engine()
+│   ├── security.py             # argon2 哈希, JWT 创建/解码 (sync, jti 声明)
+│   ├── db.py                   # 同步 psycopg2 引擎, get_db(), init_db(), dispose_engine()
+│   ├── redis.py                # Redis 连接池 (懒加载, 线程安全), get_redis() DI
+│   ├── auth_middleware.py      # get_current_user (JWT 解码, 黑名单检查, 用户缓存)
+│   └── celery_app.py           # Celery 单例 (Redis broker + backend)
 ├── models/
 │   ├── http.py                 # BaseResponse(code, message, data), ErrorResponse
 │   └── sql.py                  # 9 表 SQLModel 定义
@@ -135,7 +138,10 @@ backend/app/
 │   ├── base.py                 # BaseCRUD[T] — 通用增删改查
 │   ├── progress.py             # ProgressManager 单例 (queue.Queue 每任务, 线程安全)
 │   ├── pipeline_executor.py    # 后台守护线程, DB 章节优先, SSE 事件推送
-│   └── sse.py                  # push_progress() → ProgressManager 委托
+│   ├── sse.py                  # push_progress() → ProgressManager 委托
+│   ├── token_blacklist.py      # JWT 撤销 — bl:{jti} 存入 Redis, TTL 自动过期
+│   ├── rate_limiter.py         # 固定窗口限流 — Redis INCR + EXPIRE (原子 SET NX)
+│   └── user_cache.py           # 用户资料缓存 — user:{id}, 300s TTL
 └── db/
     └── init.sql                # 9 表 DDL + 3 扩展 + HNSW + GIN 索引
 

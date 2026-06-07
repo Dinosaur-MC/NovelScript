@@ -65,6 +65,14 @@ graph TD
 - Chapter embeddings + KG cached to DB for reuse across pipeline runs
 - Paragraph-level splitting with model-aware context budgets
 
+**Key changes from 2.1.0 (Redis auth services):**
+
+- **Real logout**: `POST /logout` blacklists the JWT's `jti` in Redis (TTL = remaining lifetime)
+- **Rate limiting**: `POST /login` limited to 5 attempts per email + IP per 15-minute window (429 on exceed)
+- **User profile cache**: `get_current_user` checks Redis cache before DB; 5-minute TTL
+- **Redis connection pool**: `core/redis.py` — lazy singleton, thread-safe init, `get_redis()` FastAPI dependency
+- **Graceful degradation**: All Redis services catch `ConnectionError` — blacklist returns `False` (allow), rate limiter bypasses, cache falls through to DB
+
 ---
 
 ## 2. Data Models
@@ -305,9 +313,22 @@ Errors:   401
 #### POST /logout
 
 ```
+Headers:  Authorization: Bearer <jwt> (optional)
 Response: { message: "已登出" }
-Note:     Stub — no token invalidation (JWT stateless).
+Note:     Adds the JWT's jti to a Redis blacklist with TTL = remaining
+          token lifetime.  The blacklist is checked in get_current_user
+          before every authenticated request.  Without a token the
+          endpoint is a no-op (backward-compatible 200).
 ```
+
+### 3.1.1 Rate Limiting
+
+Login is rate-limited via Redis INCR + EXPIRE (fixed-window).  Five failed
+attempts per email + per IP within a 15-minute window return 429.  Successful
+authentication clears both counters.
+
+When Redis is unreachable rate limiting is bypassed (availability over strictness)
+and a warning is logged.
 
 ### 3.2 Novels — `/api/v1/novels`
 
@@ -915,7 +936,7 @@ flowchart TD
 |--------|------|---------|------|
 | POST | `/api/v1/auth/register` | Create account | No |
 | POST | `/api/v1/auth/login` | Login → JWT | No |
-| POST | `/api/v1/auth/logout` | Logout (stub) | No |
+| POST | `/api/v1/auth/logout` | Logout (Redis jti blacklist) | No |
 | GET | `/api/v1/auth/me` | Current user | Bearer |
 | POST | `/api/v1/novels/upload` | Upload novel + auto-create Task + dispatch Celery | Bearer |
 | POST | `/api/v1/novels/upload/file` | Upload novel file + auto-create Task | Bearer |

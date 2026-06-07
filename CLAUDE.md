@@ -19,7 +19,7 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 | API (25 endpoints) | ✅ Complete — auth (JWT+argon2, ownership checks), novels, scripts, tasks (SSE), editor (GraphRAG-enhanced) |
 | Pipeline ↔ DB Integration | ✅ Complete — Celery worker (Redis broker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
 | Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; run_pipeline.apply_async() |
-| Auth & Security | ✅ Complete — get_current_user dependency, require_ownership helper on all write endpoints |
+| Auth & Security | ✅ Complete — get_current_user (blacklist→cache→DB), jti revocation, login rate limiting, require_ownership helper |
 | Tests | ✅ 158 passing, 0 skipped |
 | Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles) |
 
@@ -149,8 +149,9 @@ app/
 │   ├── config.py          # pydantic-settings — DATABASE_URL, REDIS_URL, API keys, ADMIN_*
 │   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
 │   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
-│   ├── security.py        # argon2 hashing, JWT create/decode, configure_jwt()
-│   ├── auth_middleware.py # get_current_user dependency, require_ownership helper
+│   ├── redis.py           # Redis connection pool (lazy, thread-safe), get_redis() DI
+│   ├── security.py        # argon2 hashing, JWT create/decode (jti claim), configure_jwt()
+│   ├── auth_middleware.py # get_current_user (blacklist → cache → DB), require_ownership
 │   └── celery_app.py      # Celery singleton (Redis broker + backend)
 ├── tasks/
 │   └── pipeline.py        # Celery task: run_pipeline with self.update_state() for SSE
@@ -162,7 +163,10 @@ app/
 │   ├── progress.py        # ProgressManager no-op compat stub
 │   ├── pipeline_executor.py  # DB cache helpers (no threading): _load_chapters,
 │   │                      #   _load_cached_kg, _persist_kg, _persist_embeddings, _persist_chapters
-│   └── sse.py             # push_progress() → ProgressManager (deprecated)
+│   ├── sse.py             # push_progress() → ProgressManager (deprecated)
+│   ├── token_blacklist.py # JWT revocation — bl:{jti} Redis key with auto-TTL
+│   ├── rate_limiter.py    # Fixed-window rate limiter — INCR + SET NX EX
+│   └── user_cache.py      # User profile cache — user:{id}, 300s TTL
 ├── db/
 │   └── init.sql           # 9-table DDL, 3 extensions, HNSW + GIN indexes
 └── cli/                   # Pipeline engine — 11 modules
@@ -192,6 +196,7 @@ app/
 - **UTF-8 everywhere**: stdin/stdout reconfigured on Windows, logging encoding, file upload encoding fallback (GB18030/GBK/GB2312/Big5)
 - **Engine pool disposal**: `atexit` + FastAPI lifespan + test fixture teardown (3-layer guarantee)
 - **Auth middleware**: `get_current_user` enforces Bearer JWT on all write endpoints; `require_ownership()` helper for resource-level access control
+- **Redis auth services**: JWT logout via `jti` blacklist (auto-TTL), login rate limiting (5/15min per email+IP), user profile cache (300s TTL), graceful degradation on Redis unreachable
 
 ### Database Tables
 
