@@ -223,11 +223,18 @@ html, body, #root {
 }
 
 /* ========================================================================
-   ns-home — Novel list / Script gallery (components/home/HomePage.tsx)
+   ns-workspace — Creative Workspace (components/home/HomePage.tsx)
    ======================================================================== */
 
-/* Loading */
-.ns-home-loading {
+.ns-workspace-page {
+  height: 100vh;
+  overflow-y: auto;
+  background-color: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  padding: 32px 40px;
+}
+
+.ns-workspace-loading {
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -237,177 +244,242 @@ html, body, #root {
   background-color: var(--color-bg-canvas);
 }
 
-.ns-home-loading-text {
+.ns-workspace-loading-text {
   color: var(--color-text-secondary);
   font-size: 14px;
 }
 
-/* Main layout */
-.ns-home-wrap {
-  height: 100vh;
-  overflow-y: auto;
-  background-color: var(--color-bg-canvas);
-  color: var(--color-text-primary);
-  padding: 32px;
-}
-
-.ns-home-header {
+/* Header */
+.ns-workspace-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 24px;
+}
+
+.ns-workspace-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.ns-workspace-subtitle {
+  font-weight: 400;
+  font-size: 16px;
+  color: var(--color-text-secondary);
+  margin-left: 8px;
+}
+
+.ns-workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Search */
+.ns-workspace-search {
+  margin-bottom: 28px;
+}
+
+/* Section */
+.ns-workspace-section {
   margin-bottom: 32px;
 }
 
-.ns-home-header h1 {
-  font-size: 24px;
+.ns-workspace-section-title {
+  font-size: 16px;
   font-weight: 600;
-  margin: 0;
-}
-
-.ns-home-header-actions {
+  color: var(--color-text-primary);
+  margin: 0 0 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
 }
 
-/* Search & Filter */
-.ns-home-search {
+.ns-workspace-section-tabs {
   display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
-  max-width: 640px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
 
-/* Empty state */
-.ns-home-empty {
-  text-align: center;
-  padding: 64px;
+.ns-workspace-section-tabs .ns-workspace-section-title {
+  margin-bottom: 0;
+}
+
+.ns-workspace-sub-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Empty hint */
+.ns-workspace-empty-hint {
   color: var(--color-text-muted);
+  font-size: 13px;
+  padding: 16px 0;
 }
 
-.ns-home-empty-text {
-  font-size: 16px;
-  margin-bottom: 16px;
+/* Recent list */
+.ns-workspace-recent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
-/* Novel list (Collapse labels) */
-.ns-home-novel-label {
+.ns-workspace-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  min-width: 320px;
+  flex: 1;
+  transition: border-color 0.2s;
+}
+
+.ns-workspace-recent-item:hover {
+  border-color: var(--color-border-emphasis);
+}
+
+.ns-workspace-recent-item-type {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.ns-workspace-recent-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ns-workspace-recent-item-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ns-workspace-recent-item-desc {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ns-workspace-recent-item-badges {
+  flex-shrink: 0;
+}
+
+/* Card grid */
+.ns-workspace-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+/* Cards */
+.ns-workspace-card {
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-border-subtle);
+}
+
+.ns-workspace-card .ant-card-head {
+  background: transparent;
+  border-bottom: 1px solid var(--color-border-subtle);
+  min-height: auto;
+  padding: 0 14px;
+}
+
+.ns-workspace-card .ant-card-head-title {
+  padding: 10px 0;
+}
+
+.ns-workspace-card .ant-card-body {
+  padding: 10px 14px;
+}
+
+.ns-workspace-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   width: 100%;
 }
 
-.ns-home-novel-title {
+.ns-workspace-card-title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
+  color: var(--color-text-primary);
 }
 
-.ns-home-novel-meta {
-  color: var(--color-text-secondary);
-  margin-left: 8px;
-  font-size: 12px;
-}
-
-.ns-home-novel-actions {
-  /* container for edit/delete buttons in collapse header */
-}
-
-/* Script cards grid */
-.ns-home-script-grid {
+.ns-workspace-card-meta {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
-  padding: 8px 0;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
 
-/* "Start conversion" card */
-.ns-home-new-script-card {
-  width: 220px;
-  cursor: pointer;
-  border-radius: 8px;
-  background-color: rgba(108, 92, 231, 0.08);
-  border: 1px solid var(--color-accent-primary);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 78px;
-  padding: 12px 8px;
-}
-
-.ns-home-new-script-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-accent-primary);
-}
-
-.ns-home-new-script-desc {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-
-/* Script status card (within antd Card) */
-.ns-home-script-card-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.ns-home-script-card-title {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.ns-home-script-card-status {
+.ns-workspace-card-stat {
+  font-size: 12px;
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.ns-home-script-card-meta {
-  margin-top: 4px;
+.ns-workspace-card-snippet {
   font-size: 12px;
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  margin: 0 0 8px;
 }
 
-/* Script card */
-.ns-home-script-card-explicit {
-  width: 220px;
-  background-color: var(--color-bg-elevated);
-  border-color: var(--color-border-subtle);
-}
-
-/* Plus card for additional scripts */
-.ns-home-plus-card {
-  width: 220px;
-  background-color: transparent;
-  border-color: var(--color-border-emphasis);
-  border-style: dashed;
+.ns-workspace-card-footer {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 80px;
+  justify-content: space-between;
+}
+
+.ns-workspace-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* Upload modal */
-.ns-home-upload-label {
+.ns-workspace-upload-label {
   font-size: 13px;
   color: var(--color-text-secondary);
   margin-bottom: 4px;
   display: block;
 }
 
-.ns-home-upload-or {
+.ns-workspace-upload-or {
   text-align: center;
   color: var(--color-text-muted);
   margin-bottom: 8px;
 }
 
 /* Rename modal */
-.ns-home-rename-form {
+.ns-workspace-rename-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
