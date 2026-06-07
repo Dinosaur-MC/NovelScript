@@ -8,18 +8,21 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth_middleware import get_current_user
 from app.core.db import get_db
+from app.core.redis import get_redis
 from app.core.security import (
     create_access_token,
+    decode_access_token,
     hash_password,
     verify_password,
 )
+from app.services.token_blacklist import blacklist_token
 from app.models.http import BaseResponse
 from app.models.sql import User
 from app.services.base import BaseCRUD
@@ -122,8 +125,31 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 @router.post("/logout")
-def logout():
-    """Stub logout endpoint."""
+def logout(
+    request: Request,
+    r=Depends(get_redis),
+):
+    """Invalidate the current JWT by blacklisting its ``jti``.
+
+    Extracts the Bearer token from the Authorization header, decodes it
+    to obtain the ``jti`` and ``exp`` claims, then adds the ``jti`` to
+    the Redis blacklist with a TTL matching the token's remaining validity.
+
+    If no valid token is provided, the endpoint still returns 200 (no-op)
+    to remain backward-compatible with clients that call logout without
+    authentication.
+    """
+    authorization = request.headers.get("Authorization", "")
+    token = authorization.removeprefix("Bearer ").strip()
+    if token:
+        payload = decode_access_token(token)
+        if payload is not None:
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+                blacklist_token(r, jti, expires_at)
+
     return BaseResponse(code=200, message="已登出")
 
 
