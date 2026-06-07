@@ -59,6 +59,8 @@ See `.temp/DEVELOPMENT_STATUS.md` for frontend status (51 files, 3 routes, 6 API
 - **Paragraph splitter**: Boundary-aware (`\n\n+`), short paragraphs (≤32 chars) merged
 - **OpenRouter**: Embeddings only — `openai/text-embedding-3-small` via `https://openrouter.ai/api/v1/embeddings`
 
+Full CLI documentation: `backend/cli/README.md`
+
 ### Key CLI Options
 
 ```
