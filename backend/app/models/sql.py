@@ -186,6 +186,10 @@ class Task(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, default={}),
     )
+    token_usage: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, default={}),
+    )
     created_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False, default=_utcnow),

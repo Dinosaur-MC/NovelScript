@@ -15,6 +15,18 @@ Pipeline tasks dispatched via ``.apply_async()`` land in Redis, are
 picked up by the worker, and report progress via ``self.update_state()``
 (also Redis).  The SSE endpoint reads progress from Redis via
 ``AsyncResult(task_id)`` — no in-process queue is needed.
+
+Concurrency model
+-----------------
+Celery natively handles queuing + concurrency:
+
+- ``apply_async()``           → task lands in Redis broker queue
+- ``worker_prefetch_multiplier=1`` → each worker grabs only 1 task at a time
+- ``--concurrency=N``        → at most N tasks run concurrently per worker
+- ``task_acks_late=True``    → task re-queued if worker crashes mid-execution
+
+Inside each pipeline run, ``asyncio.Semaphore(LLM_MAX_CONCURRENCY)`` gates
+the 3 concurrent LLM stages so the API is never flooded.
 """
 
 from __future__ import annotations
@@ -24,7 +36,6 @@ from celery import Celery
 from app.core.config import settings
 
 # Broker + result backend — both Redis.
-# Override via .env: CELERY_BROKER_URL=redis://your-host:6379/0
 REDIS_URL = settings.REDIS_URL
 
 celery_app = Celery(

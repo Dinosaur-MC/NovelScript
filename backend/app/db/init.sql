@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     script_fountain  TEXT,
     error_message    TEXT,
     pipeline_config  JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    token_usage      JSONB        NOT NULL DEFAULT '{}'::jsonb,
     created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
 );

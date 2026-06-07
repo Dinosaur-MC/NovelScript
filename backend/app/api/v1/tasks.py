@@ -511,6 +511,7 @@ def get_task(task_id: str, db: Session = Depends(get_db)):
             "script_fountain": task.script_fountain,
             "error_message": task.error_message,
             "pipeline_config": task.pipeline_config,
+            "token_usage": task.token_usage,
             "created_at": task.created_at.isoformat() if task.created_at else None,
             "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         },

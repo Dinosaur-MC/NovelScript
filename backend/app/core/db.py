@@ -136,6 +136,9 @@ def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
     logger.info("SQLModel tables created (if not exists).")
 
+    # -- 3b. Lightweight column additions (no full migration framework) ----- #
+    _add_column_if_missing("tasks", "token_usage", "JSONB NOT NULL DEFAULT '{}'::jsonb")
+
     # -- 4. Recover stale tasks from previous run ------------------------- #
     from app.services.pipeline_executor import recover_stale_tasks
 
@@ -143,6 +146,33 @@ def init_db() -> None:
 
     # -- 5. Seed initial admin account ------------------------------------ #
     _seed_admin()
+
+
+def _add_column_if_missing(table: str, column: str, col_def: str) -> None:
+    """Add *column* to *table* if it doesn't already exist.
+
+    PostgreSQL does not support ``ALTER TABLE … ADD COLUMN IF NOT EXISTS``,
+    so we probe ``information_schema.columns`` first.
+    """
+    try:
+        with _engine.connect() as conn:
+            # Check if column already exists
+            row = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :tbl AND column_name = :col"
+                ),
+                {"tbl": table, "col": column},
+            ).first()
+            if row is not None:
+                logger.debug("Column %s.%s already exists — skipped.", table, column)
+                return
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+            conn.commit()
+        logger.info("Column %s.%s added.", table, column)
+    except Exception:
+        conn.rollback()
+        logger.debug("Column %s.%s migration skipped (may already exist).", table, column)
 
 
 def _split_statements(sql: str):

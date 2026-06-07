@@ -6,6 +6,19 @@ which writes to Redis; the FastAPI SSE endpoint reads it back via
 ``AsyncResult(task_id)`` — no DB writes for incremental progress ticks.
 
 Only the final result (completed / failed) is persisted to the database.
+
+Concurrency model
+-----------------
+Celery natively handles queuing + concurrency:
+
+- ``apply_async()``           → task lands in Redis broker queue
+- ``worker_prefetch_multiplier=1`` → each worker grabs only 1 task at a time
+- ``--concurrency=N``        → at most N tasks run concurrently per worker
+- ``task_acks_late=True``    → task re-queued if worker crashes mid-execution
+
+Inside each pipeline run, ``asyncio.Semaphore(LLM_MAX_CONCURRENCY)`` gates
+the 3 concurrent LLM stages (Summarization / Conversion / Optimization)
+so the LLM API is never flooded even within a single task.
 """
 
 from __future__ import annotations
@@ -51,8 +64,8 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
     Returns:
         ``{"status": "completed", "scenes": N}`` on success.
 
-    Progress is reported via ``self.update_state(state='PROGRESS', ...)``
-    so the SSE endpoint can read it from Redis without a DB round-trip.
+    Celery queues excess tasks automatically in Redis — if all workers are
+    busy, new tasks wait in the broker until a worker is free.
     """
     tid = uuid.UUID(task_id)
     nid = uuid.UUID(novel_id)
@@ -160,6 +173,8 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
             {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties}
             for c in script.characters
         ]
+        # Persist token usage from the pipeline's meta output
+        task.token_usage = script.meta.get("usage", {})
         task.updated_at = datetime.now(timezone.utc)
         session.add(task)
 
@@ -174,7 +189,11 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         session.commit()
         session.close()
 
-        logger.info("Pipeline completed for task %s: %d scenes.", task_id, len(script.scenes))
+        total_cost = script.meta.get("usage", {}).get("total_cost_yuan", 0)
+        logger.info(
+            "Pipeline completed for task %s: %d scenes, cost ¥%.4f.",
+            task_id, len(script.scenes), total_cost,
+        )
         return {"status": "completed", "scenes": len(script.scenes)}
 
     except Exception:
