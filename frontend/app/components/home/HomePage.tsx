@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
-import { Card, Tag, Button, Modal, Input, Upload, message, Select, Avatar, Popover, Popconfirm, Tabs } from "antd";
+import { Card, Tag, Button, Modal, Input, Upload, message, Select, Avatar, Popover, Popconfirm, Tabs, Dropdown } from "antd";
 import {
   PlusOutlined,
   UploadOutlined,
@@ -19,7 +19,7 @@ import {
   FileTextOutlined,
 } from "@ant-design/icons";
 import { listNovels, uploadNovel, uploadNovelFile, updateNovel, deleteNovel } from "../../api/novels";
-import { listScripts, type ScriptLight, deleteScript } from "../../api/scripts";
+import { listScripts, createScript, type ScriptLight, deleteScript } from "../../api/scripts";
 import { createTask } from "../../api/tasks";
 import type { Novel } from "../../api/novels";
 import { useAuthStore } from "../../stores/auth-store";
@@ -159,6 +159,14 @@ export function HomePage() {
     } catch (err) { message.error(err instanceof Error ? err.message : "上传失败"); }
     finally { setUploading(false); }
     return false;
+  };
+
+  const handleBlankScript = async () => {
+    try {
+      const res = await createScript("未命名剧本", "standalone");
+      message.success("空白剧本已创建");
+      navigate(`/workspace/${res.script_id}`);
+    } catch { message.error("创建剧本失败"); }
   };
 
   const handleNewConversion = async (novelId: string) => {
@@ -334,7 +342,18 @@ export function HomePage() {
           {user ? (
             <>
               <Button icon={<DashboardOutlined />} onClick={() => navigate("/dashboard")}>仪表板</Button>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setUploadOpen(true)}>上传小说</Button>
+              <Dropdown menu={{
+                items: [
+                  { key: "blank", label: "新建空白剧本", icon: <FileTextOutlined /> },
+                  { key: "upload", label: "从小说转换", icon: <UploadOutlined /> },
+                ],
+                onClick: ({ key }) => {
+                  if (key === "blank") handleBlankScript();
+                  else setUploadOpen(true);
+                },
+              }}>
+                <Button type="primary" icon={<PlusOutlined />}>新建剧本</Button>
+              </Dropdown>
               <Popover trigger="click" placement="bottomRight" overlayStyle={{ width: 220 }}
                 content={
                   <div className="ns-popover-wrap">
@@ -402,8 +421,7 @@ export function HomePage() {
               {scriptFiltered.map(renderScriptCard)}
               {scriptFiltered.length === 0 && (
                 <div className="ns-workspace-empty-hint">
-                  暂无剧本。上传小说并开始转换，或{" "}
-                  <Button type="link" size="small" onClick={() => setUploadOpen(true)}>上传小说</Button>
+                  暂无剧本。从小说转换或新建空白剧本
                 </div>
               )}
             </div>
@@ -413,14 +431,14 @@ export function HomePage() {
         {novelFiltered.length === 0 && scriptFiltered.length === 0 && (
           <div className="ns-workspace-empty-hint">
             {novels.length === 0
-              ? (user ? "还没有小说，点击上方「上传小说」开始吧" : "请先登录")
+              ? (user ? "还没有小说或剧本，点击上方「新建剧本」开始吧" : "请先登录")
               : "没有匹配的小说或剧本，请调整搜索条件"}
           </div>
         )}
       </section>
 
       {/* Upload Modal */}
-      <Modal title="上传小说" open={uploadOpen}
+      <Modal title="从小说转换 — 上传小说文件" open={uploadOpen}
         onCancel={() => { setUploadOpen(false); setUploadTitle(""); }}
         footer={null} destroyOnHidden>
         <div style={{ marginBottom: 12 }}>
