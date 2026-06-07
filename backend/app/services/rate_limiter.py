@@ -8,9 +8,20 @@ Usage::
 
     # On successful authentication, clear the counters:
     reset_rate_limit(r, "login-email", "user@example.com")
+
+When Redis is unreachable the module degrades gracefully:
+- ``check_rate_limit`` returns ``(True, max_requests)`` — all requests
+  are allowed (availability over rate limiting).
+- ``reset_rate_limit`` is a silent no-op.
 """
 
 from __future__ import annotations
+
+import logging
+
+import redis.exceptions
+
+logger = logging.getLogger(__name__)
 
 
 def check_rate_limit(
@@ -32,13 +43,21 @@ def check_rate_limit(
     Returns:
         ``(allowed: bool, remaining: int)`` — *allowed* is ``False`` when
         the limit is exceeded; *remaining* is the count left before the cap.
+        When Redis is unreachable, returns ``(True, max_requests)``.
     """
     redis_key = f"rate:{namespace}:{key}"
-    count = redis_client.incr(redis_key)
-    if count == 1:
-        redis_client.expire(redis_key, window_seconds)
-    remaining = max(0, max_requests - count)
-    return count <= max_requests, remaining
+    try:
+        count = redis_client.incr(redis_key)
+        if count == 1:
+            redis_client.expire(redis_key, window_seconds)
+        remaining = max(0, max_requests - count)
+        return count <= max_requests, remaining
+    except redis.exceptions.ConnectionError:
+        logger.warning(
+            "Redis unavailable — rate limit bypassed for %s:%s",
+            namespace, key[:40],
+        )
+        return True, max_requests
 
 
 def reset_rate_limit(redis_client, namespace: str, key: str) -> None:
@@ -46,5 +65,12 @@ def reset_rate_limit(redis_client, namespace: str, key: str) -> None:
 
     Call this after a successful action (e.g. successful login) so the
     user is not penalised for subsequent operations.
+    When Redis is unreachable this is a silent no-op.
     """
-    redis_client.delete(f"rate:{namespace}:{key}")
+    try:
+        redis_client.delete(f"rate:{namespace}:{key}")
+    except redis.exceptions.ConnectionError:
+        logger.warning(
+            "Redis unavailable — rate limit reset skipped for %s:%s",
+            namespace, key[:40],
+        )

@@ -65,6 +65,38 @@ class TestUserCache:
         assert get_cached_user(redis_client, "user-A") is not None
         assert get_cached_user(redis_client, "user-B") is None
 
+    def test_get_cached_user_returns_none_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, cache miss is returned (fall through to DB)."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "get", _fail)
+        assert get_cached_user(redis_client, "any-id") is None
+
+    def test_set_cached_user_does_not_raise_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, set_cached_user is a silent no-op."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "setex", _fail)
+        # Should not raise
+        set_cached_user(redis_client, "down-id", self.USER_DATA)
+
+    def test_invalidate_does_not_raise_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, invalidate_user_cache is a silent no-op."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "delete", _fail)
+        # Should not raise
+        invalidate_user_cache(redis_client, "down-id")
+
     def test_set_overwrites_existing(self, redis_client):
         """Setting a cached user twice overwrites the data."""
         uid = self.USER_DATA["id"]

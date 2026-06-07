@@ -3,11 +3,20 @@
 Cached fields: ``id``, ``username``, ``email``, ``role``, ``is_active``,
 ``password_hash`` (needed because ``get_current_user`` returns a full
 ``User`` ORM object that callers may inspect).
+
+When Redis is unreachable the module degrades gracefully:
+- ``get_cached_user`` returns ``None`` (cache miss → fall through to DB).
+- ``set_cached_user`` and ``invalidate_user_cache`` are silent no-ops.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+
+import redis.exceptions
+
+logger = logging.getLogger(__name__)
 
 USER_CACHE_TTL = 300  # 5 minutes
 
@@ -22,8 +31,13 @@ def get_cached_user(redis_client, user_id: str) -> dict | None:
     Returns:
         A dict with keys ``id``, ``username``, ``email``, ``role``,
         ``is_active``, ``password_hash``, or ``None``.
+        Returns ``None`` when Redis is unreachable.
     """
-    raw = redis_client.get(f"user:{user_id}")
+    try:
+        raw = redis_client.get(f"user:{user_id}")
+    except redis.exceptions.ConnectionError:
+        logger.warning("Redis unavailable — user cache miss for %s", user_id[:12])
+        return None
     if raw is None:
         return None
     return json.loads(raw)
@@ -37,12 +51,18 @@ def set_cached_user(redis_client, user_id: str, user_data: dict) -> None:
         user_id: The user's UUID as a string.
         user_data: Dict with at minimum ``id``, ``username``, ``email``,
             ``role``, ``is_active``, ``password_hash``.
+
+    When Redis is unreachable this is a silent no-op — the next request
+    will perform a DB lookup as a cache miss.
     """
-    redis_client.setex(
-        f"user:{user_id}",
-        USER_CACHE_TTL,
-        json.dumps(user_data, ensure_ascii=False),
-    )
+    try:
+        redis_client.setex(
+            f"user:{user_id}",
+            USER_CACHE_TTL,
+            json.dumps(user_data, ensure_ascii=False),
+        )
+    except redis.exceptions.ConnectionError:
+        logger.warning("Redis unavailable — user cache write skipped for %s", user_id[:12])
 
 
 def invalidate_user_cache(redis_client, user_id: str) -> None:
@@ -50,5 +70,11 @@ def invalidate_user_cache(redis_client, user_id: str) -> None:
 
     Call this after profile updates (password change, role change, etc.)
     so the next ``get_current_user`` call re-fetches from the DB.
+
+    When Redis is unreachable this is a silent no-op — the cache entry
+    will expire naturally via TTL.
     """
-    redis_client.delete(f"user:{user_id}")
+    try:
+        redis_client.delete(f"user:{user_id}")
+    except redis.exceptions.ConnectionError:
+        logger.warning("Redis unavailable — user cache invalidation skipped for %s", user_id[:12])

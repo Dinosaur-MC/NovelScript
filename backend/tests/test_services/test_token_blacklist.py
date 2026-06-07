@@ -40,6 +40,32 @@ class TestTokenBlacklist:
         # TTL should be somewhere between 1 and 5 seconds
         assert 1 <= ttl <= 5, f"Expected 1-5s TTL, got {ttl}"
 
+    def test_is_blacklisted_returns_false_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, assume token is not blacklisted."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "exists", _fail)
+        assert is_blacklisted(redis_client, "any-jti") is False
+
+    def test_blacklist_token_does_not_raise_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, blacklist_token returns without error."""
+        import redis.exceptions
+        from datetime import datetime, timedelta, timezone
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "set", _fail)
+        # Should not raise
+        blacklist_token(
+            redis_client,
+            "jti-unreachable",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
     def test_blacklist_expired_token_sets_min_ttl(self, redis_client):
         """If the token is already expired, TTL floors at 1 second."""
         jti = "test-jti-expired"

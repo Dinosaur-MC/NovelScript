@@ -69,6 +69,29 @@ class TestRateLimiter:
         assert allowed is True
         assert remaining == 4
 
+    def test_check_rate_limit_allows_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, rate limit is bypassed (allow)."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "incr", _fail)
+        allowed, remaining = check_rate_limit(redis_client, "test", "user-down")
+        assert allowed is True
+        assert remaining == 5  # max_requests default
+
+    def test_reset_rate_limit_does_not_raise_when_redis_unavailable(self, redis_client, monkeypatch):
+        """When Redis is unreachable, reset_rate_limit is a silent no-op."""
+        import redis.exceptions
+
+        def _fail(*_a, **_kw):
+            raise redis.exceptions.ConnectionError("mock disconnect")
+
+        monkeypatch.setattr(redis_client, "delete", _fail)
+        # Should not raise
+        reset_rate_limit(redis_client, "test", "down-key")
+
     def test_window_expires(self, redis_client):
         """After manually expiring the key, counter resets."""
         key = "rate:test:expire-me"
