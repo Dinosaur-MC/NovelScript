@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Button, Input, message, Select } from "antd";
 import { SendOutlined, UndoOutlined } from "@ant-design/icons";
+import ReactMarkdown, { type Components } from "react-markdown";
 import { useTaskStore } from "../../stores/task-store";
 import { useEditorStore } from "../../stores/editor-store";
 import { useScriptStore } from "../../stores/script-store";
@@ -11,8 +12,16 @@ import type { useScriptEditor } from "../../hooks/useScriptEditor";
 interface MessageItem {
   id: string;
   role: "user" | "assistant";
+  /** Full content once streaming is complete. */
   content: string;
+  /** Visible content — grows as the typing animation streams in. */
+  visibleContent: string;
   patch?: PatchOp | null;
+  /** AI reasoning/thinking content (DeepSeek-style). */
+  thinking?: string | null;
+  /** Whether the thinking section is expanded by the user. */
+  thinkingOpen: boolean;
+  streaming: boolean;
 }
 
 interface Props {
@@ -22,6 +31,49 @@ interface Props {
 let _msgId = 0;
 function nextId() {
   return `msg_${++_msgId}`;
+}
+
+/** Typing speed: characters to reveal per animation frame (~60fps). */
+const CHARS_PER_TICK = 3;
+
+/**
+ * Start a typing animation that progressively reveals text in a message.
+ * Returns a cleanup function that can be called to stop the animation early.
+ */
+function startTypingAnimation(
+  msgId: string,
+  fullText: string,
+  setMessages: React.Dispatch<React.SetStateAction<MessageItem[]>>,
+  onDone?: () => void,
+): () => void {
+  let pos = 0;
+  const total = fullText.length;
+  let cancelled = false;
+
+  function tick() {
+    if (cancelled) return;
+    pos = Math.min(pos + CHARS_PER_TICK, total);
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId ? { ...m, visibleContent: fullText.slice(0, pos) } : m,
+      ),
+    );
+
+    if (pos < total) {
+      requestAnimationFrame(tick);
+    } else {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId ? { ...m, streaming: false } : m,
+        ),
+      );
+      onDone?.();
+    }
+  }
+
+  requestAnimationFrame(tick);
+  return () => { cancelled = true; };
 }
 
 export function AIChat({ editorHook }: Props) {
@@ -38,36 +90,58 @@ export function AIChat({ editorHook }: Props) {
   const sceneOptions = scenes.map((s, i) => {
     const heading = s.heading as Record<string, string> | undefined;
     const sceneIdVal = (s.scene_id as string) || `scene_${i}`;
-    const label = heading
-      ? `${heading.int_ext || ""} ${heading.location || ""} — ${heading.time || ""}`
-      : `场景 ${i + 1}`;
-    return { value: sceneIdVal, label: label.trim().replace(/^— /, "") || `场景 ${i + 1}` };
+    const intExt = heading?.int_ext || "";
+    const location = heading?.location || "";
+    const timeOfDay = heading?.time_of_day || "";
+    const parts = [intExt, location, timeOfDay].filter(Boolean);
+    const label = parts.join(" ") || `场景 ${i + 1}`;
+    return { value: sceneIdVal, label };
   });
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
   const handleSend = useCallback(async () => {
     if (!taskId || !input.trim() || sending) return;
-    const userMsg: MessageItem = { id: nextId(), role: "user", content: input };
+    const userMsg: MessageItem = {
+      id: nextId(),
+      role: "user",
+      content: input,
+      visibleContent: input,
+      streaming: false,
+      thinkingOpen: false,
+    };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setSending(true);
 
     try {
       const res: ChatResponse = await sendChat(taskId, userMsg.content, sceneId);
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: "assistant", content: res.reply, patch: res.patch },
-      ]);
+
+      const assistantId = nextId();
+      const assistantMsg: MessageItem = {
+        id: assistantId,
+        role: "assistant",
+        content: res.reply,
+        visibleContent: "",
+        patch: res.patch,
+        thinking: res.thinking,
+        thinkingOpen: !!res.thinking,
+        streaming: true,
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+
+      // Start typing animation to stream the response into view
+      startTypingAnimation(assistantId, res.reply, setMessages, () => {
+        setSending(false);
+      });
     } catch {
       message.error("AI 服务暂时不可用");
-    } finally {
       setSending(false);
     }
-  }, [taskId, input, sending]);
+  }, [taskId, input, sending, sceneId]);
 
   const handleApplyPatch = useCallback(
     async (patch: PatchOp) => {
@@ -94,6 +168,30 @@ export function AIChat({ editorHook }: Props) {
       message.error("撤销失败");
     }
   }, [taskId, editorHook]);
+
+  /** Custom rendering components for react-markdown — styles code fences. */
+  const markdownComponents: Components = useMemo(
+    () => ({
+      code({ className, children, ...props }: any) {
+        const isBlock = className && String(className).includes("language-");
+        if (isBlock) {
+          return (
+            <pre className="ns-chat-code-block">
+              <code className={className} {...props}>
+                {String(children ?? "")}
+              </code>
+            </pre>
+          );
+        }
+        return (
+          <code className="ns-chat-code-inline" {...props}>
+            {String(children ?? "")}
+          </code>
+        );
+      },
+    }),
+    [],
+  );
 
   return (
     <div className="ns-chat">
@@ -124,13 +222,50 @@ export function AIChat({ editorHook }: Props) {
             输入消息与 AI 协作编辑剧本
           </div>
         )}
-        {messages.map((msg) => (
+        {messages.map((msg) => {
+          const toggleThinking = () => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === msg.id ? { ...m, thinkingOpen: !m.thinkingOpen } : m,
+              ),
+            );
+          };
+
+          return (
           <div
             key={msg.id}
             className={`ns-chat-msg ${msg.role === "user" ? "ns-chat-msg-user" : "ns-chat-msg-assistant"}`}
           >
-            <div className="ns-chat-msg-text">{msg.content}</div>
-            {msg.patch && (
+            {/* Thinking / reasoning section */}
+            {msg.role === "assistant" && msg.thinking && (
+              <div className="ns-chat-thinking">
+                <button
+                  className="ns-chat-thinking-toggle"
+                  onClick={toggleThinking}
+                >
+                  {msg.thinkingOpen ? "▾" : "▸"} 思考过程
+                </button>
+                {msg.thinkingOpen && (
+                  <pre className="ns-chat-thinking-content">{msg.thinking}</pre>
+                )}
+              </div>
+            )}
+
+            <div className="ns-chat-msg-text">
+              {msg.role === "assistant" && msg.streaming ? (
+                <>
+                  <span style={{ whiteSpace: "pre-wrap" }}>{msg.visibleContent}</span>
+                  <span className="ns-chat-cursor" />
+                </>
+              ) : msg.role === "assistant" ? (
+                <ReactMarkdown components={markdownComponents}>
+                  {msg.content}
+                </ReactMarkdown>
+              ) : (
+                msg.content
+              )}
+            </div>
+            {msg.patch && !msg.streaming && (
               <div className="ns-chat-msg-patch">
                 <Button
                   size="small"
@@ -142,7 +277,8 @@ export function AIChat({ editorHook }: Props) {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Input */}
