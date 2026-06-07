@@ -12,22 +12,27 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.redis import get_redis
 from app.main import app
 
 
 # ---------------------------------------------------------------------------
-# Fixture — TestClient wired to the test DB session
+# Fixture — TestClient wired to the test DB session and fakeredis
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def client(db: Session):
-    """Return a TestClient whose ``get_db`` dependency yields the test session."""
+def client(db: Session, redis_client):
+    """Return a TestClient wired to the test DB session and fakeredis."""
 
     def _override_get_db():
         yield db
 
+    def _override_get_redis():
+        yield redis_client
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_redis] = _override_get_redis
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

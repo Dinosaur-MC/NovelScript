@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.db import _session_factory, get_db
+from app.core.redis import get_redis
 from app.core.security import create_access_token, hash_password
 from app.models.sql import User
 
@@ -38,7 +39,7 @@ def _ensure_test_user(session) -> User:
 
 
 @pytest.fixture
-def client_and_session(db_engine):
+def client_and_session(db_engine, redis_client):
     """TestClient + test Session + auth headers for script mutating tests."""
     from app.main import app
 
@@ -50,7 +51,11 @@ def client_and_session(db_engine):
         def _get_test_db():
             yield test_session
 
+        def _override_get_redis():
+            yield redis_client
+
         app.dependency_overrides[get_db] = _get_test_db
+        app.dependency_overrides[get_redis] = _override_get_redis
 
         with TestClient(app) as tc:
             yield (tc, test_session, auth_headers)
@@ -60,11 +65,12 @@ def client_and_session(db_engine):
 
 
 @pytest.fixture
-def client(db):
+def client(db, redis_client):
     """TestClient with get_db override (for GET and public endpoints)."""
     from app.main import app
 
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_redis] = lambda: redis_client
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

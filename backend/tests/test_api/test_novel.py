@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.db import get_db
+from app.core.redis import get_redis
 from app.main import app
 from app.models.sql import Chapter as ChapterModel
 from app.models.sql import Novel
@@ -22,9 +23,10 @@ from app.models.sql import Novel
 
 
 @pytest.fixture
-def client(db):
+def client(db, redis_client):
     """TestClient whose get_db dependency is pointed at the rollback-session."""
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_redis] = lambda: redis_client
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

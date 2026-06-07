@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.core.db import _session_factory, get_db
+from app.core.redis import get_redis
 from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.sql import AuditLog, Novel, User
@@ -74,9 +75,12 @@ def auth_headers(db_engine) -> dict[str, str]:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    """FastAPI synchronous test client (bare — no get_db override)."""
-    return TestClient(app)
+def client(redis_client) -> TestClient:
+    """FastAPI synchronous test client with fakeredis override."""
+    app.dependency_overrides[get_redis] = lambda: redis_client
+    with TestClient(app) as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 # ===================================================================

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.db import get_db
+from app.core.redis import get_redis
 from app.main import app
 from app.models.sql import Dialogue, Novel, Operation, Task
 
@@ -19,13 +20,17 @@ from app.models.sql import Dialogue, Novel, Operation, Task
 
 
 @pytest.fixture
-def client(db):
-    """TestClient wired to the test database session."""
+def client(db, redis_client):
+    """TestClient wired to the test database session and fakeredis."""
 
     def _override_get_db():
         return db
 
+    def _override_get_redis():
+        yield redis_client
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_redis] = _override_get_redis
     with TestClient(app) as tc:
         yield tc
     app.dependency_overrides.clear()
