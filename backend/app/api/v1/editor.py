@@ -442,6 +442,16 @@ def chat(
         llm = get_llm("ai_chat", 0.7)
         ai_msg = invoke_llm_with_retry(llm, messages, "ai_chat")
         reply_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+
+        # Extract thinking / reasoning content when the model provides it
+        thinking = None
+        if hasattr(ai_msg, "additional_kwargs"):
+            thinking = (
+                ai_msg.additional_kwargs.get("reasoning_content")
+                or ai_msg.additional_kwargs.get("thinking")
+            )
+        if not thinking and hasattr(ai_msg, "reasoning_content"):
+            thinking = ai_msg.reasoning_content
     except Exception as exc:
         logger.exception("LLM call failed for task %s", task_id)
         raise HTTPException(
@@ -482,6 +492,7 @@ def chat(
         data={
             "reply": reply_text,
             "patch": patch_obj,
+            "thinking": thinking,
         },
     )
 

@@ -18,7 +18,7 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import Novel, Task, User
+from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -324,6 +324,60 @@ def delete_novel(
         code=200,
         message="Deleted",
         data={"deleted_id": str(nid)},
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /{novel_id}/knowledge-graph — knowledge graph scoped by novel
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{novel_id}/knowledge-graph", response_model=BaseResponse)
+def get_novel_knowledge_graph(novel_id: str, db: Session = Depends(get_db)):
+    """Return the knowledge graph (nodes + edges) for a given novel.
+
+    KG data is associated with the novel, not a specific task — successive
+    pipeline runs on the same novel share the same graph.
+    """
+    nid = _parse_uuid(novel_id)
+
+    novel = novel_crud.get(db, nid)
+    if novel is None:
+        raise HTTPException(status_code=404, detail="Novel not found")
+
+    node_rows = db.execute(
+        select(KnowledgeNode).where(KnowledgeNode.novel_id == nid)
+    ).scalars().all()
+    edge_rows = db.execute(
+        select(KnowledgeEdge).where(KnowledgeEdge.novel_id == nid)
+    ).scalars().all()
+
+    return BaseResponse(
+        code=200,
+        message="OK",
+        data={
+            "nodes": [
+                {
+                    "id": str(n.id),
+                    "node_type": n.node_type,
+                    "name": n.name,
+                    "aliases": n.aliases,
+                    "description": n.description,
+                    "properties": n.properties,
+                }
+                for n in node_rows
+            ],
+            "edges": [
+                {
+                    "id": str(e.id),
+                    "source_node_id": str(e.source_node_id),
+                    "target_node_id": str(e.target_node_id),
+                    "relation": e.relation,
+                    "weight": e.weight,
+                }
+                for e in edge_rows
+            ],
+        },
     )
 
 

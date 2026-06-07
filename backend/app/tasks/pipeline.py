@@ -172,7 +172,7 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         task.script_json = script.model_dump(mode="json")
         task.script_fountain = to_fountain(script)
         task.characters_json = [
-            {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties}
+            {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties, "node_type": "character"}
             for c in script.characters
         ]
         # Persist token usage from the pipeline's meta output
