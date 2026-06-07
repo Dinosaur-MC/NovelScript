@@ -7,7 +7,10 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
+import fakeredis
+
 from app.core.db import _engine, _session_factory, init_db
+from app.core.redis import get_redis
 from app.core.security import create_access_token, hash_password
 from app.models.sql import User
 
@@ -56,6 +59,14 @@ def db(db_engine: None):
     with _session_factory() as session:
         yield session
         session.rollback()
+
+
+@pytest.fixture
+def redis_client():
+    """In-memory fakeredis — isolated per test function."""
+    r = fakeredis.FakeRedis(decode_responses=True)
+    yield r
+    r.flushall()
 
 
 # ---------------------------------------------------------------------------
