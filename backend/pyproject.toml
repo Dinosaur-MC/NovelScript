@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = []
+dev = ["fakeredis>=2.32.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
