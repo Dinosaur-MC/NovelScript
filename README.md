@@ -74,10 +74,10 @@ graph TD
     end
 
     subgraph 后端引擎["后端引擎 (FastAPI + Celery)"]
-        E[RESTful API (SSE 进度推送)]
-        F[LLM Router (Pro ↔ Flash)]
+        E["RESTful API (SSE 进度推送)"]
+        F["LLM Router (Pro ↔ Flash)"]
         G[8-Stage Pipeline:<br/>Chunking → Summarize → RAG →<br/>GraphRAG → Conversion →<br/>Post-Processing → Optimize → Narrative Summary]
-        H[Celery Worker (Redis broker)]
+        H["Celery Worker (Redis broker)"]
     end
 
     subgraph 数据底座["数据底座 (PostgreSQL 18 All-in-One)"]
@@ -97,8 +97,8 @@ graph TD
     D -->|SSE| E
     E --> F
     F --> G
-    E -->|apply_async()| H
-    H -->|update_state()| L
+    E -->|apply_async| H
+    H -->|update_state| L
     E -->|SSE poll| L
     E --> I
     E --> J
