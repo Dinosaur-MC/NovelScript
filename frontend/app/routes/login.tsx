@@ -53,29 +53,11 @@ export default function LoginPage() {
   };
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "var(--color-bg-canvas)",
-      }}
-    >
-      <div
-        style={{
-          width: 400,
-          padding: "40px 32px",
-          backgroundColor: "var(--color-bg-elevated)",
-          border: "1px solid var(--color-border-subtle)",
-          borderRadius: 12,
-        }}
-      >
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 600, color: "var(--color-text-primary)", margin: 0 }}>
-            NovelScript
-          </h1>
-          <p style={{ color: "var(--color-text-secondary)", fontSize: 14, marginTop: 4 }}>
+    <div className="ns-login-wrap">
+      <div className="ns-login-card">
+        <div className="ns-login-brand">
+          <h1>NovelScript</h1>
+          <p className="ns-login-subtitle">
             析幕 — AI 驱动的剧本转换系统
           </p>
         </div>
@@ -184,7 +166,7 @@ export default function LoginPage() {
           ]}
         />
 
-        <div style={{ textAlign: "center", marginTop: -8 }}>
+        <div className="ns-login-skip">
           <Button type="link" size="small" onClick={() => navigate("/")}>
             跳过，直接进入
           </Button>

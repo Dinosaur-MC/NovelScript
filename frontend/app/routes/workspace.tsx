@@ -106,36 +106,13 @@ export default function Workspace() {
 
   if (error) {
     return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          backgroundColor: "var(--color-bg-canvas)",
-        }}
-      >
+      <div className="ns-workspace-error">
         <TaskBar loading={false} />
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 16,
-          }}
-        >
-          <p style={{ color: "var(--color-accent-danger)", fontSize: 16 }}>{error}</p>
+        <div className="ns-workspace-error-body">
+          <p className="ns-workspace-error-text">{error}</p>
           <button
             onClick={() => navigate("/")}
-            style={{
-              padding: "8px 24px",
-              background: "var(--color-accent-primary)",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              cursor: "pointer",
-            }}
+            className="ns-workspace-error-btn"
           >
             返回首页
           </button>
@@ -146,34 +123,18 @@ export default function Workspace() {
   }
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "var(--color-bg-canvas)",
-      }}
-    >
+    <div className="ns-workspace-wrap">
       <TaskBar loading={loading} />
-      <div style={{ flex: 1, overflow: "hidden" }}>
+      <div className="ns-workspace-body">
         {loading ? (
-          <div
-            style={{
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 16,
-            }}
-          >
+          <div className="ns-workspace-loading">
             <div className="ns-spinner" />
-            <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>
+            <span className="ns-workspace-loading-text">
               加载中...
             </span>
           </div>
         ) : (
-          <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+          <div className="ns-workspace-panels">
             {/* Collapse tab — instant appearance */}
             <div
               className="ns-reader-collapse-tab"
@@ -188,12 +149,13 @@ export default function Workspace() {
               小说原文
             </div>
             {/* Reader panel — smooth collapse animation */}
-            <div style={{
-              flexShrink: 0, overflow: "hidden",
-              width: readerCollapsed ? 0 : `${leftW}%`,
-              minWidth: readerCollapsed ? 0 : 240,
-              transition: "width 0.25s ease, min-width 0.25s ease",
-            }}>
+            <div
+              className="ns-workspace-reader-panel"
+              style={{
+                width: readerCollapsed ? 0 : `${leftW}%`,
+                minWidth: readerCollapsed ? 0 : 240,
+              }}
+            >
               <NovelReader readerHook={readerHook} traceHook={traceHook} />
             </div>
             {/* Splitter handle — always present for resizing */}
@@ -223,16 +185,10 @@ export default function Workspace() {
                 document.addEventListener("mousemove", onMove);
                 document.addEventListener("mouseup", onUp);
               }}
-              style={{
-                width: 4, flexShrink: 0, cursor: "col-resize",
-                backgroundColor: "var(--color-border-subtle)",
-                transition: "background-color 0.15s",
-              }}
-              onMouseEnter={(el) => { (el.target as HTMLElement).style.backgroundColor = "var(--color-accent-primary)"; }}
-              onMouseLeave={(el) => { (el.target as HTMLElement).style.backgroundColor = "var(--color-border-subtle)"; }}
+              className="ns-workspace-resizer"
             />
             {/* Editor + RightPanel */}
-            <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+            <div className="ns-workspace-editor-area">
               <Splitter
                 direction="horizontal"
                 initialLeftPercent={centerW / (centerW + rightW || 1) * 100}

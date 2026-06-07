@@ -34,7 +34,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <html
       lang="zh-CN"
       suppressHydrationWarning
-      style={{ background: "#0a0a0f", color: "#e8e8f0", height: "100%", overflow: "hidden" }}
+      className="ns-layout-html"
     >
       <head>
         <meta charSet="utf-8" />
@@ -42,7 +42,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body style={{ height: "100%", margin: 0, padding: 0, overflow: "hidden", boxSizing: "border-box" }}>
+      <body className="ns-layout-body">
         {children}
         <ScrollRestoration />
         <Scripts />
@@ -105,38 +105,12 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   }
 
   return (
-    <main
-      style={{
-        minHeight: 0,
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#0a0a0f",
-        color: "#e8e8f0",
-        fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif',
-        boxSizing: "border-box",
-        padding: 32,
-        gap: 12,
-      }}
-    >
-      <h1 style={{ fontSize: 32, fontWeight: 600, margin: 0, lineHeight: 1.2 }}>{message}</h1>
-      <p style={{ fontSize: 16, color: "#9090a8", margin: 0, lineHeight: 1.5 }}>{details}</p>
+    <main className="ns-error-wrap">
+      <h1 className="ns-error-title">{message}</h1>
+      <p className="ns-error-detail">{details}</p>
       {stack && (
         <pre
-          style={{
-            maxWidth: "90vw",
-            padding: 16,
-            overflowX: "auto",
-            backgroundColor: "#1c1c2a",
-            border: "1px solid #2a2a3e",
-            borderRadius: 8,
-            fontSize: 12,
-            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-            color: "#e8e8f0",
-            lineHeight: 1.6,
-          }}
+          className="ns-error-stack"
         >
           <code>{stack}</code>
         </pre>

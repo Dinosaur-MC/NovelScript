@@ -64,18 +64,9 @@ export function NovelReader({ readerHook, traceHook }: Props) {
   }, [editor, selectedChapterId, traceHook]);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="ns-reader">
       {/* Chapter selector */}
-      <div
-        style={{
-          padding: "8px 12px",
-          borderBottom: "1px solid var(--color-border-subtle)",
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}
-      >
+      <div className="ns-reader-selector">
         <Select
           size="small"
           value={selectedChapterId ?? undefined}
@@ -99,16 +90,7 @@ export function NovelReader({ readerHook, traceHook }: Props) {
       {/* Content */}
       <div
         onMouseUp={handleTextSelect}
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: "24px 20px",
-          fontFamily: "var(--font-serif)",
-          fontSize: 15,
-          lineHeight: 1.8,
-          color: "#c8c8d4",
-          backgroundColor: "#0e0e16",
-        }}
+        className="ns-reader-content"
       >
         <EditorContent editor={editor} />
       </div>

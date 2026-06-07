@@ -117,35 +117,17 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   );
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="ns-editor">
       {/* Validation error banner */}
       {validationErrors.length > 0 && (
-        <div
-          style={{
-            padding: "6px 12px",
-            backgroundColor: "var(--color-accent-danger)",
-            color: "#fff",
-            fontSize: 12,
-            flexShrink: 0,
-          }}
-        >
+        <div className="ns-editor-error">
           {validationErrors.join(" | ")}
         </div>
       )}
 
       {/* Toolbar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "4px 8px",
-          borderBottom: "1px solid var(--color-border-subtle)",
-          backgroundColor: "var(--color-bg-surface)",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      <div className="ns-editor-toolbar">
+        <div className="ns-editor-toolbar-actions">
           <Button
             type="text"
             size="small"
@@ -172,12 +154,8 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
           </Button>
         </div>
         {dirty && (
-          <span style={{ fontSize: 11, color: "var(--color-text-muted)", display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span style={{
-              display: "inline-block", width: 9, height: 9, borderRadius: "50%",
-              backgroundColor: "var(--color-accent-warning)",
-              boxShadow: "0 0 6px var(--color-accent-warning)",
-            }} />
+          <span className="ns-editor-dirty">
+            <span className="ns-editor-dirty-dot" />
             未保存
           </span>
         )}
@@ -194,15 +172,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
           options={options}
           theme="vs-dark"
           loading={
-            <div
-              style={{
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "var(--color-text-muted)",
-              }}
-            >
+            <div className="ns-editor-loading">
               加载编辑器中...
             </div>
           }

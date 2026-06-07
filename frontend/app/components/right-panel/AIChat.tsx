@@ -96,19 +96,10 @@ export function AIChat({ editorHook }: Props) {
   }, [taskId, editorHook]);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div className="ns-chat">
       {/* Header */}
-      <div
-        style={{
-          padding: "8px 12px",
-          borderBottom: "1px solid var(--color-border-subtle)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <span style={{ fontWeight: 600, fontSize: 13, flexShrink: 0 }}>AI 助手</span>
+      <div className="ns-chat-header">
+        <span className="ns-chat-header-title">AI 助手</span>
         {sceneOptions.length > 0 && (
           <Select
             size="small"
@@ -127,44 +118,20 @@ export function AIChat({ editorHook }: Props) {
       </div>
 
       {/* Messages */}
-      <div
-        ref={listRef}
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
+      <div ref={listRef} className="ns-chat-messages">
         {messages.length === 0 && (
-          <div
-            style={{
-              textAlign: "center",
-              color: "var(--color-text-muted)",
-              marginTop: 40,
-            }}
-          >
+          <div className="ns-chat-empty">
             输入消息与 AI 协作编辑剧本
           </div>
         )}
         {messages.map((msg) => (
           <div
             key={msg.id}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              backgroundColor:
-                msg.role === "user" ? "var(--color-bg-elevated)" : "var(--color-bg-canvas)",
-              border: "1px solid var(--color-border-subtle)",
-              fontSize: 13,
-              lineHeight: 1.6,
-            }}
+            className={`ns-chat-msg ${msg.role === "user" ? "ns-chat-msg-user" : "ns-chat-msg-assistant"}`}
           >
-            <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+            <div className="ns-chat-msg-text">{msg.content}</div>
             {msg.patch && (
-              <div style={{ marginTop: 8 }}>
+              <div className="ns-chat-msg-patch">
                 <Button
                   size="small"
                   type="primary"
@@ -179,14 +146,7 @@ export function AIChat({ editorHook }: Props) {
       </div>
 
       {/* Input */}
-      <div
-        style={{
-          padding: "8px 12px",
-          borderTop: "1px solid var(--color-border-subtle)",
-          display: "flex",
-          gap: 8,
-        }}
-      >
+      <div className="ns-chat-input">
         <Input.TextArea
           value={input}
           onChange={(e) => setInput(e.target.value)}

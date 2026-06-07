@@ -206,44 +206,19 @@ export function HomePage() {
 
   if (loading) {
     return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          backgroundColor: "var(--color-bg-canvas)",
-        }}
-      >
+      <div className="ns-home-loading">
         <div className="ns-spinner" />
-        <span style={{ color: "var(--color-text-secondary)", fontSize: 14 }}>加载中...</span>
+        <span className="ns-home-loading-text">加载中...</span>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        height: "100vh",
-        overflowY: "auto",
-        backgroundColor: "var(--color-bg-canvas)",
-        color: "var(--color-text-primary)",
-        padding: 32,
-      }}
-    >
+    <div className="ns-home-wrap">
       {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 32,
-        }}
-      >
-        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>NovelScript 析幕</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div className="ns-home-header">
+        <h1>NovelScript 析幕</h1>
+        <div className="ns-home-header-actions">
           {user ? (
             <>
               <Button
@@ -264,18 +239,18 @@ export function HomePage() {
                 placement="bottomRight"
                 overlayStyle={{ width: 220 }}
                 content={
-                  <div style={{ fontSize: 13 }}>
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>用户名</div>
-                      <div style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{user.username}</div>
+                  <div className="ns-popover-wrap">
+                    <div className="ns-popover-field">
+                      <div className="ns-popover-label">用户名</div>
+                      <div className="ns-popover-value ns-popover-value--strong">{user.username}</div>
                     </div>
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>邮箱</div>
-                      <div style={{ color: "var(--color-text-primary)" }}>{user.email ?? "—"}</div>
+                    <div className="ns-popover-field">
+                      <div className="ns-popover-label">邮箱</div>
+                      <div className="ns-popover-value">{user.email ?? "—"}</div>
                     </div>
-                    <div style={{ marginBottom: 12 }}>
-                      <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>角色</div>
-                      <div style={{ color: "var(--color-text-primary)" }}>{user.role === "admin" ? "管理员" : "用户"}</div>
+                    <div className="ns-popover-field--last">
+                      <div className="ns-popover-label">角色</div>
+                      <div className="ns-popover-value">{user.role === "admin" ? "管理员" : "用户"}</div>
                     </div>
                     <Button
                       block
@@ -289,16 +264,7 @@ export function HomePage() {
                   </div>
                 }
               >
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: "var(--color-text-secondary)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
+                <span className="ns-popover-user-trigger">
                   <Avatar
                     size="small"
                     icon={<UserOutlined />}
@@ -322,14 +288,7 @@ export function HomePage() {
       </div>
 
       {/* Search & Filter */}
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          marginBottom: 24,
-          maxWidth: 640,
-        }}
-      >
+      <div className="ns-home-search">
         <Input
           prefix={<SearchOutlined style={{ color: "var(--color-text-muted)" }} />}
           placeholder="搜索小说名称..."
@@ -352,14 +311,8 @@ export function HomePage() {
 
       {/* Novel groups */}
       {filteredNovels.length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: 64,
-            color: "var(--color-text-muted)",
-          }}
-        >
-          <p style={{ fontSize: 16, marginBottom: 16 }}>
+        <div className="ns-home-empty">
+          <p className="ns-home-empty-text">
             {novels.length === 0
               ? user
                 ? "还没有小说，点击上方上传第一部小说开始吧"
@@ -385,10 +338,10 @@ export function HomePage() {
             return {
               key: novel.id,
               label: (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-                  <span style={{ fontWeight: 600, fontSize: 15 }}>
+                <div className="ns-home-novel-label">
+                  <span className="ns-home-novel-title">
                     《{novel.title}》
-                    <span style={{ color: "var(--color-text-secondary)", marginLeft: 8, fontSize: 12 }}>
+                    <span className="ns-home-novel-meta">
                       ({novel.word_count?.toLocaleString() ?? 0} 字)
                     </span>
                   </span>
@@ -407,23 +360,16 @@ export function HomePage() {
                 </div>
               ),
               children: (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, padding: "8px 0" }}>
+                <div className="ns-home-script-grid">
                   {novelScripts.length === 0 && (
                     <div
-                      style={{
-                        width: 220, cursor: "pointer", borderRadius: 8,
-                        backgroundColor: "rgba(108,92,231,0.08)",
-                        border: "1px solid var(--color-accent-primary)",
-                        display: "flex", flexDirection: "column",
-                        alignItems: "center", justifyContent: "center",
-                        gap: 6, minHeight: 78, padding: "12px 8px",
-                      }}
+                      className="ns-home-new-script-card"
                       onClick={() => handleNewScript(novel.id)}
                     >
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-accent-primary)" }}>
+                      <span className="ns-home-new-script-title">
                         开始转换
                       </span>
-                      <span style={{ fontSize: 11, color: "var(--color-text-muted)", textAlign: "center" }}>
+                      <span className="ns-home-new-script-desc">
                         将小说转换为剧本
                       </span>
                     </div>
@@ -433,21 +379,17 @@ export function HomePage() {
                       key={s.script_id}
                       hoverable
                       size="small"
-                      style={{
-                        width: 220,
-                        backgroundColor: "var(--color-bg-elevated)",
-                        borderColor: "var(--color-border-subtle)",
-                      }}
+                      className="ns-home-script-card-explicit"
                       onClick={() => {
                         if (blockNav.current) { blockNav.current = false; return; }
                         navigate(`/workspace/${s.script_id}`);
                       }}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>
+                      <div className="ns-home-script-card-row">
+                        <span className="ns-home-script-card-title">
                           {s.summary?.slice(0, 20) || "剧本"}
                         </span>
-                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span className="ns-home-script-card-status">
                           {STATUS_ICON[s.status] ?? null}
                           <Popconfirm
                             title="确定删除？"
@@ -466,7 +408,7 @@ export function HomePage() {
                           </Popconfirm>
                         </span>
                       </div>
-                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--color-text-secondary)" }}>
+                      <div className="ns-home-script-card-meta">
                         <span>{s.scene_count} 个场景</span>
                         <Tag
                           color={
@@ -486,21 +428,12 @@ export function HomePage() {
                     <Card
                       hoverable
                       size="small"
-                      style={{
-                        width: 220,
-                        backgroundColor: "transparent",
-                        borderColor: "var(--color-border-emphasis)",
-                      borderStyle: "dashed",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minHeight: 80,
-                    }}
-                    onClick={() => handleNewScript(novel.id)}
-                  >
-                    <PlusOutlined style={{ marginRight: 6 }} />
-                    新建剧本
-                  </Card>
+                      className="ns-home-plus-card"
+                      onClick={() => handleNewScript(novel.id)}
+                    >
+                      <PlusOutlined style={{ marginRight: 6 }} />
+                      新建剧本
+                    </Card>
                   )}
                 </div>
               ),
@@ -518,7 +451,7 @@ export function HomePage() {
         destroyOnHidden
       >
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+          <label className="ns-home-upload-label">
             小说标题（选填，留空则自动从正文提取）
           </label>
           <Input
@@ -544,7 +477,7 @@ export function HomePage() {
             提交文本
           </Button>
         </div>
-        <div style={{ textAlign: "center", color: "var(--color-text-muted)", marginBottom: 8 }}>
+        <div className="ns-home-upload-or">
           或
         </div>
         <Upload.Dragger
@@ -570,9 +503,9 @@ export function HomePage() {
         cancelText="取消"
         destroyOnHidden
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+        <div className="ns-home-rename-form">
           <div>
-            <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+            <label className="ns-home-upload-label">
               标题
             </label>
             <Input
@@ -582,7 +515,7 @@ export function HomePage() {
             />
           </div>
           <div>
-            <label style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4, display: "block" }}>
+            <label className="ns-home-upload-label">
               作者
             </label>
             <Input

@@ -206,15 +206,7 @@ export function KnowledgeGraph() {
 
   if (initialNodes.length === 0) {
     return (
-      <div
-        style={{
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--color-text-muted)",
-        }}
-      >
+      <div className="ns-kg-empty">
         暂无图谱数据
       </div>
     );

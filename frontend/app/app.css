@@ -116,5 +116,1069 @@ html, body, #root {
 }
 .ns-reader-collapse-tab:hover { color: var(--color-accent-primary); }
 
+/* ========================================================================
+   ns-layout — Root layout & error boundary (root.tsx)
+   ======================================================================== */
 
+.ns-layout-html {
+  background: #0a0a0f;
+  color: #e8e8f0;
+  height: 100%;
+  overflow: hidden;
+}
 
+.ns-layout-body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* ---- Error Boundary ---- */
+
+.ns-error-wrap {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #0a0a0f;
+  color: #e8e8f0;
+  font-family: var(--font-sans);
+  box-sizing: border-box;
+  padding: 32px;
+  gap: 12px;
+}
+
+.ns-error-title {
+  font-size: 32px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.ns-error-detail {
+  font-size: 16px;
+  color: #9090a8;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ns-error-stack {
+  max-width: 90vw;
+  padding: 16px;
+  overflow-x: auto;
+  background-color: #1c1c2a;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: #e8e8f0;
+  line-height: 1.6;
+}
+
+/* ========================================================================
+   ns-login — Login / Register page (routes/login.tsx)
+   ======================================================================== */
+
+.ns-login-wrap {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-login-card {
+  width: 400px;
+  padding: 40px 32px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+}
+
+.ns-login-brand {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.ns-login-brand h1 {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.ns-login-subtitle {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.ns-login-skip {
+  text-align: center;
+  margin-top: -8px;
+}
+
+/* ========================================================================
+   ns-home — Novel list / Script gallery (components/home/HomePage.tsx)
+   ======================================================================== */
+
+/* Loading */
+.ns-home-loading {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-home-loading-text {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+/* Main layout */
+.ns-home-wrap {
+  height: 100vh;
+  overflow-y: auto;
+  background-color: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  padding: 32px;
+}
+
+.ns-home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.ns-home-header h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ns-home-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Search & Filter */
+.ns-home-search {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+  max-width: 640px;
+}
+
+/* Empty state */
+.ns-home-empty {
+  text-align: center;
+  padding: 64px;
+  color: var(--color-text-muted);
+}
+
+.ns-home-empty-text {
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+
+/* Novel list (Collapse labels) */
+.ns-home-novel-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.ns-home-novel-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.ns-home-novel-meta {
+  color: var(--color-text-secondary);
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.ns-home-novel-actions {
+  /* container for edit/delete buttons in collapse header */
+}
+
+/* Script cards grid */
+.ns-home-script-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+/* "Start conversion" card */
+.ns-home-new-script-card {
+  width: 220px;
+  cursor: pointer;
+  border-radius: 8px;
+  background-color: rgba(108, 92, 231, 0.08);
+  border: 1px solid var(--color-accent-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 78px;
+  padding: 12px 8px;
+}
+
+.ns-home-new-script-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-accent-primary);
+}
+
+.ns-home-new-script-desc {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* Script status card (within antd Card) */
+.ns-home-script-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ns-home-script-card-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ns-home-script-card-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ns-home-script-card-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* Script card */
+.ns-home-script-card-explicit {
+  width: 220px;
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-border-subtle);
+}
+
+/* Plus card for additional scripts */
+.ns-home-plus-card {
+  width: 220px;
+  background-color: transparent;
+  border-color: var(--color-border-emphasis);
+  border-style: dashed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+}
+
+/* Upload modal */
+.ns-home-upload-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.ns-home-upload-or {
+  text-align: center;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+/* Rename modal */
+.ns-home-rename-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+/* ========================================================================
+   ns-dashboard — Dashboard / stats page (routes/dashboard.tsx)
+   ======================================================================== */
+
+.ns-dashboard-wrap {
+  min-height: 100vh;
+  background-color: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  padding: 32px;
+}
+
+.ns-dashboard-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 32px;
+}
+
+.ns-dashboard-banner h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ns-dashboard-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ns-dashboard-guest {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-dashboard-guest-text {
+  color: var(--color-text-muted);
+  font-size: 16px;
+}
+
+.ns-dashboard-loading {
+  text-align: center;
+  padding: 64px;
+}
+
+.ns-dashboard-loading-text {
+  color: var(--color-text-muted);
+  margin-top: 16px;
+}
+
+.ns-dashboard-recent-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.ns-dashboard-recent-empty {
+  color: var(--color-text-muted);
+}
+
+/* Task item in recent list */
+.ns-dashboard-task-item {
+  padding: 10px 16px;
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.ns-dashboard-task-title {
+  color: var(--color-text-primary);
+}
+
+.ns-dashboard-task-time {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.ns-dashboard-task-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ns-dashboard-task-pct {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+/* Stat card shared background/border */
+.ns-dashboard-stat-card {
+  background-color: var(--color-bg-elevated);
+  border-color: var(--color-border-subtle);
+}
+
+/* ========================================================================
+   ns-workspace — Script workspace (routes/workspace.tsx)
+   ======================================================================== */
+
+.ns-workspace-wrap {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-workspace-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.ns-workspace-loading {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.ns-workspace-loading-text {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.ns-workspace-panels {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ns-workspace-editor-area {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Resizer handle (between reader and editor) */
+.ns-workspace-resizer {
+  width: 4px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background-color: var(--color-border-subtle);
+  transition: background-color 0.15s;
+}
+
+.ns-workspace-resizer:hover {
+  background-color: var(--color-accent-primary);
+}
+
+/* Error view */
+.ns-workspace-error {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-workspace-error-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+
+.ns-workspace-error-text {
+  color: var(--color-accent-danger);
+  font-size: 16px;
+}
+
+.ns-workspace-error-btn {
+  padding: 8px 24px;
+  background: var(--color-accent-primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Reader panel collapse transition */
+.ns-workspace-reader-panel {
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.25s ease, min-width 0.25s ease;
+}
+
+/* ========================================================================
+   ns-taskbar — Top toolbar (components/task-bar/TaskBar.tsx)
+   ======================================================================== */
+
+.ns-taskbar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background-color: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.ns-taskbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ns-taskbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ns-taskbar-brand {
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* ========================================================================
+   ns-statusbar — Bottom status bar (components/status-bar/StatusBar.tsx)
+   ======================================================================== */
+
+.ns-statusbar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background-color: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+  gap: 16px;
+}
+
+.ns-statusbar-progress {
+  flex: 1;
+  max-width: 400px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ns-statusbar-stage {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.ns-statusbar-error {
+  color: var(--color-accent-danger);
+  font-size: 12px;
+  flex: 1;
+}
+
+/* ========================================================================
+   ns-splitter — Two-pane splitter (components/splitter/Splitter.tsx)
+   ======================================================================== */
+
+.ns-splitter {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ns-splitter-pane {
+  overflow: hidden;
+}
+
+.ns-splitter-handle {
+  flex-shrink: 0;
+  background-color: var(--color-border-subtle);
+  transition: background-color 0.15s;
+}
+
+.ns-splitter-handle:hover {
+  background-color: var(--color-accent-primary);
+}
+
+/* ========================================================================
+   ns-reader — Novel reader panel (components/novel-reader/NovelReader.tsx)
+   ======================================================================== */
+
+.ns-reader {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ns-reader-selector {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ns-reader-content {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 20px;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.8;
+  color: #c8c8d4;
+  background-color: #0e0e16;
+}
+
+/* ========================================================================
+   ns-editor — Script editor (components/script-editor/ScriptEditor.tsx)
+   ======================================================================== */
+
+.ns-editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ns-editor-error {
+  padding: 6px 12px;
+  background-color: var(--color-accent-danger);
+  color: #fff;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ns-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background-color: var(--color-bg-surface);
+  flex-shrink: 0;
+}
+
+.ns-editor-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ns-editor-dirty {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ns-editor-dirty-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--color-accent-warning);
+  box-shadow: 0 0 6px var(--color-accent-warning);
+}
+
+.ns-editor-loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+/* ========================================================================
+   ns-panel — Right panel tabs (components/right-panel/RightPanel.tsx)
+   ======================================================================== */
+
+.ns-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.ns-panel-tab-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.ns-panel-tab-pane {
+  height: 100%;
+}
+
+/* ========================================================================
+   ns-chat — AI Chat panel (components/right-panel/AIChat.tsx)
+   ======================================================================== */
+
+.ns-chat {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ns-chat-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.ns-chat-header-title {
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ns-chat-messages {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ns-chat-empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  margin-top: 40px;
+}
+
+.ns-chat-msg {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ns-chat-msg-user {
+  background-color: var(--color-bg-elevated);
+}
+
+.ns-chat-msg-assistant {
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-chat-msg-text {
+  white-space: pre-wrap;
+}
+
+.ns-chat-msg-patch {
+  margin-top: 8px;
+}
+
+.ns-chat-input {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  gap: 8px;
+}
+
+/* ========================================================================
+   ns-kg — Knowledge graph (components/right-panel/KnowledgeGraph.tsx)
+   ======================================================================== */
+
+.ns-kg-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+/* ========================================================================
+   ns-preview — Script preview (components/right-panel/ScriptPreview.tsx)
+   ======================================================================== */
+
+.ns-preview-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  gap: 8px;
+}
+
+.ns-preview-empty-icon {
+  font-size: 36px;
+}
+
+.ns-preview-empty-title {
+  font-size: 13px;
+}
+
+.ns-preview-empty-desc {
+  font-size: 11px;
+}
+
+.ns-preview-wrap {
+  height: 100%;
+  overflow: auto;
+  background-color: var(--color-bg-canvas);
+}
+
+.ns-preview-page {
+  padding: 28px 32px;
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  color: #d8d8e0;
+  background-color: #12121a;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-subtle);
+  min-height: 100%;
+}
+
+/* Element hover */
+.ns-preview-el-hover:hover {
+  background-color: rgba(108, 92, 231, 0.07) !important;
+  transition: background-color 0.12s;
+}
+
+/* Base element block */
+.ns-preview-el {
+  position: relative;
+  margin-bottom: 14px;
+  padding: 5px 8px 5px 10px;
+  border-radius: 0 6px 6px 0;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background-color 0.12s, border-left-color 0.12s;
+}
+
+/* Element type variants */
+.ns-preview-action {
+  border-left-color: rgba(108, 92, 231, 0.20);
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.ns-preview-dialogue {
+  border-left-color: rgba(0, 206, 201, 0.20);
+  margin-left: 48px;
+  margin-right: 48px;
+  padding-top: 4px;
+  padding-bottom: 8px;
+}
+
+.ns-preview-lyric {
+  border-left-color: rgba(253, 203, 110, 0.25);
+  margin-left: 40px;
+  margin-right: 40px;
+}
+
+.ns-preview-transition {
+  border-left-color: transparent;
+  border-left: none;
+  margin-left: 0;
+  margin-right: 0;
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+
+/* Scene heading */
+.ns-preview-scene-hd {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  font-size: 13px;
+  margin: 0 0 24px;
+  color: var(--color-accent-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ns-preview-scene-l {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--color-accent-primary), transparent);
+  opacity: 0.30;
+}
+
+.ns-preview-scene-r {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to left, var(--color-accent-primary), transparent);
+  opacity: 0.30;
+}
+
+.ns-preview-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+  background: var(--color-bg-elevated);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  text-transform: none;
+}
+
+.ns-preview-divider {
+  border: none;
+  border-top: 1px dashed var(--color-border-subtle);
+  margin: 24px 0 28px;
+  opacity: 0.45;
+}
+
+/* Character name inside dialogue_block (slightly larger) */
+.ns-preview-dlgblock-char {
+  margin-bottom: 2px;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+/* Character cue (character type element) */
+.ns-preview-character-cue {
+  text-align: center;
+  padding-top: 10px;
+  margin-bottom: 2px;
+}
+.ns-preview-character-name {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  color: var(--color-accent-info);
+}
+.ns-preview-character-ext {
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+/* Parenthetical / extension shared */
+.ns-preview-parenthetical {
+  text-align: center;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* Transition content */
+.ns-preview-transition-content {
+  text-align: right;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.8px;
+  color: var(--color-text-secondary);
+}
+
+/* Lyric content */
+.ns-preview-lyric-content {
+  line-height: 1.65;
+  font-style: italic;
+  color: var(--color-accent-warning);
+}
+
+/* Boneyard */
+.ns-preview-boneyard {
+  margin: 0 24px 14px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(88, 88, 120, 0.08);
+}
+.ns-preview-boneyard-text {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
+/* Section heading */
+.ns-preview-section {
+  margin: 20px 0 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.ns-preview-section-text {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--color-accent-info);
+}
+
+/* Synopsis */
+.ns-preview-synopsis {
+  margin: 0 32px 14px;
+  padding: 4px;
+}
+.ns-preview-synopsis-text {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+/* Page break */
+.ns-preview-pagebreak {
+  margin: 28px 0;
+  text-align: center;
+}
+
+/* Fountain marker */
+.ns-preview-mk {
+  vertical-align: baseline;
+}
+.ns-preview-mk-open {
+  color: var(--color-text-muted);
+  margin-right: 4px;
+}
+.ns-preview-mk-open--force {
+  color: var(--color-accent-danger);
+  font-weight: 700;
+}
+.ns-preview-mk-close {
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+/* ========================================================================
+   ns-popover — Shared user popover (used in TaskBar, Dashboard, HomePage)
+   ======================================================================== */
+
+.ns-popover-wrap {
+  font-size: 13px;
+}
+
+.ns-popover-field {
+  margin-bottom: 8px;
+}
+
+.ns-popover-field--last {
+  margin-bottom: 12px;
+}
+
+.ns-popover-label {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.ns-popover-value {
+  color: var(--color-text-primary);
+}
+
+.ns-popover-value--strong {
+  font-weight: 600;
+}
+
+.ns-popover-user-trigger {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

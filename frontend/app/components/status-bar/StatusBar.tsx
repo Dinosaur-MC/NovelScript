@@ -26,21 +26,9 @@ export function StatusBar() {
   };
 
   return (
-    <footer
-      style={{
-        height: 32,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 16px",
-        backgroundColor: "var(--color-bg-surface)",
-        borderTop: "1px solid var(--color-border-subtle)",
-        flexShrink: 0,
-        gap: 16,
-      }}
-    >
+    <footer className="ns-statusbar">
       {/* Left: progress */}
-      <div style={{ flex: 1, maxWidth: 400, display: "flex", alignItems: "center", gap: 10 }}>
+      <div className="ns-statusbar-progress">
         {(status === "preprocessing" || status === "converting") && (
           <>
             <Progress
@@ -51,7 +39,7 @@ export function StatusBar() {
               style={{ flex: 1 }}
             />
             {stage && STAGE_LABEL[stage] && (
-              <span style={{ color: "var(--color-text-muted)", fontSize: 11, whiteSpace: "nowrap" }}>
+              <span className="ns-statusbar-stage">
                 {STAGE_LABEL[stage]}
               </span>
             )}
@@ -61,7 +49,7 @@ export function StatusBar() {
 
       {/* Center: error */}
       {error && (
-        <span style={{ color: "var(--color-accent-danger)", fontSize: 12, flex: 1 }}>
+        <span className="ns-statusbar-error">
           {error}
         </span>
       )}

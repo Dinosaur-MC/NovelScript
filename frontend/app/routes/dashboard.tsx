@@ -96,18 +96,8 @@ export default function Dashboard() {
 
   if (!user) {
     return (
-      <div
-        style={{
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          backgroundColor: "var(--color-bg-canvas)",
-        }}
-      >
-        <p style={{ color: "var(--color-text-muted)", fontSize: 16 }}>请先登录</p>
+      <div className="ns-dashboard-guest">
+        <p className="ns-dashboard-guest-text">请先登录</p>
         <Button type="primary" size="large" onClick={() => navigate("/login")}>
           登录
         </Button>
@@ -119,25 +109,11 @@ export default function Dashboard() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        backgroundColor: "var(--color-bg-canvas)",
-        color: "var(--color-text-primary)",
-        padding: 32,
-      }}
-    >
+    <div className="ns-dashboard-wrap">
       {/* Top Banner */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 32,
-        }}
-      >
-        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>仪表板</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="ns-dashboard-banner">
+        <h1>仪表板</h1>
+        <div className="ns-dashboard-banner-actions">
           <Button icon={<HomeOutlined />} onClick={() => navigate("/")}>
             返回首页
           </Button>
@@ -149,18 +125,18 @@ export default function Dashboard() {
             placement="bottomRight"
             overlayStyle={{ width: 220 }}
             content={
-              <div style={{ fontSize: 13 }}>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>用户名</div>
-                  <div style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{user.username}</div>
+              <div className="ns-popover-wrap">
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">用户名</div>
+                  <div className="ns-popover-value ns-popover-value--strong">{user.username}</div>
                 </div>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>邮箱</div>
-                  <div style={{ color: "var(--color-text-primary)" }}>{user.email ?? "—"}</div>
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">邮箱</div>
+                  <div className="ns-popover-value">{user.email ?? "—"}</div>
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>角色</div>
-                  <div style={{ color: "var(--color-text-primary)" }}>{user.role === "admin" ? "管理员" : "用户"}</div>
+                <div className="ns-popover-field--last">
+                  <div className="ns-popover-label">角色</div>
+                  <div className="ns-popover-value">{user.role === "admin" ? "管理员" : "用户"}</div>
                 </div>
                 <Button
                   block
@@ -174,16 +150,7 @@ export default function Dashboard() {
               </div>
             }
           >
-            <span
-              style={{
-                fontSize: 13,
-                color: "var(--color-text-secondary)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
+            <span className="ns-popover-user-trigger">
               <Avatar
                 size="small"
                 icon={<UserOutlined />}
@@ -196,16 +163,16 @@ export default function Dashboard() {
       </div>
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: 64 }}>
+        <div className="ns-dashboard-loading">
           <Spin size="large" />
-          <p style={{ color: "var(--color-text-muted)", marginTop: 16 }}>加载中...</p>
+          <p className="ns-dashboard-loading-text">加载中...</p>
         </div>
       ) : (
         <>
           {/* Stats */}
           <Row gutter={[16, 16]} style={{ marginBottom: 32 }}>
             <Col xs={12} sm={6}>
-              <Card size="small" style={{ backgroundColor: "var(--color-bg-elevated)", borderColor: "var(--color-border-subtle)" }}>
+              <Card size="small" className="ns-dashboard-stat-card">
                 <Statistic
                   title="小说总数"
                   value={stats.novels}
@@ -215,7 +182,7 @@ export default function Dashboard() {
               </Card>
             </Col>
             <Col xs={12} sm={6}>
-              <Card size="small" style={{ backgroundColor: "var(--color-bg-elevated)", borderColor: "var(--color-border-subtle)" }}>
+              <Card size="small" className="ns-dashboard-stat-card">
                 <Statistic
                   title="剧本总数"
                   value={stats.scripts}
@@ -225,7 +192,7 @@ export default function Dashboard() {
               </Card>
             </Col>
             <Col xs={12} sm={6}>
-              <Card size="small" style={{ backgroundColor: "var(--color-bg-elevated)", borderColor: "var(--color-border-subtle)" }}>
+              <Card size="small" className="ns-dashboard-stat-card">
                 <Statistic
                   title="已完成"
                   value={stats.completed}
@@ -235,7 +202,7 @@ export default function Dashboard() {
               </Card>
             </Col>
             <Col xs={12} sm={6}>
-              <Card size="small" style={{ backgroundColor: "var(--color-bg-elevated)", borderColor: "var(--color-border-subtle)" }}>
+              <Card size="small" className="ns-dashboard-stat-card">
                 <Statistic
                   title="进行中 / 失败"
                   value={`${stats.inProgress} / ${stats.failed}`}
@@ -254,9 +221,9 @@ export default function Dashboard() {
           </Row>
 
           {/* Recent Tasks */}
-          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>最近任务</h2>
+          <h2 className="ns-dashboard-recent-title">最近任务</h2>
           {recent.length === 0 ? (
-            <p style={{ color: "var(--color-text-muted)" }}>暂无任务</p>
+            <p className="ns-dashboard-recent-empty">暂无任务</p>
           ) : (
             <List
               dataSource={recent}
@@ -264,28 +231,22 @@ export default function Dashboard() {
                 const tagInfo = STATUS_TAG[item.status] ?? { color: "default", label: item.status };
                 return (
                   <List.Item
-                    style={{
-                      padding: "10px 16px",
-                      backgroundColor: "var(--color-bg-elevated)",
-                      border: "1px solid var(--color-border-subtle)",
-                      borderRadius: 8,
-                      marginBottom: 8,
-                    }}
+                    className="ns-dashboard-task-item"
                   >
                     <List.Item.Meta
                       title={
-                        <span style={{ color: "var(--color-text-primary)" }}>
+                        <span className="ns-dashboard-task-title">
                           《{item.novelTitle}》
                         </span>
                       }
                       description={
-                        <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                        <span className="ns-dashboard-task-time">
                           {item.time}
                         </span>
                       }
                     />
-                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                    <div className="ns-dashboard-task-progress">
+                      <span className="ns-dashboard-task-pct">
                         {item.progress}%
                       </span>
                       <Tag color={tagInfo.color}>{tagInfo.label}</Tag>

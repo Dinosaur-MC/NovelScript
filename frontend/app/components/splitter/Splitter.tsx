@@ -66,39 +66,24 @@ export function Splitter({
   return (
     <div
       ref={containerRef}
-      style={{
-        display: "flex",
-        flexDirection: isH ? "row" : "column",
-        width: "100%",
-        height: "100%",
-        overflow: "hidden",
-      }}
+      className="ns-splitter"
+      style={{ flexDirection: isH ? "row" : "column" }}
     >
       <div
-        style={{
-          [isH ? "width" : "height"]: `${leftPct}%`,
-          overflow: "hidden",
-        }}
+        className="ns-splitter-pane"
+        style={{ [isH ? "width" : "height"]: `${leftPct}%` }}
       >
         {children[0]}
       </div>
       <div
         onMouseDown={onMouseDown}
+        className="ns-splitter-handle"
         style={{
           [isH ? "width" : "height"]: HANDLE_SIZE,
           cursor: isH ? "col-resize" : "row-resize",
-          backgroundColor: "var(--color-border-subtle)",
-          flexShrink: 0,
-          transition: "background-color 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.target as HTMLElement).style.backgroundColor = "var(--color-accent-primary)";
-        }}
-        onMouseLeave={(e) => {
-          (e.target as HTMLElement).style.backgroundColor = "var(--color-border-subtle)";
         }}
       />
-      <div style={{ flex: 1, overflow: "hidden" }}>{children[1]}</div>
+      <div className="ns-splitter-pane" style={{ flex: 1 }}>{children[1]}</div>
     </div>
   );
 }

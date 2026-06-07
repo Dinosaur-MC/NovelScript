@@ -36,22 +36,11 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
   };
 
   return (
-    <header
-      style={{
-        height: 48,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 16px",
-        backgroundColor: "var(--color-bg-surface)",
-        borderBottom: "1px solid var(--color-border-subtle)",
-        flexShrink: 0,
-      }}
-    >
+    <header className="ns-taskbar">
       {/* Left */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="ns-taskbar-left">
         <Button type="text" icon={<HomeOutlined />} onClick={() => navigate("/")}>
-          <span style={{ fontWeight: 600, color: "var(--color-text-primary)" }}>
+          <span className="ns-taskbar-brand">
             NovelScript
           </span>
         </Button>
@@ -60,25 +49,25 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
       </div>
 
       {/* Right */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="ns-taskbar-right">
         {user ? (
           <Popover
             trigger="click"
             placement="bottomRight"
             overlayStyle={{ width: 220 }}
             content={
-              <div style={{ fontSize: 13 }}>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>用户名</div>
-                  <div style={{ color: "var(--color-text-primary)", fontWeight: 600 }}>{user.username}</div>
+              <div className="ns-popover-wrap">
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">用户名</div>
+                  <div className="ns-popover-value ns-popover-value--strong">{user.username}</div>
                 </div>
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>邮箱</div>
-                  <div style={{ color: "var(--color-text-primary)" }}>{user.email ?? "—"}</div>
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">邮箱</div>
+                  <div className="ns-popover-value">{user.email ?? "—"}</div>
                 </div>
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ color: "var(--color-text-muted)", fontSize: 11, marginBottom: 2 }}>角色</div>
-                  <div style={{ color: "var(--color-text-primary)" }}>{user.role === "admin" ? "管理员" : "用户"}</div>
+                <div className="ns-popover-field--last">
+                  <div className="ns-popover-label">角色</div>
+                  <div className="ns-popover-value">{user.role === "admin" ? "管理员" : "用户"}</div>
                 </div>
                 <Button
                   block
@@ -92,16 +81,7 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
               </div>
             }
           >
-            <span
-              style={{
-                fontSize: 13,
-                color: "var(--color-text-secondary)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
+            <span className="ns-popover-user-trigger">
               <Avatar
                 size="small"
                 icon={<UserOutlined />}
