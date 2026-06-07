@@ -43,12 +43,16 @@ load_dotenv()  # load .env so os.getenv() works for DEEPSEEK_API_KEY etc.
 
 from cli.chunker import split_chapters
 from cli.converter import convert_chapter
+from cli.element_fixer import fix_element_types, split_embedded_character, flag_missing_source_refs
 from cli.exporter import to_yaml
+from cli.fountain_exporter import to_fountain
 from cli.graphrag_builder import extract_graph, extract_graph_incremental
+from cli.heading_normalizer import normalize_heading
 from cli.llm_router import get_llm, get_llm_semaphore, invoke_llm_with_retry, reset_token_usage, get_token_usage
 from cli.models import Chapter, KnowledgeGraph, Scene, Script
 from cli.optimizer import optimize
 from cli.rag_builder import build_index, search
+from cli.scene_merger import merge_tiny_scenes
 from cli.summarizer import summarize_chapter
 
 # ---------------------------------------------------------------------------
@@ -324,10 +328,32 @@ async def run_from_chapters(
     _call_cb(cb, 75, "converting")
 
     # ------------------------------------------------------------------
+    # 5.5. Post-processing (deterministic, no LLM calls)
+    # ------------------------------------------------------------------
+    logger.info("=== Stage 5.5: Post-Processing ===")
+
+    # 5.5a. Assign globally unique scene IDs
+    _assign_scene_ids(all_scenes)
+
+    # 5.5b. Normalize scene headings
+    for scene in all_scenes:
+        scene.heading = normalize_heading(scene.heading)
+
+    # 5.5c. Fix element type misclassifications + split embedded characters
+    for scene in all_scenes:
+        scene.elements = fix_element_types(scene.elements)
+        scene.elements = split_embedded_character(scene.elements)
+
+    # 5.5d. Merge tiny adjacent scenes (same location, compatible time)
+    merged_scenes = merge_tiny_scenes(all_scenes)
+    logger.info("Post-processing: %d → %d scenes.", len(all_scenes), len(merged_scenes))
+    _call_cb(cb, 78, "post-processing")
+
+    # ------------------------------------------------------------------
     # 6. Optimization — cross-scene consistency
     # ------------------------------------------------------------------
     logger.info("=== Stage 6: Scene Optimization ===")
-    optimized_scenes = await optimize(all_scenes, kg, style_direction=style_direction)
+    optimized_scenes = await optimize(merged_scenes, kg, style_direction=style_direction)
     logger.info("Optimized %d scene(s).", len(optimized_scenes))
     _call_cb(cb, 90, "optimizing")
 
@@ -340,6 +366,21 @@ async def run_from_chapters(
     # included in the token usage report.
     narrative = _narrative_summary(summaries, kg)
 
+    # Chapter order validation
+    chapter_validation = _validate_chapter_order(chapters)
+
+    # Narrative frame detection (after heading normalization)
+    narrative_structure = _classify_narrative_layers(optimized_scenes)
+
+    # Collect null-ref warnings from all scenes
+    null_ref_warnings: list[dict] = []
+    for scene in optimized_scenes:
+        flagged = flag_missing_source_refs(scene.elements)
+        if flagged:
+            for f in flagged:
+                f["scene_id"] = scene.scene_id
+            null_ref_warnings.extend(flagged)
+
     # Capture token usage after ALL LLM calls have completed
     usage = get_token_usage()
 
@@ -348,8 +389,11 @@ async def run_from_chapters(
         "source_chars": total_chars,
         "chapter_count": len(chapters),
         "scene_count": len(optimized_scenes),
-        "pipeline_version": "0.2.0",
+        "pipeline_version": "0.3.0",
         "chapter_summaries": summaries,
+        "chapter_validation": chapter_validation,
+        "narrative_structure": narrative_structure,
+        "null_source_ref_warnings": null_ref_warnings,
         "usage": usage,
         "usage_summary": (
             f"总调用 {sum(v.get('calls', 0) for k, v in usage.items() if k != 'total_cost_yuan')} 次, "
@@ -388,6 +432,96 @@ async def run_from_chapters(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _assign_scene_ids(scenes: list[Scene]) -> list[Scene]:
+    """Assign globally unique, sequential scene IDs across all chapters.
+
+    Scene IDs follow the pattern ``s_{global_index:04d}``, e.g. s_0001, s_0002.
+    IDs are assigned in chapter order; within a chapter, scenes keep their
+    relative order.
+    """
+    for i, scene in enumerate(scenes, 1):
+        scene.scene_id = f"s_{i:04d}"
+    return scenes
+
+
+def _validate_chapter_order(chapters: list[Chapter]) -> dict:
+    """Check if chapters are in chronological order.
+
+    Detects:
+    - Out-of-order chapter indices
+    - Non-contiguous chapter sequences
+    - Potential time-gaps between chapters
+
+    Returns a warnings dict for inclusion in Script.meta.
+    """
+    warnings: list[str] = []
+    indices = [ch.index for ch in chapters]
+
+    # Check for non-monotonic indices
+    for i in range(1, len(indices)):
+        if indices[i] < indices[i - 1]:
+            warnings.append(
+                f"Chapter {chapters[i].title} (index {indices[i]}) appears after "
+                f"chapter {chapters[i-1].title} (index {indices[i-1]}) — "
+                f"possible timeline inversion"
+            )
+
+    # Check for gaps
+    for i in range(1, len(indices)):
+        gap = indices[i] - indices[i - 1]
+        if gap > 1:
+            warnings.append(
+                f"Gap of {gap - 1} chapter(s) between chapter "
+                f"{chapters[i-1].title} and {chapters[i].title}"
+            )
+
+    return {
+        "chapter_count": len(chapters),
+        "chapter_indices": [ch.index for ch in chapters],
+        "is_monotonic": indices == sorted(indices),
+        "warnings": warnings,
+    }
+
+
+def _classify_narrative_layers(scenes: list[Scene]) -> dict:
+    """Detect and annotate narrative frame structure.
+
+    Returns metadata for inclusion in the script output::
+
+        {
+            "has_frame_narrative": bool,
+            "layers": {
+                "FRAME": ["s_0001", "s_0002", ...],
+                "FLASHBACK": ["s_0005", ...],
+                "FLASHBACK_NESTED": [...],
+            }
+        }
+    """
+    layers: dict[str, list[str]] = {
+        "FRAME": [],
+        "FLASHBACK": [],
+        "FLASHBACK_NESTED": [],
+    }
+    current_layer = "FRAME"
+
+    for scene in scenes:
+        heading = scene.heading
+        if heading.startswith("FRAME:") or "FRAME:" in heading:
+            current_layer = "FRAME"
+            layers["FRAME"].append(scene.scene_id)
+        elif "(FLASHBACK WITHIN FLASHBACK)" in heading:
+            current_layer = "FLASHBACK_NESTED"
+            layers["FLASHBACK_NESTED"].append(scene.scene_id)
+        elif "(FLASHBACK)" in heading:
+            current_layer = "FLASHBACK"
+            layers["FLASHBACK"].append(scene.scene_id)
+        else:
+            layers[current_layer].append(scene.scene_id)
+
+    has_frame = bool(layers["FLASHBACK"])  # FLASHBACK existence implies frame
+    return {"has_frame_narrative": has_frame, "layers": layers}
 
 
 def _narrative_summary(summaries: list[str], kg: KnowledgeGraph) -> str:
@@ -474,6 +608,10 @@ def main():
         help="Export as JSON instead of YAML.",
     )
     parser.add_argument(
+        "--fountain", dest="format_fountain", action="store_true",
+        help="Export as Fountain (.fountain) screenplay format instead of YAML.",
+    )
+    parser.add_argument(
         "-n", "--limit", type=int, default=None, metavar="N",
         help="Limit processing to the first N chapters (for quick testing).",
     )
@@ -495,7 +633,9 @@ def main():
 
     try:
         script = asyncio.run(run(args.input, limit=args.limit, style_direction=args.style))
-        if args.format_json:
+        if args.format_fountain:
+            output = to_fountain(script)
+        elif args.format_json:
             from cli.exporter import to_json
 
             output = to_json(script)
