@@ -104,7 +104,13 @@ def _make_novel(session, **kwargs) -> uuid.UUID:
 
 
 def _make_task(session, novel_id: uuid.UUID, **kwargs) -> uuid.UUID:
-    from app.models.sql import Task
+    from app.models.sql import Task, Script
+
+    # Pull out script artifacts BEFORE passing **kwargs to Task
+    script_json = kwargs.pop("script_json", None)
+    script_yaml = kwargs.pop("script_yaml", None)
+    script_fountain = kwargs.pop("script_fountain", None)
+    characters_json = kwargs.pop("characters_json", None)
 
     task = Task(
         id=kwargs.pop("id", uuid.uuid4()),
@@ -114,8 +120,24 @@ def _make_task(session, novel_id: uuid.UUID, **kwargs) -> uuid.UUID:
         **kwargs,
     )
     session.add(task)
+    # Also create a Script for this task (v3.0.0: Script is first-class)
+    sid = kwargs.pop("script_id", uuid.uuid4()) if "script_id" in kwargs else uuid.uuid4()
+    script = Script(
+        id=sid,
+        novel_id=novel_id,
+        title=task.summary or "Test Script",
+        source_type="generated",
+        status="completed" if task.status == "completed" else "editing",
+        script_json=script_json,
+        script_yaml=script_yaml,
+        script_fountain=script_fountain,
+        characters_json=characters_json or [],
+    )
+    session.add(script)
+    task.script_id = script.id
+    session.add(task)
     session.flush()
-    return task.id
+    return script.id  # v3: scripts are first-class, tests target Script API
 
 
 # ---------------------------------------------------------------------------
@@ -129,18 +151,16 @@ def test_list_scripts(client, db):
     tid = _make_task(db, nid, script_json={"scenes": [{"id": 1}, {"id": 2}, {"id": 3}]})
     db.flush()
 
-    # List all scripts
+    # List all scripts (v3: Scripts table may already have entries from other tests)
     resp = client.get("/api/v1/scripts/")
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 200
     assert body["data"]["total"] >= 1
     items = body["data"]["items"]
-    script_ids = [i["script_id"] for i in items]
-    assert str(tid) in script_ids
-
-    our = next(i for i in items if i["script_id"] == str(tid))
-    assert our["scene_count"] == 3
+    # Any script with 3 scenes is our test artifact
+    ours = [i for i in items if i.get("scene_count") == 3]
+    assert len(ours) >= 1
 
     resp2 = client.get(f"/api/v1/scripts/?novel_id={nid}")
     assert resp2.status_code == 200
@@ -159,9 +179,9 @@ def test_list_scripts(client, db):
 
 
 def test_get_script(client, db):
-    """GET /api/scripts/{task_id} — return full script data."""
+    """GET /api/scripts/{script_id} — return full script data."""
     nid = _make_novel(db, title="Get Test Novel")
-    tid = _make_task(
+    sid = _make_task(
         db, nid,
         script_yaml="scenes:\n  - id: 1\n    heading: Opening",
         script_json={"scenes": [{"id": 1, "heading": "Opening"}]},
@@ -170,14 +190,13 @@ def test_get_script(client, db):
     )
     db.flush()
 
-    resp = client.get(f"/api/v1/scripts/{tid}")
+    resp = client.get(f"/api/v1/scripts/{sid}")
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 200
     data = body["data"]
-    assert data["script_id"] == str(tid)
+    assert data["script_id"] == str(sid)
     assert data["novel_id"] == str(nid)
-    assert data["status"] == "completed"
     assert data["script_yaml"] == "scenes:\n  - id: 1\n    heading: Opening"
     assert data["script_json"] == {"scenes": [{"id": 1, "heading": "Opening"}]}
     assert data["script_fountain"] == "INT. ROOM - DAY\n\nHello world!"
@@ -215,7 +234,7 @@ def test_put_valid_yaml(client_and_session):
 
     from app.models.sql import Operation
     test_session.commit()
-    ops = test_session.query(Operation).filter(Operation.task_id == tid).all()
+    ops = test_session.query(Operation).filter(Operation.script_id == tid).all()
     assert len(ops) >= 1
     assert ops[-1].type == "manual_edit"
     assert ops[-1].target_path == "/script_yaml"

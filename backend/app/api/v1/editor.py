@@ -1,10 +1,10 @@
 """AI editor / chat API — real-time AI-assisted script editing.
 
-Routes
+Routes (script-centric, task routes kept for backward compat)
 ------
-POST /chat/{task_id}       — Send a chat message; optionally get a JSON Patch back.
-POST /apply_patch/{task_id} — Apply a JSON Patch to the task's script_json.
-POST /undo/{task_id}        — Roll back the most recent patch operation.
+POST /chat/{script_id}        — Send a chat message; optionally get a JSON Patch back.
+POST /apply_patch/{script_id} — Apply a JSON Patch to the script's script_json.
+POST /undo/{script_id}        — Roll back the most recent patch operation.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from app.models.sql import (
     KnowledgeEdge,
     KnowledgeNode,
     Operation,
+    Script,
     Task,
     User,
 )

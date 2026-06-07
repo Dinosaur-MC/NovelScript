@@ -1,8 +1,8 @@
-"""SQLModel table definitions for all 8 NovelScript tables.
+"""SQLModel table definitions for all NovelScript tables.
 
-Matches SDS v2.0.0 S5.5 exactly.  Uses ``sa_column`` for types that
-SQLModel's ``Field`` does not natively support (*vector*, *JSONB* with
-default, CHECK constraints via :class:`CheckConstraint`).
+Matches SDS v3.0.0.  Uses ``sa_column`` for types that SQLModel's
+``Field`` does not natively support (*vector*, *JSONB* with default,
+CHECK constraints via :class:`CheckConstraint`).
 """
 
 from __future__ import annotations
@@ -136,7 +136,73 @@ class Novel(SQLModel, table=True):
 
 
 # ============================================================================
-# 2. tasks
+# 2. scripts — first-class core entity
+# ============================================================================
+
+class Script(SQLModel, table=True):
+    __tablename__ = "scripts"
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('generated', 'forked', 'standalone')",
+            name="ck_scripts_source_type",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'editing', 'completed')",
+            name="ck_scripts_status",
+        ),
+    )
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(UUID(as_uuid=True), primary_key=True),
+    )
+    novel_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("novels.id", ondelete="SET NULL"), nullable=True),
+    )
+    user_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True),
+    )
+    title: str = Field(
+        default="",
+        max_length=500,
+        sa_column=Column(String(500), nullable=False, default=""),
+    )
+    source_type: str = Field(
+        default="generated",
+        max_length=20,
+        sa_column=Column(String(20), nullable=False, default="generated"),
+    )
+    status: str = Field(
+        default="draft",
+        max_length=20,
+        sa_column=Column(String(20), nullable=False, default="draft"),
+    )
+    summary: Optional[str] = Field(default=None, sa_column=Column(Text))
+    script_yaml: Optional[str] = Field(default=None, sa_column=Column(Text))
+    script_json: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    script_fountain: Optional[str] = Field(default=None, sa_column=Column(Text))
+    characters_json: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, default=[]),
+    )
+    token_usage: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, default={}),
+    )
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, default=_utcnow),
+    )
+    updated_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, default=_utcnow),
+    )
+
+
+# ============================================================================
+# 3. tasks
 # ============================================================================
 
 class Task(SQLModel, table=True):
@@ -158,6 +224,10 @@ class Task(SQLModel, table=True):
     novel_id: uuid.UUID = Field(
         sa_column=Column(UUID(as_uuid=True), ForeignKey("novels.id"), nullable=False),
     )
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
+    )
     user_id: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True),
@@ -177,9 +247,7 @@ class Task(SQLModel, table=True):
         sa_column=Column(JSONB, nullable=False, default=[]),
     )
     script_yaml: Optional[str] = Field(default=None, sa_column=Column(Text))
-    script_json: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSONB)
-    )
+    script_json: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     script_fountain: Optional[str] = Field(default=None, sa_column=Column(Text))
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
     pipeline_config: dict[str, Any] = Field(
@@ -201,7 +269,7 @@ class Task(SQLModel, table=True):
 
 
 # ============================================================================
-# 3. chapters
+# 4. chapters
 # ============================================================================
 
 class Chapter(SQLModel, table=True):
@@ -235,7 +303,7 @@ class Chapter(SQLModel, table=True):
 
 
 # ============================================================================
-# 4. knowledge_nodes
+# 5. knowledge_nodes
 # ============================================================================
 
 class KnowledgeNode(SQLModel, table=True):
@@ -253,6 +321,10 @@ class KnowledgeNode(SQLModel, table=True):
     )
     novel_id: uuid.UUID = Field(
         sa_column=Column(UUID(as_uuid=True), ForeignKey("novels.id"), nullable=False),
+    )
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
     )
     task_id: Optional[uuid.UUID] = Field(
         default=None,
@@ -288,7 +360,7 @@ class KnowledgeNode(SQLModel, table=True):
 
 
 # ============================================================================
-# 5. knowledge_edges
+# 6. knowledge_edges
 # ============================================================================
 
 class KnowledgeEdge(SQLModel, table=True):
@@ -300,6 +372,10 @@ class KnowledgeEdge(SQLModel, table=True):
     )
     novel_id: uuid.UUID = Field(
         sa_column=Column(UUID(as_uuid=True), ForeignKey("novels.id"), nullable=False),
+    )
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
     )
     task_id: Optional[uuid.UUID] = Field(
         default=None,
@@ -336,7 +412,7 @@ class KnowledgeEdge(SQLModel, table=True):
 
 
 # ============================================================================
-# 6. operations
+# 7. operations
 # ============================================================================
 
 class Operation(SQLModel, table=True):
@@ -352,8 +428,13 @@ class Operation(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
-    task_id: uuid.UUID = Field(
-        sa_column=Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False),
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
+    )
+    task_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True),
     )
     user_id: Optional[uuid.UUID] = Field(
         default=None,
@@ -379,7 +460,7 @@ class Operation(SQLModel, table=True):
 
 
 # ============================================================================
-# 7. dialogues
+# 8. dialogues
 # ============================================================================
 
 class Dialogue(SQLModel, table=True):
@@ -395,8 +476,13 @@ class Dialogue(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(UUID(as_uuid=True), primary_key=True),
     )
-    task_id: uuid.UUID = Field(
-        sa_column=Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False),
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
+    )
+    task_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True),
     )
     user_id: Optional[uuid.UUID] = Field(
         default=None,
@@ -424,7 +510,7 @@ class Dialogue(SQLModel, table=True):
 
 
 # ============================================================================
-# 8. audit_logs
+# 9. audit_logs
 # ============================================================================
 
 class AuditLog(SQLModel, table=True):
@@ -443,6 +529,10 @@ class AuditLog(SQLModel, table=True):
     user_id: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True),
+    )
+    script_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(UUID(as_uuid=True), ForeignKey("scripts.id"), nullable=True),
     )
     task_id: Optional[uuid.UUID] = Field(
         default=None,

@@ -23,7 +23,7 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.celery_app import celery_app
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import AuditLog, Novel, Task, User
+from app.models.sql import AuditLog, Novel, Script, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,21 @@ def create_task(
     )
     task = task_crud.create(db, task)
 
-    logger.info("Task %s created for novel %s", task.id, novel_id)
+    # Create a placeholder Script that will be filled by the pipeline
+    script = Script(
+        novel_id=novel_id,
+        user_id=current_user.id,
+        title=novel.title or "New Script",
+        source_type="generated",
+        status="draft",
+    )
+    db.add(script)
+    db.flush()
+    task.script_id = script.id
+    db.add(task)
+    db.flush()
+
+    logger.info("Task %s created for novel %s, script %s", task.id, novel_id, script.id)
 
     # ── commit BEFORE dispatching Celery task ─────────────────────────
     # The Celery worker opens its own independent DB session.

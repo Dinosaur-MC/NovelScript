@@ -18,7 +18,7 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Task, User
+from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Script, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -250,12 +250,30 @@ def get_novel(novel_id: str, db: Session = Depends(get_db)):
     )
     chapters = db.execute(stmt).scalars().all()
 
+    # Load scripts derived from this novel
+    script_rows = db.execute(
+        select(Script)
+        .where(Script.novel_id == nid)
+        .order_by(Script.updated_at.desc())
+    ).scalars().all()
+
     return BaseResponse(
         code=200,
         message="OK",
         data={
             "novel": _serialise_novel(novel),
             "chapters": [_serialise_chapter(ch) for ch in chapters],
+            "scripts": [
+                {
+                    "script_id": str(s.id),
+                    "title": s.title,
+                    "source_type": s.source_type,
+                    "status": s.status,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                }
+                for s in script_rows
+            ],
         },
     )
 
