@@ -41,15 +41,21 @@ export function RightPanel({ traceHook, editorHook }: Props) {
         tabBarStyle={{ paddingLeft: 8 }}
       />
       <div className="ns-panel-tab-content">
-        <div className="ns-panel-tab-pane" style={{ display: activeTab === "preview" ? "block" : "none" }}>
-          <ScriptPreview traceHook={traceHook} />
-        </div>
-        <div className="ns-panel-tab-pane" style={{ display: activeTab === "graph" ? "block" : "none" }}>
-          <KnowledgeGraph />
-        </div>
-        <div className="ns-panel-tab-pane" style={{ display: activeTab === "chat" ? "block" : "none" }}>
-          <AIChat editorHook={editorHook} />
-        </div>
+        {activeTab === "preview" && (
+          <div className="ns-panel-tab-pane">
+            <ScriptPreview traceHook={traceHook} />
+          </div>
+        )}
+        {activeTab === "graph" && (
+          <div className="ns-panel-tab-pane">
+            <KnowledgeGraph />
+          </div>
+        )}
+        {activeTab === "chat" && (
+          <div className="ns-panel-tab-pane">
+            <AIChat editorHook={editorHook} />
+          </div>
+        )}
       </div>
     </div>
   );
