@@ -178,9 +178,14 @@ class TestChunkerIntegration:
 
             assert script.meta["chapter_count"] == 2
             assert script.meta["scene_count"] == 1
+            assert "pipeline_version" in script.meta
+            assert "chapter_validation" in script.meta  # v0.3.0
+            assert "narrative_structure" in script.meta  # v0.3.0
             assert len(script.characters) == 2  # from KG
             assert len(script.scenes) == 1
-            assert script.scenes[0].heading == "内. 大殿 - 日"
+            # Heading is normalized by heading_normalizer post-processing
+            assert "INT." in script.scenes[0].heading
+            assert "大殿" in script.scenes[0].heading
 
         finally:
             Path(tmp_path).unlink(missing_ok=True)
