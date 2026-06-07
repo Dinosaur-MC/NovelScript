@@ -47,9 +47,12 @@ def check_rate_limit(
     """
     redis_key = f"rate:{namespace}:{key}"
     try:
+        # Atomically create the key with TTL if it doesn't exist.
+        # SETNX + EX ensures the key always has an expiry, eliminating
+        # the INCR-then-EXPIRE race window where a crash would leak a
+        # permanent key.
+        redis_client.set(redis_key, "0", nx=True, ex=window_seconds)
         count = redis_client.incr(redis_key)
-        if count == 1:
-            redis_client.expire(redis_key, window_seconds)
         remaining = max(0, max_requests - count)
         return count <= max_requests, remaining
     except redis.exceptions.ConnectionError:

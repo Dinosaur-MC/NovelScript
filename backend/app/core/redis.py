@@ -6,6 +6,8 @@ All connections are synchronous — matches the rest of the API layer.
 
 from __future__ import annotations
 
+import threading
+
 import redis
 
 from app.core.config import settings
@@ -15,17 +17,26 @@ from app.core.config import settings
 # ---------------------------------------------------------------------------
 
 _pool: redis.ConnectionPool | None = None
+_pool_lock = threading.Lock()
 
 
 def _get_pool() -> redis.ConnectionPool:
-    """Return the shared connection pool, creating it on first call."""
+    """Return the shared connection pool, creating it on first call.
+
+    Thread-safe: only one thread creates the pool; all others wait and
+    receive the same instance.
+    """
     global _pool
     if _pool is None:
-        _pool = redis.ConnectionPool.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            max_connections=20,
-        )
+        with _pool_lock:
+            # Double-checked locking — another thread may have created
+            # the pool while we were waiting for the lock.
+            if _pool is None:
+                _pool = redis.ConnectionPool.from_url(
+                    settings.REDIS_URL,
+                    decode_responses=True,
+                    max_connections=20,
+                )
     return _pool
 
 
