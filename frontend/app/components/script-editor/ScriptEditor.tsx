@@ -73,9 +73,29 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
     (ed: editor.IStandaloneCodeEditor) => {
       editorRef.current = ed;
       editorHook.bindEditor(ed);
+
+      // Remeasure fonts after the web-font has loaded.
+      // Monaco initialises synchronously, but web-fonts (Google Fonts)
+      // arrive asynchronously — without this the cursor drifts on CJK lines.
+      const monaco = (window as any).monaco;
+      if (monaco?.editor?.remeasureFonts) {
+        monaco.editor.remeasureFonts();
+        // Second pass after a short delay catches late-arriving glyph tables
+        setTimeout(() => monaco.editor.remeasureFonts(), 600);
+      }
     },
     [editorHook],
   );
+
+  // Re-measure fonts when the editor comes into view
+  // (tab switch, panel resize, etc.)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const monaco = (window as any).monaco;
+      monaco?.editor?.remeasureFonts?.();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [initialYaml]);
 
   const handleChange = useCallback(
     (value: string | undefined) => {
@@ -101,7 +121,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
   const options: editor.IStandaloneEditorConstructionOptions = useMemo(
     () => ({
       fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+      fontFamily: "'Sarasa Mono SC', '等距更纱黑体 SC', 'Sarasa Term SC', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Noto Sans Mono CJK SC', 'Source Han Mono SC', monospace",
       lineNumbers: "on",
       minimap: { enabled: false },
       wordWrap: "on",
@@ -112,6 +132,7 @@ export function ScriptEditor({ editorHook, autoSaveHook }: Props) {
       renderWhitespace: "selection",
       bracketPairColorization: { enabled: true },
       guides: { indentation: true },
+      automaticLayout: true,
     }),
     [],
   );
