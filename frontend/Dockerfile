@@ -37,6 +37,7 @@ ENV NODE_ENV=production
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --from=builder /app/build ./build
+COPY server.prod.mjs ./
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
