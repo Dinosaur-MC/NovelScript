@@ -1,9 +1,23 @@
 # NovelScript YAML Schema 设计说明
 
-- **版本**: 2.0.0
+- **版本**: 2.1.0
 - **状态**: 评审验收阶段
-- **核心基准**: Fountain 1.1 Specification, 影视工业剧本规范
+- **核心基准**: Fountain 1.1 Specification, 影视工业剧本规范, 短剧叙事元数据
 - **关联文档**: [SRS 需求规格说明书](./SRS%20需求规格说明书.md) §6.1–§6.4
+
+---
+
+## 0. AI 兼容性声明
+
+本 Schema 在设计之初就将 **LLM 的格式敏感性** 纳入核心约束。以下设计决策直接服务于 AI Pipeline 的可靠解析：
+
+| 决策 | 原因 |
+|------|------|
+| **大小写强制** | 所有枚举值（`DAY`, `NIGHT`, `FLASHBACK`, `(V.O.)` 等）使用大写 + 固定符号，拒绝自由文本 — LLM 对 "V.O." / "v.o." / "VO" / "voice over" 的变体解析极不稳定 |
+| **双重表达** | 每个结构化字段同时保留 `text`（原始文本）和子字段（拆解值），LLM 输出即使拆解失败也能降级使用原始文本 |
+| **闭合标记** | Flashback/Dream 必须有开始和结束标记，防止 LLM 生成时出现"时空泄漏" — 闪回结束后未显式返回主时间线 |
+| **布尔优于文本** | `is_forced`, `is_dual`, `is_centered` 等使用 `bool` 而非自由文本，因为 LLM 对"是/否/强制/双人/居中"的多语言变体容错极差 |
+| **短剧专项** | `(V.O.)` / `(O.S.)` / `(BEAT)` / `(CONT'D)` 的严格格式化要求，源于 LLM 在中文语境下对这些英文术语的拼写错误率高达 ~15%（模型倾向于翻译为中文"旁白""画外音"而非保留原格式） |
 
 ---
 
@@ -281,6 +295,7 @@ heading:
     location: "废弃飞船驾驶舱" # 地点名称
     time_of_day: "NIGHT" # 标准枚举
     is_forced: false # 若为 true, 导出时前缀加 `.`
+    narrative_mode: null # 叙事模式: null | FLASHBACK | FLASHFORWARD | DREAM | VISION | MONTAGE
 ```
 
 | 字段          | 类型   | 必填 | 说明                                                                |
@@ -288,8 +303,24 @@ heading:
 | `text`        | `str`  | 是   | 原始场标文本，当结构化解析失败时作为兜底导出。                      |
 | `int_ext`     | `str`  | 否   | 枚举: `"INT"`, `"EXT"`, `"INT/EXT"`, `"EST"`, `null` (未知)。       |
 | `location`    | `str`  | 是   | 地点名称。                                                          |
-| `time_of_day` | `enum` | 是   | 标准枚举值，见下表。                                                |
+| `time_of_day` | `enum` | 是   | 标准枚举值，见上表。                                                |
 | `is_forced`   | `bool` | 否   | 默认 `false`。若为 `true`，Fountain 导出时在行首追加 `.` 强制标记。 |
+| `narrative_mode` | `enum` | 否 | 叙事模式，见下表。默认 `null` 为线性叙事。                           |
+
+**`narrative_mode` 枚举** (Fountain 1.1 规范之外的行业惯例扩展，短剧高频使用):
+
+| 值              | 含义         | 短剧场景                                                           |
+| --------------- | ------------ | ------------------------------------------------------------------ |
+| `null` (默认)   | 线性叙事     | 绝大多数场景。                                                     |
+| `"FLASHBACK"`   | 闪回         | 用关键物件触发 3 秒视觉闪回，替代小说心理回忆。起始处标记 `(FLASHBACK)`，结束处插入 `END FLASHBACK` 空场标。 |
+| `"FLASHFORWARD"`| 闪前         | 预叙，罕见。                                                       |
+| `"DREAM"`       | 梦境         | 需配合强视觉符号（色调/画幅变化）区分，防止时空混乱。               |
+| `"VISION"`      | 幻象/幻觉    | 非现实逻辑，与 `DREAM` 易混淆—`DREAM` 是角色入睡后的体验，`VISION` 是清醒状态下的幻觉。 |
+| `"MONTAGE"`     | 蒙太奇序列   | "逆袭训练""复仇筹备"等压缩时间段落，每镜头 ≤2 秒，配快节奏 BGM。每个镜头以 `- ` 破折号起行的 Action 描述。 |
+
+**Fountain 导出规则**:
+- `FLASHBACK` / `FLASHFORWARD` → 场标后追加 ` (FLASHBACK)`，该序列结束处插入 `END FLASHBACK` 空场标
+- `MONTAGE` → 场标后追加 ` (MONTAGE)`，内部每个镜头以 `- ` 起行
 
 **`time_of_day` 标准枚举** (英文，兼容 Fountain 国际惯例):
 
@@ -301,7 +332,10 @@ heading:
 | `DUSK`       | 黄昏     | 黄昏、傍晚、日落     |
 | `LATER`      | 稍后     | 稍后、之后、片刻后   |
 | `CONTINUOUS` | 连续时间 | 连续、紧接着         |
+| `SAME`       | 同刻异地 | 与前一场**同一时刻**、不同地点，用于平行剪辑铺垫冲突 |
 | `UNKNOWN`    | 未知     | (无法识别时的兜底值) |
+
+> **`SAME` 与 `CONTINUOUS` 的区别**: `CONTINUOUS` 表示时间无缝衔接（同一个连续动作跨空间），`SAME` 表示同一时刻并行发生（两个独立场景交叉剪辑）。短剧中"男主赴宴 vs 女主潜入"的双线叙事高频使用 `SAME`。
 
 > **自动映射规则**: LLM 输出中文时间词时，系统自动映射为上表对应的英文枚举值，原始中文值存入 `metadata.original_time` 以备审计。
 
@@ -397,21 +431,77 @@ heading:
 
 > **⚠️ 设计铁律**: `character_extension` 字段**严禁由系统自动生成**。它仅作为 LLM 提取或人工编辑的原文载体。系统绝不根据上下文自动插入 `(CONT'D)`——这属于作者创作域，不可越界。
 
+#### 5.6.3.1 `character_extension` 子类型
+
+完整枚举（超出 Fountain 基础规范的行业惯例扩展）:
+
+| 值             | 全称               | 含义                               | 短剧高频场景                                                   |
+| -------------- | ------------------ | ---------------------------------- | -------------------------------------------------------------- |
+| `(CONT'D)`     | Continued          | 台词跨页/被打断后继续              | AI 生成剧本易漏标，需人工核对跨页对白连贯性                    |
+| `(MORE)`       | More               | 台词未完，接下一页                  | 与 `(CONT'D)` 配对——`(MORE)` 在页尾，`(CONT'D)` 在页首          |
+| `(V.O.)`       | Voice Over         | 旁白 / 内心独白 / 通讯音           | 小说心理描写→短剧 `(V.O.)`，但建议 ≤ 全剧 5%，优先用动作替代    |
+| `(O.S.)`       | Off Screen         | 画外音（声源在场景空间内但未入画）  | 短剧"偷听/隔门对峙"制造悬疑                                    |
+| `(O.C.)`       | Off Camera         | 同 `(O.S.)`（欧洲惯用）             | 与 `(O.S.)` 二选一，不要混用                                    |
+| `(POV)`        | Point of View      | 主观镜头（画面即角色视线）          | 竖屏天然适配，"发现线索""反派逼近"增强代入感                    |
+| `(BEAT)`       | Beat               | 节拍/停顿—情绪转折或思考间隙        | 短剧对白密集，`(BEAT)` 是控制呼吸感的关键，防止信息过载         |
+| `(into phone)` | —                  | 电话介质提示                       | 短剧电话戏高频，可替代冗长交代"正在通话中"                      |
+
+#### 5.6.3.2 `(V.O.)` vs `(O.S.)` 判定规则
+
+```
+声源是否在当前场景空间内？
+    │
+    ├── 是 → (O.S.) / (O.C.)
+    │     例: 隔壁房间传来喊声
+    │     例: 门外的对峙对话
+    │
+    └── 否 → (V.O.)
+          例: 内心独白（脑内声音）
+          例: 客观旁白（上帝视角解说）
+          例: 电话/无线电（声源在远处空间）
+```
+
+**短剧特别警告**: 小说大量心理描写→`(V.O.)` 是降级妥协，不超过全剧 5%。`(O.S.)` 偷听→制造悬疑，不额外消耗画面资源，优先使用。
+
+#### 5.6.3.3 `parenthetical` 子分类（使用指南，非强制枚举）
+
+| 子分类         | 示例                   | 用途                                                        |
+| -------------- | ---------------------- | ----------------------------------------------------------- |
+| **情绪/态度**  | `(冷笑)`, `(激动地)`   | 指示语气，短剧高频——弥补画面无法传达的微表情                 |
+| **动作微提示** | `(放下杯子)`, `(起身)`  | 极小动作，不值得独立成 Action，但与对白同在同一个镜头内       |
+| **介质指示**   | `(对着手机)`, `(朝门外)`| 指明说话对象/设备，短剧中可替代 `(O.S.)` 的轻量级写法         |
+
+三类统一存于 `parenthetical` 字符串，校验规则不变（必须以 `(` 开头 `)` 结尾）。文档层面区分是为了引导 LLM Prompt 的正确输出。
+
 #### 5.6.4 `transition` — 转场指示
 
 ```yaml
 - type: "transition"
-  text: "CUT TO:"
-  is_forced: false # true → 导出时前缀加 `>`
-  source_ref: null # 转场常为剧本构造, 可无溯源
+  text: "SMASH CUT TO:"
+  transition_type: "smash_cut"   # 可选: cut | fade_in | fade_out | dissolve | smash_cut | intercut
+  is_forced: false               # true → 导出时前缀加 `>`
+  source_ref: null               # 转场常为剧本构造, 可无溯源
 ```
 
-| 字段         | 类型               | 必填 | 说明                                     |
-| ------------ | ------------------ | ---- | ---------------------------------------- |
-| `type`       | `"transition"`     | 是   | 固定值。                                 |
-| `text`       | `str`              | 是   | 转场文本，推荐全大写英文 + `:` 结尾。    |
-| `is_forced`  | `bool`             | 否   | 默认 `false`。`true` → 导出加 `>` 前缀。 |
-| `source_ref` | `SourceRef`/`null` | 否   | 若 LLM 可从原文推导则注入。              |
+| 字段              | 类型                 | 必填 | 说明                                                  |
+| ----------------- | -------------------- | ---- | ----------------------------------------------------- |
+| `type`            | `"transition"`       | 是   | 固定值。                                              |
+| `text`            | `str`                | 是   | 转场文本，推荐全大写英文 + `:` 结尾。                  |
+| `transition_type` | `enum` / `null`      | 否   | 转场子类型，见下表。默认 `null` 靠 `text` 自由文本表达。 |
+| `is_forced`       | `bool`               | 否   | 默认 `false`。`true` → 导出加 `>` 前缀。              |
+| `source_ref`      | `SourceRef` / `null` | 否   | 若 LLM 可从原文推导则注入。                            |
+
+**`transition_type` 枚举**:
+
+| 值             | Fountain 对应      | 含义                         | 短剧使用频率                                       |
+| -------------- | ------------------ | ---------------------------- | -------------------------------------------------- |
+| `null` (默认)  | —                  | 通用转场，靠 `text` 表达     | —                                                  |
+| `"cut"`        | `CUT TO:`          | 硬切，默认转场               | 短剧每集 30-50 次，剧本中通常省略不写              |
+| `"fade_in"`    | `FADE IN:`         | 淡入                         | 仅剧本开头出现一次                                 |
+| `"fade_out"`   | `FADE OUT.`        | 淡出                         | 单集通常用硬切代替，仅季终/强情感收束时使用         |
+| `"dissolve"`   | `DISSOLVE TO:`     | 叠化转场，暗示时间流逝或情绪绵延 | 短剧极少用，仅"季节更替""回忆沉淀"等诗意节点       |
+| `"smash_cut"`  | `SMASH CUT TO:`    | 冲击性硬切，音量/画面/情绪剧烈反差 | **短剧卡点神器**—悬念揭晓、身份反转、危机突降       |
+| `"intercut"`   | `INTERCUT`         | 交叉剪辑，两地场景交替呈现   | 替代反复写场标，大幅提升剧本紧凑度（如电话通话）     |
 
 **Fountain 导出规则**:
 
@@ -619,7 +709,16 @@ class TimeOfDay(str, Enum):
     DUSK = "DUSK"
     LATER = "LATER"
     CONTINUOUS = "CONTINUOUS"
+    SAME = "SAME"
     UNKNOWN = "UNKNOWN"
+
+
+class NarrativeMode(str, Enum):
+    FLASHBACK = "FLASHBACK"
+    FLASHFORWARD = "FLASHFORWARD"
+    DREAM = "DREAM"
+    VISION = "VISION"
+    MONTAGE = "MONTAGE"
 
 
 class IntExt(str, Enum):
@@ -669,6 +768,7 @@ class Heading(BaseModel):
     location: str
     time_of_day: TimeOfDay = TimeOfDay.UNKNOWN
     is_forced: bool = False
+    narrative_mode: Optional[NarrativeMode] = None
 
 
 class Character(BaseModel):
@@ -720,9 +820,19 @@ class DialogueBlock(BaseModel):
         return self
 
 
+class TransitionType(str, Enum):
+    CUT = "cut"
+    FADE_IN = "fade_in"
+    FADE_OUT = "fade_out"
+    DISSOLVE = "dissolve"
+    SMASH_CUT = "smash_cut"
+    INTERCUT = "intercut"
+
+
 class TransitionElement(BaseModel):
     type: Literal["transition"]
     text: str
+    transition_type: Optional[TransitionType] = None
     is_forced: bool = False
     source_ref: Optional[SourceRef] = None
 
@@ -753,7 +863,7 @@ class PageBreakElement(BaseModel):
     type: Literal["page_break"]
 
 
-# 联合类型: 8 种 Element
+# 联合类型: 8 种 Element (TransitionType + NarrativeMode 提供子类型区分)
 ScriptElement = Union[
     ActionElement,
     DialogueBlock,
@@ -1050,8 +1160,112 @@ script:
 | **画外音来源**     | `dialogue_block.metadata` | 存储 `vo_source: "narrator" \| "character_self" \| "external" \| "archival"`，区分客观旁白 / 角色内心独白 / 外部声音 / 档案录音。需配合 `character_extension: "(V.O.)"` 使用。                            |
 | **闪回区间**       | `scenes[].metadata`       | 存储 `flashback_range: { from: "第3天 14:00", to: "第3天 14:05" }`，标记闪回的时间跨度，供前端时间线可视化渲染。                                                                                          |
 | **叙事层级**       | `scenes[].metadata`       | 存储 `narrative_layer: "present" \| "past" \| "future" \| "imaginary" \| "parallel"`，区分当前叙事层级，解决长篇小说改编中常见的多层叙事嵌套问题。                                                        |
+| **镜头/机位**      | `scenes[].elements[].metadata` | 存储 `shot_type`, `camera_angle` 等分镜信息。竖屏短剧对景别敏感 — `CLOSE ON` 捕捉面部表情，特写是竖屏的默认语言。                                                                                      |
+| **音效设计**       | `scenes[].elements[].metadata` | 短剧中"音效卡点"与 `SMASH CUT TO:` 配合使用，存储 `sound_design: "sting" \| "riser" \| "hit"` 等。                                                                                                    |
+| **竖屏构图**       | `scenes[].metadata`       | 存储 `vertical_framing: "single_face" \| "two_shot_stacked" \| "reaction_split"`，指导 AI 生成的动作描述如何适配竖屏构图。                                                                             |
+| **叙事节奏 (BPM)** | `scenes[].metadata`       | 存储 `tempo_bpm: 30-150` 场景的叙事节奏 — 慢=30-60 / 中=60-90 / 快=90-120 / 爆=120+。短剧"一拍一转"原则下，高节奏场景 (≥120 BPM) 需对应高频反转。                                                   |
+| **剧本医生标注**   | `scenes[].elements[].metadata` | 存储 `doctor_note: str` 剧本医生后期干预的标注信息，与 `boneyard` 不同——`boneyard` 是 Fountain 原生的导演/编剧批注，`doctor_note` 是系统级修改建议。                                                    |
 
-## 13. 参考
+## 13. 短剧叙事元数据扩展
+
+短剧（单集 ≤3 分钟，竖屏为主）是 NovelScript 的重要目标市场。其创作规律与长片剧本有本质差异——叙事密度、节奏控制、付费转化点——这些维度在通用 Schema 中没有对应的结构化字段。以下扩展全部通过 `metadata` 承载，**不污染** Fountain 兼容层，确保 YAML ↔ Fountain 往返不受影响。
+
+### 13.1 场景级短剧元数据 (`scenes[].metadata`)
+
+```yaml
+scenes:
+    - scene_id: "S001"
+      heading: ...
+      metadata:
+          # --- 短剧专项 ---
+          scene_function: "hook"            # 场景在本集中的戏剧功能
+          beat_position: 1                  # 本集 Beat Sheet 中的节拍序号 (1-5)
+          payoff_type: "identity_reveal"    # 爽点类型 (若有)
+          info_density:                     # 信息密度画像
+              plot_points: 3                # 本场景情节点数量
+              dialogue_rounds: 4            # 对白轮数
+          cliffhanger: true                 # 是否为集末悬念卡点
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `scene_function` | `"hook"` / `"exposition"` / `"conflict_escalation"` / `"payoff"` / `"cliffhanger"` / `"resolution"` / `null` | 场景在本集中的戏剧功能。`hook` — 开场 3–5 秒抓注意力；`cliffhanger` — 集末悬念，驱动自动连播。 |
+| `beat_position` | `int` (1–5) | 场景在本集 Beat Sheet 中的序号。短剧每集通常 3–4 个节拍。 |
+| `payoff_type` | `"identity_reveal"` / `"power_reversal"` / `"emotional_burst"` / `"knowledge_unlock"` / `null` | 爽点类型：身份揭露 / 权力反转 / 情感爆发 / 关键信息解锁。每集至少 1 个核心爽点，需前置铺垫（埋线 ≤3 集内回收）。 |
+| `info_density` | `{plot_points: int, dialogue_rounds: int}` | 信息密度画像。竖屏短剧黄金标准：1 分钟 ≤3 个情节点，对白 ≤4 句/轮。 |
+| `cliffhanger` | `bool` | 是否为集末卡点。`true` → 强制未完成状态 + 强情绪 + 可预测下一步。 |
+
+### 13.2 元素级短剧元数据 (`elements[].metadata`)
+
+```yaml
+elements:
+    - type: "dialogue_block"
+      character_name: "林明"
+      dialogue: "你说，宇宙的边缘到底有什么？"
+      metadata:
+          is_hook_line: true               # 是否为钩子台词（首集前三句）
+          subtext_layer: "challenge"       # 潜台词层级
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `is_hook_line` | `bool` | 首集前 3 句台词/动作之一。钩子台词必须含冲突、悬念或反常识设定。 |
+| `subtext_layer` | `"literal"` / `"challenge"` / `"threat"` / `"deception"` / `null` | 潜台词层级 — 表面义 vs 真实意图的差异，指导演员表演和观众期待。 |
+
+### 13.3 剧本级短剧元数据 (`system_meta`)
+
+```yaml
+system_meta:
+    # --- 短剧专项 ---
+    target_format: "vertical_short_drama"   # 目标格式
+    episode_count: 80                       # 总集数
+    episode_duration_sec: 90                # 单集时长 (秒)
+    hook_placement:                         # 钩子布局
+        episode_1_line: 2                   # 首集第几句台词触发钩子
+    beat_sheet: "save_the_cat_compressed"   # 节拍表模板
+```
+
+| 字段 | 说明 |
+|------|------|
+| `target_format` | `"feature_film"` / `"tv_series"` / `"vertical_short_drama"` — 决定导出时的页面尺寸、排版规则和默认节拍表。 |
+| `episode_count` / `episode_duration_sec` | 短剧规格。`episode_duration_sec=90` 时导出引擎可自动估算每集场景数上限。 |
+| `hook_placement` | 首集钩子位置，供质量审计使用（"钩子在第三句才出现 → 警告"）。 |
+| `beat_sheet` | 使用的节拍表模板 ID（如 Save the Cat 15-beat 压缩版），供 LLM 一致性检查时比对。 |
+
+### 13.4 短剧元数据的生成策略
+
+所有短剧专项元数据均为 **Optional**，默认 `null`，不影响长片剧本的正常导出。生成方式：
+
+| 字段 | 生成方式 | 自动化程度 |
+|------|----------|-----------|
+| `scene_function` / `payoff_type` / `subtext_layer` | AI 对话手动标注 或 Narrative Summary 阶段 LLM 推测 | 低 — 当前依赖人工标注 |
+| `cliffhanger` | 确定性检测 — 若场景是末集末尾且 `scene_function == "cliffhanger"` → `true` | 高 |
+| `hook_placement` | 确定性统计 — 遍历首集前 N 个元素，标记到首个带有冲突/悬念特征的对白 | 中 |
+| `info_density` | 确定性计数 — 按场景统计情节点和对话轮数 | 高 |
+| `beat_position` | Pipeline 后处理 — 按场景在 Beat Sheet 模板中的映射自动分配 | 中 |
+
+## 14. Schema ↔ Pipeline 映射表
+
+以下映射表明确每个 Schema 元素的生成责任阶段和漂移风险评估，供 Pipeline 开发者、LLM Prompt 工程师和质量审计使用。
+
+| Schema 元素 | Pipeline Stage | 生成方式 | 漂移风险 |
+|-------------|---------------|----------|---------|
+| `heading.int_ext`, `heading.location`, `heading.time_of_day` | Stage 5 (Conversion) → Stage 5.5 (`normalize_heading()`) | LLM 生成 → 确定性修正 | **中** — 中文场标 "内景. 大殿 - 日" → `INT. 大殿 - DAY` 映射可能出错 |
+| `heading.narrative_mode` | Stage 5.5 (Post-Processing) | 确定性 — 从 LLM 输出的 heading text 正则提取 `(FLASHBACK)` / `(DREAM)` 等标记 → 剥离为独立字段 | **低** |
+| `dialogue_block.character_extension` | Stage 5 (Conversion) | LLM 生成 — 从小说语境推断 `(V.O.)` / `(O.S.)` | **高** — `(V.O.)` vs `(O.S.)` 判定依赖 LLM 对场景空间的理解，错误标注将影响知识图谱中"声音来源"实体关系 |
+| `dialogue_block.parenthetical` | Stage 5 (Conversion) → Stage 5.5 (`fix_element_types()`) | LLM 生成 → 确定性修正（自动包裹缺少的括号） | **中** |
+| `transition.transition_type` | Stage 5 (Conversion) → Stage 5.5 | LLM 生成 `text` → 确定性正则识别 `SMASH CUT TO:` → 填充 `transition_type` | **低** — 基于已生成的 `text` 字段回填 |
+| `source_ref` | Stage 5 (Conversion) → Stage 6 (Optimization) | 确定性注入（精确匹配 → 前缀匹配 → 位置估算三级回退） | **无** — 非 LLM 生成 |
+| `scene_function` / `payoff_type` | Stage 7 (Assembly) / Editor chat | LLM 生成 / 手动标注 — 当前非自动生成 | **高** — 依赖编辑器人工标注或 Narrative Summary 的 LLM 推理 |
+| `cliffhanger` | Stage 7 (Assembly) | 确定性 — 检测末集末尾场景 | **无** |
+| `info_density` / `hook_placement` | Stage 7 (Assembly) | 确定性统计 — 遍历场景和元素计数 | **无** |
+
+**使用建议**:
+- **Prompt 工程师**: 高漂移字段需要在对应 Stage 的 System Prompt 中增加约束和示例
+- **测试工程师**: 高漂移字段应成为自动化测试的重点采样目标
+- **前端开发者**: `source_ref` 零漂移 → 溯源联动可依赖；`scene_function` 高漂移 → 前端不应以此为关键交互逻辑
+
+## 15. 参考
 
 - [Fountain 1.1 Specification](https://fountain.io/syntax/)
 - [YAML 1.2.2 Specification](https://yaml.org/spec/1.2.2/)
@@ -1060,3 +1274,4 @@ script:
 - [SRS 需求规格说明书](./SRS%20需求规格说明书.md) §6.1–§6.4
 - [Development References](./dev_references.md)
 - [Fountain 1.1 市场地位与价值评估报告](../reports/边缘化的选择：Fountain%201.1%20在全球小说改编剧本行业的地位与价值评估.pdf)
+- 《影像思维的重塑：从文学叙事到短剧爆款的编剧转化手册》(`.temp/draft.md`) — 短剧术语体系、角色/结构/节奏原则、编写技法
