@@ -278,8 +278,16 @@ html, body, #root {
 }
 
 /* Search */
-.ns-workspace-search {
+.ns-workspace-search-bar {
   margin-bottom: 28px;
+}
+
+.ns-workspace-tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 /* Section */

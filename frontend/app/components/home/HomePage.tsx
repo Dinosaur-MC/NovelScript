@@ -78,6 +78,10 @@ export function HomePage() {
   const authLoaded = useAuthStore((s) => s.loaded);
   const [searchText, setSearchText] = useState("");
   const [tab, setTab] = useState<"all" | "novels" | "scripts">("all");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+
+  // Collect all unique entity names from script summaries for tag filters
+  const allTags = [...new Set(scripts.flatMap((s) => entityBadges(s.summary)))].slice(0, 10);
 
   const load = useCallback(async () => {
     const currentUser = useAuthStore.getState().user;
@@ -131,7 +135,11 @@ export function HomePage() {
 
   // Filtered items
   const novelFiltered = novels.filter((n) => !searchText || n.title.includes(searchText));
-  const scriptFiltered = scripts.filter((s) => !searchText || s.title?.includes(searchText) || s.summary?.includes(searchText));
+  const scriptFiltered = scripts.filter((s) => {
+    if (searchText && !s.title?.includes(searchText) && !s.summary?.includes(searchText)) return false;
+    if (tagFilter.length > 0 && !entityBadges(s.summary).some((b) => tagFilter.includes(b))) return false;
+    return true;
+  });
 
   // ── Actions ─────────────────────────────────────────────────────
 
@@ -375,11 +383,28 @@ export function HomePage() {
         </div>
       </header>
 
-      {/* Search */}
-      <div className="ns-workspace-search">
+      {/* Search + Filter */}
+      <div className="ns-workspace-search-bar">
         <Input prefix={<SearchOutlined style={{ color: "var(--color-text-muted)" }} />}
-          placeholder="搜索小说或剧本..." value={searchText}
-          onChange={(e) => setSearchText(e.target.value)} allowClear style={{ flex: 1, maxWidth: 480 }} />
+          placeholder="搜索小说名称或剧本内容..." value={searchText}
+          onChange={(e) => setSearchText(e.target.value)} allowClear style={{ flex: 1, maxWidth: 420 }} />
+        {allTags.length > 0 && (
+          <div className="ns-workspace-tag-filter">
+            {allTags.map((tag) => (
+              <Tag.CheckableTag
+                key={tag}
+                checked={tagFilter.includes(tag)}
+                onChange={(checked) => setTagFilter(checked ? [...tagFilter, tag] : tagFilter.filter((t) => t !== tag))}
+                style={{ fontSize: 11 }}
+              >
+                {tag}
+              </Tag.CheckableTag>
+            ))}
+            {tagFilter.length > 0 && (
+              <Button type="link" size="small" onClick={() => setTagFilter([])}>清除</Button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recent updates */}
