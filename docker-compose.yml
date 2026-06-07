@@ -91,6 +91,11 @@ services:
     environment:
       DATABASE_URL: postgresql://novelscript:${DB_PASSWORD:-novelscript}@db:5432/novelscript
       REDIS_URL: redis://redis:6379/0
+      # Admin account — override these in your .env or docker-compose.override.yml
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@novelscript.local}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-Administrator}
     depends_on:
       db:
         condition: service_healthy
@@ -119,6 +124,10 @@ services:
     environment:
       DATABASE_URL: postgresql://novelscript:${DB_PASSWORD:-novelscript}@db:5432/novelscript
       REDIS_URL: redis://redis:6379/0
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@novelscript.local}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_DISPLAY_NAME: ${ADMIN_DISPLAY_NAME:-Administrator}
     depends_on:
       db:
         condition: service_healthy
