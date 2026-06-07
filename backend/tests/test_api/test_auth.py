@@ -164,3 +164,157 @@ def test_me_without_token_401(client: TestClient):
     """GET /me without any Authorization header returns 401."""
     resp = client.get("/api/v1/auth/me")
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# 7. test_logout_blacklists_token
+# ---------------------------------------------------------------------------
+
+
+def test_logout_blacklists_token(client: TestClient):
+    """After logging out, the token is blacklisted and GET /me returns 401."""
+    tag = uuid.uuid4().hex[:8]
+    email = f"logout_{tag}@test.local"
+    password = "logoutpass"
+
+    # Register + login
+    _register(client, f"logout_{tag}", email, password)
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    token = login_resp.json()["data"]["token"]
+
+    # Token works before logout
+    me_before = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_before.status_code == 200
+
+    # Logout
+    logout_resp = client.post(
+        "/api/v1/auth/logout",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert logout_resp.status_code == 200
+    assert logout_resp.json()["message"] == "已登出"
+
+    # Token no longer works
+    me_after = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_after.status_code == 401
+    assert "注销" in me_after.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 8. test_logout_without_token_returns_200
+# ---------------------------------------------------------------------------
+
+
+def test_logout_without_token_returns_200(client: TestClient):
+    """Logout without an Authorization header is a no-op (backward compat)."""
+    resp = client.post("/api/v1/auth/logout")
+    assert resp.status_code == 200
+    assert resp.json()["message"] == "已登出"
+
+
+# ---------------------------------------------------------------------------
+# 9. test_login_rate_limit_blocks_after_5_attempts
+# ---------------------------------------------------------------------------
+
+
+def test_login_rate_limit_blocks_after_5_attempts(client: TestClient):
+    """After 5 failed login attempts, the 6th returns 429."""
+    email = "ratelimit@test.local"
+
+    for i in range(5):
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "wrong"},
+        )
+        assert resp.status_code == 401, f"Attempt {i+1}: expected 401, got {resp.status_code}"
+
+    # 6th attempt should be rate-limited
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "wrong"},
+    )
+    assert resp.status_code == 429
+    assert "频繁" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 10. test_login_rate_limit_does_not_block_different_email
+# ---------------------------------------------------------------------------
+
+
+def test_login_rate_limit_same_ip_blocks_all_emails(client: TestClient):
+    """Rate limiting by IP blocks all emails from the same test client."""
+    # Exhaust rate limit for email A (also increments IP counter)
+    for _ in range(5):
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "blocked@test.local", "password": "wrong"},
+        )
+
+    # Blocked by email limit
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "blocked@test.local", "password": "wrong"},
+    )
+    assert resp.status_code == 429
+
+    # Different email from same IP also blocked (shared IP counter)
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "other@test.local", "password": "wrong"},
+    )
+    assert resp.status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# 11. test_login_rate_limit_cleared_on_success
+# ---------------------------------------------------------------------------
+
+
+def test_login_rate_limit_cleared_on_success(client: TestClient):
+    """A successful login clears the rate counters."""
+    tag = uuid.uuid4().hex[:8]
+    email = f"clear_{tag}@test.local"
+    password = "rightpass"
+
+    _register(client, f"clear_{tag}", email, password)
+
+    # Do 3 failed attempts
+    for _ in range(3):
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "wrong"},
+        )
+
+    # Successful login
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert resp.status_code == 200
+    assert "token" in resp.json()["data"]
+
+    # After success, we should have fresh rate counters.
+    # 5 more failed attempts should work (not blocked)
+    for i in range(5):
+        resp = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "wrong"},
+        )
+        assert resp.status_code == 401, f"After reset, attempt {i+1}: expected 401, got {resp.status_code}"
+
+    # 6th should be blocked again
+    resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": "wrong"},
+    )
+    assert resp.status_code == 429
