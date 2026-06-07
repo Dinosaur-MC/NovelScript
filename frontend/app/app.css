@@ -27,10 +27,9 @@
 
 /* ---- Global Reset ---- */
 html, body, #root {
-  height: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  min-height: 100%;
   background-color: var(--color-bg-canvas);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
@@ -123,15 +122,13 @@ html, body, #root {
 .ns-layout-html {
   background: #0a0a0f;
   color: #e8e8f0;
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
 }
 
 .ns-layout-body {
-  height: 100%;
+  min-height: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
   box-sizing: border-box;
 }
 
@@ -249,32 +246,65 @@ html, body, #root {
   font-size: 14px;
 }
 
-/* Header */
-.ns-workspace-header {
+/* ========================================================================
+   ns-app-header — Unified top bar for all authenticated pages.
+   Landing uses its own nl-nav; login is centred.
+   ======================================================================== */
+
+.ns-app-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  padding: 0 40px;
+  height: 56px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-surface);
+  flex-shrink: 0;
 }
 
-.ns-workspace-header h1 {
-  font-size: 22px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--color-text-primary);
-}
-
-.ns-workspace-subtitle {
-  font-weight: 400;
-  font-size: 16px;
-  color: var(--color-text-secondary);
-  margin-left: 8px;
-}
-
-.ns-workspace-header-actions {
+.ns-app-header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+}
+
+.ns-app-header-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ns-app-header-sub {
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-left: 4px;
+}
+
+.ns-app-header-title {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Page-level title below the unified app header — no left padding,
+   inherited from parent container (ns-workspace-page / ns-dashboard-wrap) */
+.ns-page-title h1 {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--color-text-primary);
 }
 
 /* Search */
@@ -611,12 +641,13 @@ html, body, #root {
 }
 
 .ns-workspace-loading {
-  height: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 16px;
+  background-color: var(--color-bg-canvas);
 }
 
 .ns-workspace-loading-text {
@@ -1453,42 +1484,15 @@ html, body, #root {
   background: var(--color-bg-canvas);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
-  overflow-x: hidden;
 }
 
-/* ══ Navigation ══════════════════════════════════════════════════ */
-
-.nl-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 40px;
-  border-bottom: 1px solid var(--color-border-subtle);
+/* Landing nav — uses shared ns-app-header structure, just translucent */
+.nl-nav--transparent {
   background: rgba(10, 10, 15, 0.9);
   backdrop-filter: blur(12px);
   position: sticky;
   top: 0;
   z-index: 10;
-}
-
-.nl-nav-brand {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  letter-spacing: 0.5px;
-}
-
-.nl-nav-sub {
-  font-weight: 400;
-  font-size: 14px;
-  color: var(--color-text-secondary);
-  margin-left: 4px;
-}
-
-.nl-nav-links {
-  display: flex;
-  align-items: center;
-  gap: 12px;
 }
 
 /* ══ Hero ════════════════════════════════════════════════════════ */
@@ -1642,6 +1646,15 @@ html, body, #root {
   font-size: 20px;
   color: var(--color-text-muted);
   margin-top: 12px;
+}
+
+.nl-pipeline-note {
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  max-width: 640px;
+  margin: 24px auto 0;
+  line-height: 1.6;
 }
 
 /* ══ Feature Cards ═══════════════════════════════════════════════ */

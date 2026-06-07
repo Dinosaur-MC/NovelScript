@@ -57,9 +57,11 @@ export function Landing() {
     <div className="nl-page">
 
       {/* ═══════════ Navigation ═══════════ */}
-      <nav className="nl-nav">
-        <span className="nl-nav-brand">NovelScript <span className="nl-nav-sub">析幕</span></span>
-        <div className="nl-nav-links">
+      <nav className="ns-app-header nl-nav--transparent">
+        <div className="ns-app-header-left">
+          <span className="ns-app-header-brand">NovelScript <span className="ns-app-header-sub">析幕</span></span>
+        </div>
+        <div className="ns-app-header-right">
           <Button type="text" onClick={() => navigate("/login")}>登录</Button>
           <Button type="primary" onClick={() => navigate("/workspace")}>开始使用</Button>
         </div>
@@ -85,7 +87,7 @@ export function Landing() {
             </Button>
           </div>
           <div className="nl-hero-stats">
-            <div className="nl-stat"><strong>7</strong> 管道阶段</div>
+            <div className="nl-stat"><strong>8</strong> 管道阶段</div>
             <div className="nl-stat"><strong>Fountain 1.1</strong> 格式兼容</div>
             <div className="nl-stat"><strong>20</strong> 节点知识图谱</div>
             <div className="nl-stat"><strong>384K</strong> 输出令牌</div>
@@ -96,23 +98,31 @@ export function Landing() {
       {/* ═══════════ Pipeline ═══════════ */}
       <section className="nl-section">
         <h2 className="nl-section-title">智能转换流水线</h2>
-        <p className="nl-section-sub">从原始文本到完整剧本，七阶段确定性处理</p>
+        <p className="nl-section-sub">从原始文本到完整剧本，八阶段确定性处理</p>
 
         <div className="nl-pipeline-row">
           <PipelineStage step={1} label="智能分章" icon={<BookOutlined />} />
           <span className="nl-pipeline-arrow">→</span>
-          <PipelineStage step={2} label="章节总结" icon={<FileTextOutlined />} />
+          <PipelineStage step={2} label="章节摘要" icon={<FileTextOutlined />} />
           <span className="nl-pipeline-arrow">→</span>
-          <PipelineStage step={3} label="RAG 索引" icon={<NodeIndexOutlined />} />
+          <PipelineStage step={3} label="向量索引" icon={<NodeIndexOutlined />} />
           <span className="nl-pipeline-arrow">→</span>
           <PipelineStage step={4} label="知识图谱" icon={<ThunderboltOutlined />} />
-          <span className="nl-pipeline-arrow">→</span>
+        </div>
+        <div className="nl-pipeline-row" style={{ marginTop: 0 }}>
           <PipelineStage step={5} label="剧本转换" icon={<CodeOutlined />} />
           <span className="nl-pipeline-arrow">→</span>
-          <PipelineStage step={6} label="一致性优化" icon={<SafetyCertificateOutlined />} />
+          <PipelineStage step={6} label="后处理" icon={<SafetyCertificateOutlined />} />
           <span className="nl-pipeline-arrow">→</span>
-          <PipelineStage step={7} label="多格式导出" icon={<ExportOutlined />} />
+          <PipelineStage step={7} label="一致性优化" icon={<ExportOutlined />} />
+          <span className="nl-pipeline-arrow">→</span>
+          <PipelineStage step={8} label="叙事梗概" icon={<FileTextOutlined />} />
         </div>
+
+        <p className="nl-pipeline-note">
+          第 6 阶段为完全确定性处理（无 LLM），包含 ID 分配、场标标准化、元素类型修正、微场景合并等规则化清理。
+          所有 LLM 阶段均支持指数退避重试与阶段级故障容忍。
+        </p>
       </section>
 
       {/* ═══════════ Features ═══════════ */}
