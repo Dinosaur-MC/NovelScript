@@ -45,7 +45,7 @@ from cli.chunker import split_chapters
 from cli.converter import convert_chapter
 from cli.exporter import to_yaml
 from cli.graphrag_builder import extract_graph, extract_graph_incremental
-from cli.llm_router import get_llm, get_llm_semaphore, invoke_llm_with_retry
+from cli.llm_router import get_llm, get_llm_semaphore, invoke_llm_with_retry, reset_token_usage, get_token_usage
 from cli.models import Chapter, KnowledgeGraph, Scene, Script
 from cli.optimizer import optimize
 from cli.rag_builder import build_index, search
@@ -212,6 +212,7 @@ async def run_from_chapters(
     multiple pipeline runs.
     """
     started = time.monotonic()
+    reset_token_usage()
     cb = progress_callback
     total_chars = sum(len(c.text) for c in chapters)
     logger.info("Loaded %d chapter(s) (%d chars).", len(chapters), total_chars)
@@ -335,7 +336,13 @@ async def run_from_chapters(
     # ------------------------------------------------------------------
     logger.info("=== Stage 7: Assembly ===")
 
-    # Store chapter summaries in meta for potential reuse
+    # Build narrative summary FIRST — it makes an LLM call that should be
+    # included in the token usage report.
+    narrative = _narrative_summary(summaries, kg)
+
+    # Capture token usage after ALL LLM calls have completed
+    usage = get_token_usage()
+
     meta = {
         "source_file": source_name or "<text>",
         "source_chars": total_chars,
@@ -343,6 +350,11 @@ async def run_from_chapters(
         "scene_count": len(optimized_scenes),
         "pipeline_version": "0.2.0",
         "chapter_summaries": summaries,
+        "usage": usage,
+        "usage_summary": (
+            f"总调用 {sum(v.get('calls', 0) for k, v in usage.items() if k != 'total_cost_yuan')} 次, "
+            f"总费用 ¥{usage.get('total_cost_yuan', 0):.4f}"
+        ),
     }
 
     from cli.models import Character as ScriptCharacter
@@ -360,7 +372,7 @@ async def run_from_chapters(
 
     script = Script(
         meta=meta,
-        summary=_narrative_summary(summaries, kg),
+        summary=narrative,
         characters=characters,
         scenes=optimized_scenes,
         knowledge_graph=kg,

@@ -1,4 +1,4 @@
-"""LLM router — model-to-task mapping, client factory, and retry logic.
+"""LLM router — model-to-task mapping, client factory, retry logic, and usage tracking.
 
 All LLM invocations are wrapped in ``invoke_with_retry()`` which provides
 exponential backoff with jitter for transient failures (connection errors,
@@ -13,6 +13,11 @@ model name and can be overridden via environment variables::
 
     LLM_CONTEXT_WINDOW=128000      # manual override (tokens)
     LLM_MAX_OUTPUT_TOKENS=8192     # manual override (tokens)
+
+Token usage is tracked per-model via a LangChain callback attached to
+every ``ChatOpenAI`` instance created by ``get_llm()``.  Callers can
+inspect accumulated usage with ``get_token_usage()`` and reset counters
+between runs with ``reset_token_usage()``.
 """
 
 from __future__ import annotations
@@ -20,11 +25,15 @@ from __future__ import annotations
 import logging
 import os
 import random
+import threading
 import time
+from dataclasses import dataclass, field
 from typing import Any
 import asyncio
 
 import httpx
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 from langchain_core.runnables import RunnableSerializable
 from langchain_openai import ChatOpenAI
 from openai import (
@@ -140,6 +149,217 @@ def get_llm_semaphore() -> asyncio.Semaphore:
 
 
 # ---------------------------------------------------------------------------
+# Token usage tracking — per-model accumulated counters + LangChain callback
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _UsageAccumulator:
+    """Thread-safe per-model token counter."""
+
+    model_name: str = ""
+    prompt_tokens: int = 0
+    prompt_cache_hit: int = 0
+    prompt_cache_miss: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    call_count: int = 0
+
+
+class _UsageTracker(BaseCallbackHandler):
+    """LangChain callback that intercepts ``on_llm_end`` to capture token usage.
+
+    Because multiple LLM calls can run concurrently (via ``asyncio.to_thread``),
+    ``on_llm_end`` can fire from different OS threads.  We guard the shared
+    accumulator dict with a ``threading.Lock``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self._acc: dict[str, _UsageAccumulator] = {}  # model_name → accumulator
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        model = self._extract_model(response)
+        tokens = self._extract_tokens(response)
+        logger.debug("UsageTracker.on_llm_end: model=%s tokens=%s", model, tokens)
+        if model is None:
+            return
+        if tokens is None:
+            return
+        with self._lock:
+            if model not in self._acc:
+                self._acc[model] = _UsageAccumulator(model_name=model)
+            acc = self._acc[model]
+            acc.prompt_tokens += tokens.get("prompt_tokens", 0)
+            acc.prompt_cache_hit += tokens.get("prompt_cache_hit_tokens", 0)
+            acc.prompt_cache_miss += tokens.get("prompt_cache_miss_tokens", 0)
+            acc.completion_tokens += tokens.get("completion_tokens", 0)
+            acc.reasoning_tokens += tokens.get("reasoning_tokens", 0)
+            acc.call_count += 1
+
+    def get_accumulators(self) -> list[_UsageAccumulator]:
+        with self._lock:
+            return list(self._acc.values())
+
+    def reset(self) -> None:
+        with self._lock:
+            self._acc.clear()
+
+    @staticmethod
+    def _extract_model(response: LLMResult) -> str | None:
+        # response.llm_output is set by ChatOpenAI and contains model name
+        llm_out = response.llm_output or {}
+        model = llm_out.get("model_name")
+        return model or None
+
+    @staticmethod
+    def _extract_tokens(response: LLMResult) -> dict[str, int] | None:
+        """Extract token usage from the LLM response.
+
+        ChatOpenAI stores the raw OpenAI response in
+        ``LLMResult.llm_output["token_usage"]`` which mirrors the
+        ``usage`` field documented at:
+        https://api-docs.deepseek.com/zh-cn/api/create-chat-completion
+
+        The dict contains:
+          prompt_tokens, completion_tokens, total_tokens,
+          prompt_cache_hit_tokens, prompt_cache_miss_tokens,
+          completion_tokens_details: {reasoning_tokens}
+        """
+        llm_out = response.llm_output or {}
+        usage = llm_out.get("token_usage", {})
+        if not usage:
+            # Fallback: try generations[0].message.usage_metadata
+            try:
+                gen_list = response.generations
+                if gen_list and gen_list[0]:
+                    msg = getattr(gen_list[0][0], "message", None)
+                    if msg and msg.usage_metadata:
+                        return {
+                            "prompt_tokens": msg.usage_metadata.get("input_tokens", 0),
+                            "completion_tokens": msg.usage_metadata.get("output_tokens", 0),
+                            "total_tokens": msg.usage_metadata.get("total_tokens", 0),
+                        }
+            except (IndexError, AttributeError, TypeError):
+                pass
+            return None
+
+        details = usage.get("completion_tokens_details", {}) or {}
+        return {
+            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "total_tokens": int(usage.get("total_tokens", 0)),
+            "prompt_cache_hit_tokens": int(usage.get("prompt_cache_hit_tokens", 0)),
+            "prompt_cache_miss_tokens": int(usage.get("prompt_cache_miss_tokens", 0)),
+            "reasoning_tokens": int(details.get("reasoning_tokens", 0)),
+        }
+
+
+# Module-level singleton tracker (attached to every ChatOpenAI via get_llm)
+_usage_tracker = _UsageTracker()
+
+
+def get_usage_tracker() -> _UsageTracker:
+    """Return the global module-level :class:`_UsageTracker`."""
+    return _usage_tracker
+
+
+# ---------------------------------------------------------------------------
+# Per-model pricing (DeepSeek, ¥ per million tokens)
+# https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+# ---------------------------------------------------------------------------
+
+_PRICING: dict[str, dict[str, float]] = {
+    "deepseek-v4-pro": {
+        "input_cache_hit":  0.025,   # ¥ / 1M tokens
+        "input_cache_miss": 3.0,
+        "output":           6.0,
+    },
+    "deepseek-v4-flash": {
+        "input_cache_hit":  0.02,
+        "input_cache_miss": 1.0,
+        "output":           2.0,
+    },
+}
+
+# Fallback pricing for unknown models (conservative: treat as Pro)
+_DEFAULT_PRICING = _PRICING["deepseek-v4-pro"]
+
+
+def compute_cost(
+    model_name: str,
+    prompt_cache_hit: int = 0,
+    prompt_cache_miss: int = 0,
+    completion_tokens: int = 0,
+) -> float:
+    """Compute the estimated cost in **元 (CNY)** for an LLM call.
+
+    Args:
+        model_name:         e.g. ``"deepseek-v4-flash"``.
+        prompt_cache_hit:   Tokens that hit the context cache (discounted).
+        prompt_cache_miss:  Tokens that did not hit the cache.
+        completion_tokens:  Output tokens generated.
+
+    Returns:
+        Cost in 元 (CNY), never negative.
+    """
+    pricing = _PRICING.get(model_name, _DEFAULT_PRICING)
+    cost = 0.0
+    cost += prompt_cache_hit * pricing["input_cache_hit"] / 1_000_000
+    cost += prompt_cache_miss * pricing["input_cache_miss"] / 1_000_000
+    cost += completion_tokens * pricing["output"] / 1_000_000
+    return cost
+
+
+def reset_token_usage() -> None:
+    """Clear accumulated token counters (call before starting a new pipeline run)."""
+    _usage_tracker.reset()
+
+
+def get_token_usage() -> dict[str, dict]:
+    """Return accumulated per-model token usage with computed costs.
+
+    Returns a dict suitable for ``meta.usage`` in the output Script,
+    plus a human-readable ``meta.usage_summary`` string::
+
+        {
+          "deepseek-v4-pro": {
+            "calls": 4,
+            "prompt_tokens": 120000,
+            "prompt_cache_hit": 0,
+            "prompt_cache_miss": 120000,
+            "completion_tokens": 8000,
+            "reasoning_tokens": 0,
+            "cost_yuan": 0.408
+          },
+          "deepseek-v4-flash": {...},
+          "total_cost_yuan": 1.234
+        }
+    """
+    result: dict[str, dict] = {}
+    total_cost = 0.0
+    for acc in _usage_tracker.get_accumulators():
+        cost = compute_cost(
+            acc.model_name,
+            prompt_cache_hit=acc.prompt_cache_hit,
+            prompt_cache_miss=acc.prompt_cache_miss,
+            completion_tokens=acc.completion_tokens,
+        )
+        total_cost += cost
+        result[acc.model_name] = {
+            "calls": acc.call_count,
+            "prompt_tokens": acc.prompt_tokens,
+            "prompt_cache_hit": acc.prompt_cache_hit,
+            "prompt_cache_miss": acc.prompt_cache_miss,
+            "completion_tokens": acc.completion_tokens,
+            "reasoning_tokens": acc.reasoning_tokens,
+            "cost_yuan": round(cost, 6),
+        }
+    result["total_cost_yuan"] = round(total_cost, 6)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
 
@@ -243,7 +463,9 @@ def invoke_with_retry(
     Raises:
         The last exception if all retries are exhausted.
     """
-    return _invoke_with_retry(lambda: chain.invoke(inputs), stage)
+    return _invoke_with_retry(
+        lambda: chain.invoke(inputs, {"callbacks": [_usage_tracker]}), stage
+    )
 
 
 def invoke_llm_with_retry(llm: ChatOpenAI, prompt: Any, stage: str) -> Any:
@@ -260,7 +482,7 @@ def invoke_llm_with_retry(llm: ChatOpenAI, prompt: Any, stage: str) -> Any:
         The ``AIMessage`` returned by the LLM.
     """
     def _call():
-        return llm.invoke(prompt)
+        return llm.invoke(prompt, {"callbacks": [_usage_tracker]})
     return _invoke_with_retry(_call, stage)
 
 
