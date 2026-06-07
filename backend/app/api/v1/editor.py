@@ -277,6 +277,7 @@ def chat(
     script = script_crud.get(db, sid)
     if script is None:
         raise HTTPException(status_code=404, detail=f"Script {script_id!r} not found")
+    require_ownership(script, current_user, resource_name="剧本", action="编辑")
 
     messages = _build_chat_messages(script, body.message, scene_id=body.scene_id)
 

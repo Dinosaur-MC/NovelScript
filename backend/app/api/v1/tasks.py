@@ -115,6 +115,7 @@ def create_task(
     novel = novel_crud.get(db, novel_id)
     if novel is None:
         raise HTTPException(status_code=404, detail=f"Novel {novel_id} not found")
+    require_ownership(novel, current_user, resource_name="小说", action="转换")
 
     # Merge style_direction into pipeline_config for DB persistence
     pipeline_config = dict(body.pipeline_config or {})

@@ -377,6 +377,7 @@ def fork_script(
     src = script_crud.get(db, sid)
     if src is None:
         raise HTTPException(status_code=404, detail="Source script not found")
+    require_ownership(src, current_user, resource_name="剧本", action="复制")
 
     fork = Script(
         user_id=current_user.id,

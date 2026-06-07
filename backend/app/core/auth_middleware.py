@@ -93,7 +93,12 @@ def require_ownership(
 
     Resources with ``user_id is None`` (legacy / pre-auth data) are
     treated as unowned and pass the check for all authenticated users.
+
+    Administrators (``role='admin'``) always pass — they can operate on
+    any user's resources.
     """
+    if current_user.role == "admin":
+        return
     if resource.user_id and resource.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
