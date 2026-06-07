@@ -6,6 +6,7 @@ Dependencies: passlib[argon2], pyjwt
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -60,6 +61,7 @@ def create_access_token(
         "sub": user_id,
         "exp": expire,
         "iat": datetime.now(timezone.utc),
+        "jti": uuid.uuid4().hex,
     }
     return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
 
