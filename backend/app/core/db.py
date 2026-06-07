@@ -184,22 +184,54 @@ def _split_statements(sql: str):
 
 
 def _seed_admin() -> None:
-    """Create the initial admin account if it doesn't already exist.
+    """Create or promote the initial admin account.
 
     Credentials are read from :class:`Settings` (env vars / .env).
-    The account is only inserted when the ``users`` table is empty or
-    no row with ``role='admin'`` exists.
+
+    Strategy (in order):
+    1. If a user with ``role='admin'`` AND the configured username already
+       exists → skip (already seeded).
+    2. If a user with the configured username exists but is NOT admin →
+       promote it to admin (the user was created via normal registration
+       but is meant to be the administrator).
+    3. Otherwise, create a fresh admin row.
     """
+    from sqlalchemy import update
     from app.core.security import hash_password
     from app.models.sql import User
 
     with _session_factory() as session:
-        existing = session.query(User).filter(User.role == "admin").first()
+        # Check whether an admin with this username already exists
+        existing = session.query(User).filter(
+            User.username == settings.ADMIN_USERNAME,
+            User.role == "admin",
+        ).first()
         if existing is not None:
-            logger.debug("Admin account already exists — skipping seed.")
+            logger.debug("Admin account %s already exists — skipping seed.", settings.ADMIN_USERNAME)
             session.close()
             return
 
+        # Check whether a non-admin user with this username exists
+        regular = session.query(User).filter(
+            User.username == settings.ADMIN_USERNAME,
+        ).first()
+        if regular is not None:
+            # Promote to admin
+            session.execute(
+                update(User)
+                .where(User.id == regular.id)
+                .values(role="admin", email=settings.ADMIN_EMAIL)
+            )
+            session.commit()
+            logger.info(
+                "Promoted existing user %s to admin (email: %s).",
+                settings.ADMIN_USERNAME,
+                settings.ADMIN_EMAIL,
+            )
+            session.close()
+            return
+
+        # Fresh insert
         admin = User(
             email=settings.ADMIN_EMAIL,
             username=settings.ADMIN_USERNAME,
