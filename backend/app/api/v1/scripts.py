@@ -233,8 +233,14 @@ def get_script(script_id: str, db: Session = Depends(get_db)):
         select(KnowledgeEdge).where(KnowledgeEdge.script_id == sid)
     ).scalars().all()
 
+    # Look up the task that produced this script (for SSE progress linkage)
+    assoc_task = db.execute(
+        select(Task).where(Task.script_id == sid).limit(1)
+    ).scalar()
+
     return BaseResponse(code=200, message="ok", data={
         "script_id": str(script.id),
+        "task_id": str(assoc_task.id) if assoc_task else None,
         "novel_id": str(script.novel_id) if script.novel_id else None,
         "user_id": str(script.user_id) if script.user_id else None,
         "title": script.title,

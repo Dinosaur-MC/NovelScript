@@ -132,21 +132,7 @@ def create_task(
     )
     task = task_crud.create(db, task)
 
-    # Create a placeholder Script that will be filled by the pipeline
-    script = Script(
-        novel_id=novel_id,
-        user_id=current_user.id,
-        title=novel.title or "New Script",
-        source_type="generated",
-        status="draft",
-    )
-    db.add(script)
-    db.flush()
-    task.script_id = script.id
-    db.add(task)
-    db.flush()
-
-    logger.info("Task %s created for novel %s, script %s", task.id, novel_id, script.id)
+    logger.info("Task %s created for novel %s", task.id, novel_id)
 
     # ── commit BEFORE dispatching Celery task ─────────────────────────
     # The Celery worker opens its own independent DB session.

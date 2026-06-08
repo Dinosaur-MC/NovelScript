@@ -166,8 +166,7 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovel(pasteText.trim(), uploadTitle || undefined);
-            await createTask(upRes.novel_id);
-            message.success("上传成功，转换任务已创建");
+            message.success(upRes.task_id ? "上传成功，转换任务已创建" : "上传成功");
             setUploadOpen(false);
             setPasteText("");
             setUploadTitle("");
@@ -183,8 +182,7 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovelFile(file, uploadTitle || undefined);
-            await createTask(upRes.novel_id);
-            message.success("上传成功，转换任务已创建");
+            message.success(upRes.task_id ? "上传成功，转换任务已创建" : "上传成功");
             setUploadOpen(false);
             setUploadTitle("");
             load();
@@ -208,23 +206,9 @@ export function HomePage() {
 
     const handleNewConversion = async (novelId: string) => {
         try {
-            const res = await createTask(novelId);
+            await createTask(novelId);
             message.success("转换任务已创建");
-            setScripts((prev) => [
-                ...prev,
-                {
-                    script_id: res.task_id,
-                    novel_id: novelId,
-                    title: "新剧本",
-                    source_type: "generated",
-                    status: "pending",
-                    progress: 0,
-                    summary: null,
-                    scene_count: 0,
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                },
-            ]);
+            load(); // Refresh list — Script will appear when pipeline completes
         } catch {
             message.error("创建任务失败");
         }

@@ -25,6 +25,7 @@ export interface UploadResult {
   novel_id: string;
   title: string;
   chapters: { index: number; title: string }[];
+  task_id?: string;
 }
 
 export function listNovels(page = 1, limit = 20) {

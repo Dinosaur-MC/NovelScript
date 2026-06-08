@@ -69,15 +69,22 @@ export default function Workspace() {
         loadScript(scriptData);
         const novelId = scriptData.novel_id;
 
-        // Track task progress if this script has an associated task
-        // Legacy: try fetching the task that generated this script
-        try {
-          const taskData = await getTask(scriptId!);
-          if (!cancelled) {
-            setTask(taskData.id, taskData.novel_id, scriptId!, taskData.status as never, taskData.progress);
+        // Track task progress using task_id from Script response
+        // (v3: Script and Task are separate entities — link via scriptData.task_id)
+        if (scriptData.task_id) {
+          try {
+            const taskData = await getTask(scriptData.task_id);
+            if (!cancelled) {
+              setTask(taskData.id, taskData.novel_id, scriptId!, taskData.status as never, taskData.progress);
+            }
+          } catch {
+            // Task ref exists but can't be loaded — mark as completed
+            if (!cancelled) {
+              setTask("", novelId ?? "", scriptId!, "completed", 100);
+            }
           }
-        } catch {
-          // No task found — script may be standalone
+        } else {
+          // No associated task — standalone or forked script
           if (!cancelled) {
             setTask("", novelId ?? "", scriptId!, "completed", 100);
           }

@@ -15,6 +15,7 @@ export interface ScriptLight {
 
 export interface ScriptFull {
   script_id: string;
+  task_id: string | null;
   novel_id: string | null;
   user_id: string | null;
   title: string;
