@@ -149,6 +149,7 @@ def create_task(
         args=(str(task.id), str(novel_id)),
         kwargs=celery_kwargs,
         task_id=str(task.id),  # so AsyncResult(task_id) works
+        expires=7200,          # drop from queue after 2h if not picked up
     )
 
     return BaseResponse(
@@ -404,7 +405,16 @@ async def stream_progress(task_id: str, db: Session = Depends(get_db)):
                         "data": json.dumps({"progress": p, "stage": s}, ensure_ascii=False),
                     }
             elif state == "SUCCESS":
-                yield {"event": "complete", "data": json.dumps({"progress": 100}, ensure_ascii=False)}
+                # Fetch script_id from DB (set by pipeline on completion)
+                data: dict = {"progress": 100}
+                try:
+                    db.expire_all()
+                    fresh = db.get(Task, tid)
+                    if fresh and fresh.script_id:
+                        data["script_id"] = str(fresh.script_id)
+                except Exception:
+                    pass
+                yield {"event": "complete", "data": json.dumps(data, ensure_ascii=False)}
                 return
             elif state == "FAILURE":
                 err_msg = str(info) if info else "Pipeline failed"
@@ -595,6 +605,7 @@ def resume_task(
         args=(str(task.id), str(task.novel_id)),
         kwargs=celery_kwargs,
         task_id=str(task.id),
+        expires=7200,
     )
 
     return BaseResponse(

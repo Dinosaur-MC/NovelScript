@@ -185,10 +185,14 @@ def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
     logger.info("SQLModel tables created (if not exists).")
 
-    # -- 6. Recover stale tasks + v3 migration + seed admin --------------- #
-    from app.services.pipeline_executor import recover_stale_tasks
-
-    recover_stale_tasks()
+    # -- 6. v3 migration + seed admin ------------------------------------- #
+    # NOTE: recover_stale_tasks() is intentionally NOT called here.
+    # During uvicorn --reload, init_db() runs on every file change, which would
+    # mark in-progress tasks (preprocessing/converting) as "failed" — killing
+    # the very pipeline the Celery worker is actively executing.  The worker
+    # is a sibling process that survives reload; its tasks should not be
+    # interrupted.  Call recover_stale_tasks() manually if needed, or via a
+    # dedicated admin endpoint.
     _migrate_v3()
     _seed_admin()
 

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # -- LLM / AI -------------------------------------------------------------
     DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_FAST_MODE: bool = False
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_EMBEDDING_MODEL: str = "nvidia/llama-nemotron-embed-vl-1b-v2:free"

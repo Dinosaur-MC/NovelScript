@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
-import { message, Tag } from "antd";
+import { message, Tag, Button } from "antd";
+import { SyncOutlined, HomeOutlined } from "@ant-design/icons";
 
-import { getTask } from "../api/tasks";
 import { getNovel, getNovelKnowledgeGraph } from "../api/novels";
 import { getScript } from "../api/scripts";
+import { getTask } from "../api/tasks";
 import { ApiError } from "../api/types";
 import { useTaskStore } from "../stores/task-store";
 import { useNovelStore } from "../stores/novel-store";
@@ -38,6 +39,7 @@ export default function Workspace() {
   const setNovel = useNovelStore((s) => s.setNovel);
   const setChapters = useNovelStore((s) => s.setChapters);
   const loadScript = useScriptStore((s) => s.loadScript);
+  const scriptLoaded = useScriptStore((s) => s.scriptId) !== null;
   const setKnowledgeGraph = useScriptStore((s) => s.setKnowledgeGraph);
   const leftW = useUIStore((s) => s.leftWidth);
   const centerW = useUIStore((s) => s.centerWidth);
@@ -52,45 +54,67 @@ export default function Workspace() {
   const editorHook = useScriptEditor();
   const traceHook = useTraceLinking(readerHook, editorHook);
 
-  // Progress polling (SSE)
-  useSSE();
+  // On pipeline complete, navigate to the newly created Script
+  const onTaskComplete = useCallback((scriptId?: string) => {
+    if (scriptId) {
+      navigate(`/workspace/${scriptId}`, { replace: true });
+    }
+  }, [navigate]);
 
-  // Async data load — Phase 1: Script, Phase 2: Novel, Phase 3: Task (legacy)
+  // Progress polling (SSE) — activates when task-store has a running task
+  useSSE(onTaskComplete);
+
+  // Async data load — Phase 1: Script or Task, Phase 2: Novel + KG
   useEffect(() => {
     if (!scriptId) return;
     let cancelled = false;
 
     async function load() {
       try {
-        // Phase 1: Fetch Script (primary v3 entity)
-        const scriptData = await getScript(scriptId!);
-        if (cancelled) return;
+        const workId = scriptId!;
+        let novelId: string | null = null;
 
-        loadScript(scriptData);
-        const novelId = scriptData.novel_id;
+        // ── Phase 1: Resolve route param as Script or Task ────────────
+        try {
+          // Try as Script first (pipeline completed → Script exists)
+          const scriptData = await getScript(workId);
+          if (cancelled) return;
 
-        // Track task progress using task_id from Script response
-        // (v3: Script and Task are separate entities — link via scriptData.task_id)
-        if (scriptData.task_id) {
+          loadScript(scriptData);
+          novelId = scriptData.novel_id;
+          setTask("", novelId ?? "", workId, "completed", 100);
+        } catch {
+          // Not a Script — try as Task (in-progress conversion)
           try {
-            const taskData = await getTask(scriptData.task_id);
-            if (!cancelled) {
-              setTask(taskData.id, taskData.novel_id, scriptId!, taskData.status as never, taskData.progress);
+            const taskData = await getTask(workId);
+            if (cancelled) return;
+
+            novelId = taskData.novel_id;
+
+            // If task is already completed, redirect to its Script
+            if (taskData.status === "completed" && taskData.script_id) {
+              if (!cancelled) {
+                navigate(`/workspace/${taskData.script_id}`, { replace: true });
+              }
+              return;
             }
-          } catch {
-            // Task ref exists but can't be loaded — mark as completed
+
+            // Task still in progress — set up SSE tracking
+            setTask(workId, novelId, null, taskData.status as never, taskData.progress);
+          } catch (taskErr) {
+            // Neither Script nor Task exists
             if (!cancelled) {
-              setTask("", novelId ?? "", scriptId!, "completed", 100);
+              if (taskErr instanceof ApiError && taskErr.status === 404) {
+                setError("剧本或任务不存在（可能已被删除）");
+              } else {
+                setError(taskErr instanceof Error ? taskErr.message : "加载失败，请检查网络后重试");
+              }
             }
-          }
-        } else {
-          // No associated task — standalone or forked script
-          if (!cancelled) {
-            setTask("", novelId ?? "", scriptId!, "completed", 100);
+            return;
           }
         }
 
-        // Phase 2: Fetch novel data (non-critical)
+        // ── Phase 2: Fetch novel data (non-critical) ─────────────────
         if (novelId) {
           try {
             const novelData = await getNovel(novelId);
@@ -104,27 +128,17 @@ export default function Workspace() {
                 content: ch.content,
               })),
             );
-          } catch (novelErr) {
-            if (!cancelled) {
-              console.warn("Novel data unavailable:", novelErr);
-              message.warning("小说原文加载失败，部分功能不可用");
-            }
+          } catch {
+            if (!cancelled) console.warn("Novel data unavailable");
           }
 
-          // Phase 3: Fetch KG from novel endpoint
           try {
             const kgData = await getNovelKnowledgeGraph(novelId);
             if (!cancelled) setKnowledgeGraph({ nodes: kgData.nodes, edges: kgData.edges });
-          } catch (kgErr) {
-            if (!cancelled) console.warn("Knowledge graph unavailable:", kgErr);
+          } catch {
+            if (!cancelled) console.warn("Knowledge graph unavailable");
           }
         }
-      } catch (err) {
-        if (!cancelled) setError(
-          err instanceof ApiError && err.status === 404
-            ? "剧本不存在（可能已被删除）"
-            : (err as Error).message || "加载失败，请检查网络后重试"
-        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -132,7 +146,7 @@ export default function Workspace() {
 
     load();
     return () => { cancelled = true; };
-  }, [scriptId, loadScript, setTask, setNovel, setChapters, setKnowledgeGraph]);
+  }, [scriptId, loadScript, setTask, setNovel, setChapters, setKnowledgeGraph, navigate]);
 
   if (error) {
     return (
@@ -155,6 +169,17 @@ export default function Workspace() {
           <div className="ns-workspace-loading">
             <div className="ns-spinner" />
             <span className="ns-workspace-loading-text">加载中...</span>
+          </div>
+        ) : !scriptLoaded ? (
+          <div className="ns-workspace-task-progress">
+            <SyncOutlined spin style={{ fontSize: 48, color: "var(--color-accent-primary)" }} />
+            <h3>剧本转换中</h3>
+            <p className="ns-workspace-task-progress-desc">
+              正在将小说转换为剧本，请稍候…完成后将自动加载到编辑器中。
+            </p>
+            <Button type="link" icon={<HomeOutlined />} onClick={() => navigate("/")}>
+              返回首页
+            </Button>
           </div>
         ) : (
           <div className="ns-workspace-panels">

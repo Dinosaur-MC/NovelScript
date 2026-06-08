@@ -18,7 +18,7 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Script, Task, User
+from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Script, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,6 @@ class UploadRequest(BaseModel):
     content: str = Field(..., description="Full novel text")
     title: Optional[str] = Field(None, max_length=500, description="Novel title")
     author: Optional[str] = Field(None, max_length=300, description="Author name")
-    style_direction: str = Field("", description="Optional AI scriptwriting direction")
 
 
 class UpdateRequest(BaseModel):
@@ -64,17 +63,12 @@ def _create_novel_from_text(
     db: Session,
     *,
     user_id: uuid.UUID,
-    auto_convert: bool = True,
-    style_direction: str = "",
 ) -> BaseResponse:
-    """Core logic: persist a Novel and optionally start a conversion Task.
+    """Persist a Novel and return its metadata.
 
-    Chapter splitting is deferred to the background pipeline thread so the
-    upload response returns immediately (no blocking LLM call).  When
-    *auto_convert* is True (the default), a Task is created and the
-    pipeline is spawned in a background daemon thread.  The response
-    includes ``task_id`` so the frontend can immediately subscribe to SSE
-    progress events without a second API call.
+    Chapter splitting is deferred to the background pipeline (triggered
+    separately via ``POST /tasks/``).  The upload response returns
+    immediately — no blocking LLM or Task creation here.
     """
     # -- Validation -----------------------------------------------------------
     stripped = content.strip()
@@ -104,46 +98,13 @@ def _create_novel_from_text(
         status="draft",
     )
     novel_crud.create(db, novel)
+    db.commit()
 
     logger.info("Novel %s created (%d chars).", novel.id, len(stripped))
 
-    # -- Response payload (chapters empty — deferred to pipeline) --------------
-    data: dict = {
-        "novel_id": str(novel.id),
-        "title": novel.title,
-        "chapters": [],
-    }
-
-    # -- Auto-create Task & dispatch to Celery worker -------------------
-    if auto_convert:
-        task = Task(
-            novel_id=novel.id,
-            user_id=user_id,
-            status="pending",
-            progress=0,
-            pipeline_config={"style_direction": style_direction} if style_direction else {},
-        )
-        db.add(task)
-        db.flush()
-        db.commit()
-
-        data["task_id"] = str(task.id)
-        data["task_status"] = task.status
-
-        from app.tasks.pipeline import run_pipeline
-
-        run_pipeline.apply_async(
-            args=(str(task.id), str(novel.id)),
-            kwargs={"style_direction": style_direction},
-            task_id=str(task.id),
-        )
-    else:
-        db.commit()
-
     return BaseResponse(
-        code=200,
-        message="Upload successful",
-        data=data,
+        code=200, message="Upload successful",
+        data={"novel_id": str(novel.id), "title": novel.title, "chapters": []},
     )
 
 
@@ -158,10 +119,10 @@ def upload_novel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload novel text as a JSON body — split into chapters via regex."""
+    """Upload novel text."""
     return _create_novel_from_text(
         body.content, body.title, body.author, db,
-        user_id=current_user.id, style_direction=body.style_direction,
+        user_id=current_user.id,
     )
 
 
@@ -175,11 +136,10 @@ def upload_novel_file(
     file: UploadFile = File(...),
     title: str = Form("Untitled"),
     author: Optional[str] = Form(None),
-    style_direction: str = Form(""),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload novel text as a multipart file — split into chapters via regex.
+    """Upload novel text as a multipart file.
 
     Accepts UTF-8 encoded files.  Falls back to common CJK encodings
     (GBK, GB2312, GB18030) if UTF-8 decoding fails, since Chinese
@@ -202,7 +162,7 @@ def upload_novel_file(
                 status_code=400,
                 detail="Could not decode file — expected UTF-8 or GBK encoding.",
             )
-    return _create_novel_from_text(content, title, author, db, user_id=current_user.id, style_direction=style_direction)
+    return _create_novel_from_text(content, title, author, db, user_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------

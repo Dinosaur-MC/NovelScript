@@ -32,7 +32,6 @@ from app.models.sql import (
     Novel,
     Operation,
     Script,
-    Task,
     User,
 )
 from app.services.base import BaseCRUD
@@ -67,29 +66,9 @@ def _parse_id(raw: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail="Invalid UUID")
 
 
-def _script_ref(task: Task) -> Optional[str]:
-    """Return script_id as string, or None.
-    Falls back to converting task.id to its linked script if script_id is null
-    but script artifacts exist on the task (legacy compat)."""
-    if task.script_id:
-        return str(task.script_id)
-    # Legacy task with embedded script: return task.id as fallback
-    if task.script_yaml or task.script_json:
-        return str(task.id)
-    return None
-
-
 def _scene_count(script: Optional[Script]) -> int:
     if script and script.script_json and isinstance(script.script_json, dict):
         scenes = script.script_json.get("scenes", [])
-        if isinstance(scenes, list):
-            return len(scenes)
-    return 0
-
-
-def _scene_count_from_task(task: Task) -> int:
-    if task.script_json and isinstance(task.script_json, dict):
-        scenes = task.script_json.get("scenes", [])
         if isinstance(scenes, list):
             return len(scenes)
     return 0
@@ -141,28 +120,6 @@ def list_scripts(
         }
         for s in rows
     ]
-
-    # v3 backward compat: if scripts table is empty, fall back to legacy tasks
-    if total == 0:
-        fallback = db.execute(
-            select(Task).order_by(Task.updated_at.desc())
-        ).scalars().all()
-        total = len(fallback) or 0
-        items = [
-            {
-                "script_id": str(t.id),
-                "novel_id": str(t.novel_id) if t.novel_id else None,
-                "title": t.summary or "Script",
-                "source_type": "generated",
-                "status": t.status,
-                "summary": t.summary,
-                "scene_count": _scene_count_from_task(t),
-                "progress": t.progress,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-            }
-            for t in fallback[offset:offset + limit]
-        ]
     return BaseResponse(code=200, message="ok", data={
         "items": items, "total": total, "page": page, "limit": limit,
     })
@@ -233,14 +190,8 @@ def get_script(script_id: str, db: Session = Depends(get_db)):
         select(KnowledgeEdge).where(KnowledgeEdge.script_id == sid)
     ).scalars().all()
 
-    # Look up the task that produced this script (for SSE progress linkage)
-    assoc_task = db.execute(
-        select(Task).where(Task.script_id == sid).limit(1)
-    ).scalar()
-
     return BaseResponse(code=200, message="ok", data={
         "script_id": str(script.id),
-        "task_id": str(assoc_task.id) if assoc_task else None,
         "novel_id": str(script.novel_id) if script.novel_id else None,
         "user_id": str(script.user_id) if script.user_id else None,
         "title": script.title,
@@ -303,14 +254,9 @@ def update_script(
     db.add(script)
     db.flush()
 
-    # Find associated task (legacy compat: operations table requires task_id)
-    assoc_task = db.execute(
-        select(Task).where(Task.script_id == sid).limit(1)
-    ).scalar()
-
     op = Operation(
         script_id=sid,
-        task_id=assoc_task.id if assoc_task else None,
+        task_id=None,
         user_id=current_user.id,
         type="manual_edit",
         target_path="/script_yaml",

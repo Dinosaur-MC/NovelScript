@@ -11,8 +11,12 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * Prefers EventSource (`GET /api/v1/tasks/{task_id}/stream`) for
  * instant progress events. Falls back to 3-second polling if SSE
  * fails to connect or is not supported (Node.js test environments).
+ *
+ * @param onComplete - Optional callback invoked when pipeline completes,
+ *   receiving the optional script_id from the complete event so callers
+ *   (e.g. workspace) can navigate to the newly created Script.
  */
-export function useSSE() {
+export function useSSE(onComplete?: (scriptId?: string) => void) {
   const taskId = useTaskStore((s) => s.taskId);
   const status = useTaskStore((s) => s.status);
   const updateProgress = useTaskStore((s) => s.updateProgress);
@@ -22,7 +26,11 @@ export function useSSE() {
   const startedRef = useRef(false);
 
   useEffect(() => {
-    const isActive = taskId && (status === "preprocessing" || status === "converting");
+    // Activate for all non-terminal statuses — "pending" is the initial state
+    // right after task creation; "preprocessing"/"converting" are active stages.
+    // The backend SSE endpoint handles all of them correctly, sending heartbeat
+    // until the worker transitions to PROGRESS / SUCCESS.
+    const isActive = taskId && (status === "pending" || status === "preprocessing" || status === "converting");
     if (!isActive) return;
 
     // Guard: already started for this taskId+status combination
@@ -39,7 +47,12 @@ export function useSSE() {
           const data = await getTaskStatus(taskId!);
           updateProgress(data.progress, data.status as never);
           failures.count = 0;
-          if (data.status === "completed" || data.status === "failed") {
+          if (data.status === "completed") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            onComplete?.();
+          }
+          if (data.status === "failed") {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
           }
@@ -73,8 +86,10 @@ export function useSSE() {
         try {
           const data = JSON.parse(e.data);
           updateProgress(data.progress ?? 100, "completed");
+          onComplete?.(data.script_id as string | undefined);
         } catch {
           updateProgress(100, "completed");
+          onComplete?.();
         }
         es.close();
         esRef.current = null;

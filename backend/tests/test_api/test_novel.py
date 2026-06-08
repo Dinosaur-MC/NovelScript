@@ -51,8 +51,7 @@ def test_upload_creates_novel_and_chapters(client, db, auth_headers):
     assert body["code"] == 200
     data = body["data"]
     assert data["title"] == "测试小说"
-    assert "task_id" in data  # auto-create Task for conversion
-    assert data["task_status"] == "pending"
+    # Task creation is now separate (POST /tasks/) — no task_id in upload response
 
     novel_id = data["novel_id"]
     # Verify in DB

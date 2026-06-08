@@ -21,6 +21,7 @@ import { listScripts, createScript, type ScriptLight, deleteScript } from "../..
 import { createTask } from "../../api/tasks";
 import type { Novel } from "../../api/novels";
 import { useAuthStore } from "../../stores/auth-store";
+import { useTaskStore } from "../../stores/task-store";
 import { AppHeader } from "../AppHeader";
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
@@ -77,6 +78,7 @@ export function HomePage() {
     const [renameAuthor, setRenameAuthor] = useState("");
     const user = useAuthStore((s) => s.user);
     const authLoaded = useAuthStore((s) => s.loaded);
+    const setTask = useTaskStore((s) => s.setTask);
     const [searchText, setSearchText] = useState("");
     const [tab, setTab] = useState<"all" | "novels" | "scripts">("all");
     const [tagFilter, setTagFilter] = useState<string[]>([]);
@@ -166,11 +168,13 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovel(pasteText.trim(), uploadTitle || undefined);
-            message.success(upRes.task_id ? "上传成功，转换任务已创建" : "上传成功");
+            const taskRes = await createTask(upRes.novel_id);
+            message.success("上传成功，转换任务已创建");
             setUploadOpen(false);
             setPasteText("");
             setUploadTitle("");
-            load();
+            setTask(taskRes.task_id, upRes.novel_id, null, "pending");
+            navigate(`/workspace/${taskRes.task_id}`);
         } catch (err) {
             message.error(err instanceof Error ? err.message : "上传失败");
         } finally {
@@ -182,10 +186,12 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovelFile(file, uploadTitle || undefined);
-            message.success(upRes.task_id ? "上传成功，转换任务已创建" : "上传成功");
+            const taskRes = await createTask(upRes.novel_id);
+            message.success("上传成功，转换任务已创建");
             setUploadOpen(false);
             setUploadTitle("");
-            load();
+            setTask(taskRes.task_id, upRes.novel_id, null, "pending");
+            navigate(`/workspace/${taskRes.task_id}`);
         } catch (err) {
             message.error(err instanceof Error ? err.message : "上传失败");
         } finally {
@@ -206,9 +212,10 @@ export function HomePage() {
 
     const handleNewConversion = async (novelId: string) => {
         try {
-            await createTask(novelId);
+            const taskRes = await createTask(novelId);
             message.success("转换任务已创建");
-            load(); // Refresh list — Script will appear when pipeline completes
+            setTask(taskRes.task_id, novelId, null, "pending");
+            navigate(`/workspace/${taskRes.task_id}`);
         } catch {
             message.error("创建任务失败");
         }

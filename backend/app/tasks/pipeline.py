@@ -42,6 +42,7 @@ from cli.exporter import to_yaml
 from cli.fountain_exporter import to_fountain
 from cli.models import Chapter, KnowledgeEdge as CLIEdge
 from cli.models import KnowledgeGraph, KnowledgeNode as CLINode
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,13 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-@celery_app.task(bind=True, name="pipeline.run", max_retries=0)
+@celery_app.task(
+    bind=True,
+    name="pipeline.run",
+    max_retries=0,
+    soft_time_limit=7200,  # 2h before Celery kills and re-queues
+    time_limit=7800,       # 2h 10m — hard limit
+)
 def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -> dict:
     """Execute the full novel-to-script pipeline for *task_id*.
 
@@ -73,6 +80,34 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
     session = _session_factory()
 
     try:
+        # ---- validate task state ---------------------------------------------
+        # Celery may re-queue stale/duplicate tasks on restart.  Only run if
+        # the task is in a valid starting state (pending or failed → resume).
+        task = session.get(Task, tid)
+        if task is None:
+            logger.warning("Task %s not found in DB — skipping.", task_id)
+            session.close()
+            return {"status": "skipped", "reason": "task not found"}
+        if task.status not in ("pending", "failed"):
+            logger.info(
+                "Task %s has status '%s' — skipping (only pending/failed tasks can run).",
+                task_id, task.status,
+            )
+            session.close()
+            return {"status": "skipped", "reason": f"invalid status: {task.status}"}
+        # Stale task guard: if a pending task is older than 3h, it's from a
+        # previous session and should not be executed (the caller should
+        # create a fresh task instead).
+        if task.created_at:
+            age = (datetime.now(timezone.utc) - task.created_at).total_seconds()
+            if age > 10800:  # 3 hours
+                logger.info(
+                    "Task %s is %d seconds old (>3h) — skipping stale task.",
+                    task_id, int(age),
+                )
+                session.close()
+                return {"status": "skipped", "reason": f"stale task ({int(age)}s old)"}
+
         # ---- load novel -------------------------------------------------
         novel = session.get(Novel, nid)
         if novel is None:
@@ -207,22 +242,34 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         script_row.updated_at = datetime.now(timezone.utc)
         session.add(script_row)
 
-        # Cache for future runs
-        if not chapters:
-            _persist_chapters(session, nid, script.meta.get("chapter_summaries", []))
-        if not embeddings_map and faiss_index is None:
-            _persist_embeddings(session, nid, source, script)
-        if cached_kg is None:
-            _persist_kg(session, script, tid, nid, script_row.id if script_row else None)
-
+        # ── Commit main result first (Script + Task = completed) ────────
+        # This ensures the pipeline output is saved even if cache persistence
+        # fails (e.g. UniqueViolation from a concurrent pipeline run).
         session.commit()
+        logger.info(
+            "Pipeline completed for task %s: %d scenes.",
+            task_id, len(script.scenes),
+        )
+
+        # ── Cache for future runs (best-effort, independent transaction) ─
+        # If another worker already cached this data, IntegrityError is
+        # caught and logged — no effect on the completed pipeline result.
+        try:
+            if not chapters:
+                _persist_chapters(session, nid, script.meta.get("chapter_summaries", []))
+            if not embeddings_map and faiss_index is None:
+                _persist_embeddings(session, nid, source, script)
+            if cached_kg is None:
+                _persist_kg(session, script, tid, nid, script_row.id if script_row else None)
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            logger.info("Cache persistence skipped (already cached by another pipeline run).")
+
         session.close()
 
         total_cost = script.meta.get("usage", {}).get("total_cost_yuan", 0)
-        logger.info(
-            "Pipeline completed for task %s: %d scenes, cost ¥%.4f.",
-            task_id, len(script.scenes), total_cost,
-        )
+        logger.info("Pipeline cost: ¥%.4f.", total_cost)
         return {"status": "completed", "scenes": len(script.scenes)}
 
     except Exception:
