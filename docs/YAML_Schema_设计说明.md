@@ -1,7 +1,7 @@
 # NovelScript YAML Schema 设计说明
 
-- **版本**: 2.1.0
-- **状态**: 评审验收阶段
+- **版本**: 2.2.0
+- **状态**: 已实现
 - **核心基准**: Fountain 1.1 Specification, 影视工业剧本规范, 短剧叙事元数据
 - **关联文档**: [SRS 需求规格说明书](./SRS%20需求规格说明书.md) §6.1–§6.4
 
@@ -134,6 +134,7 @@ Fountain 1.1 在全球剧本行业中的实际地位，决定了 NovelScript YAM
 Script (剧本)
 ├── title_page              → Fountain 标准标题页 (Title, Author, Draft date, Contact...)
 ├── system_meta             → 系统级元数据 (model, timestamp, schema_version, document_id)
+├── meta                    → Pipeline 运行诊断 (chapter_summaries, usage, warnings…)
 ├── summary                 → 全局梗概 (纯文本)
 ├── characters[]            → 角色词典
 │   ├── id                  → 全局唯一 ID (char_01, char_02, ...)
@@ -142,13 +143,14 @@ Script (剧本)
 │   ├── description         → 性格/外貌/身份简述
 │   └── metadata            → 扩展字段
 ├── scenes[]                → 场景序列 (保持叙事顺序)
-│   ├── scene_id            → 唯一场景 ID (S001, S002, ...)
+│   ├── scene_id            → 唯一场景 ID (s_0001 格式)
 │   ├── heading             → 结构化场标对象
 │   │   ├── text            → 原始完整文本 (兜底用)
-│   │   ├── int_ext         → INT | EXT | INT/EXT | EST | null
+│   │   ├── int_ext         → INT. | EXT. | INT./EXT. | EST.
 │   │   ├── location        → 地点名称
-│   │   ├── time_of_day     → 标准枚举: DAY | NIGHT | DAWN | DUSK | LATER | CONTINUOUS
-│   │   └── is_forced       → 是否以 `.` 强制 (Fountain 1.1)
+│   │   ├── time_of_day     → 标准枚举: DAY | NIGHT | DAWN | DUSK | LATER | CONTINUOUS | SAME | UNKNOWN
+│   │   ├── is_forced       → 是否以 `.` 强制 (Fountain 1.1)
+│   │   └── narrative_mode  → FLASHBACK | DREAM | VISION | MONTAGE | null
 │   ├── source_ref          → 场景级溯源锚点
 │   ├── elements[]          → 剧本元素序列 (按时间顺序)
 │   │   ├── type            → action | dialogue_block | transition | lyric | boneyard | section | synopsis | page_break
@@ -156,8 +158,8 @@ Script (剧本)
 │   │   └── source_ref      → 元素级溯源锚点
 │   └── metadata            → 场景级扩展字段
 └── knowledge_graph         → 全局知识图谱
-    ├── nodes[]             → 实体节点
-    └── edges[]             → 关系边
+    ├── nodes[]             → {id, label, type, metadata}
+    └── edges[]             → {source, target, relation, weight}
 ```
 
 ## 5. 字段详细规格
@@ -693,7 +695,19 @@ metadata:
 
 ## 8. Pydantic V2 模型
 
-### 8.1 核心模型定义
+> **v2.2.0 更新**: §8.1 为设计参考伪代码，与 `backend/cli/models.py` 实际实现可能存在细节偏差。
+> 生产代码以 `models.py` 为准，关键差异：
+> - `KnowledgeNode.name` → `label`（保留 `name` 别名向后兼容）
+> - `KnowledgeNode.node_type` → `type`（保留 `node_type` 别名）
+> - `KnowledgeNode.properties` → `metadata`（保留 `properties` 别名）
+> - `KnowledgeEdge.source_node_id` → `source`（保留 `source_node_id` 别名）
+> - `KnowledgeEdge.target_node_id` → `target`（保留 `target_node_id` 别名）
+> - Scene 新增 `source_ref`、`metadata` 字段
+> - Character 新增 `description`、`metadata` 字段（`properties` 已移除）
+> - Script 新增 `title_page`、`system_meta`，保留 `meta`（Pipeline 诊断）
+> - `heading` 结构化对象含 `int_ext`、`narrative_mode` 子字段
+
+### 8.1 核心模型定义（设计参考）
 
 ```python
 from pydantic import BaseModel, Field, model_validator
