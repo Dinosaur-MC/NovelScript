@@ -1,29 +1,35 @@
 """Element type fixer — post-processing corrections for common LLM type errors.
 
 Corrects element misclassifications that the LLM converter commonly makes:
-1. Internal monologue marked as ``action`` → ``dialogue`` with ``(V.O.)``
-2. Spoken self-talk (喃喃自语) → ``dialogue``
-3. Embedded character name in dialogue content → split into character + parenthetical + dialogue
+1. Internal monologue marked as ``action`` → ``dialogue_block`` with ``(V.O.)``
+2. Spoken self-talk (喃喃自语) → ``dialogue_block``
+3. Embedded character name in dialogue content → extracted to character_name + parenthetical
 4. Flagging elements with null source_ref (potentially hallucinated)
+
+All fixes operate on the Schema 2.1.0 element types (ActionElement, DialogueBlock, etc.).
 """
 
 from __future__ import annotations
 
 import re
 
-from cli.models import Element
+from cli.models import (
+    ActionElement,
+    BoneyardElement,
+    DialogueBlock,
+    LyricElement,
+    ScriptElement,
+    SectionElement,
+    SynopsisElement,
+    TransitionElement,
+)
 
-# Patterns that indicate internal monologue (should be dialogue, not action)
+# Patterns that indicate internal monologue (should be dialogue_block, not action)
 _INTERNAL_MONOLOGUE_PATTERNS: list[re.Pattern] = [
-    # 李浮尘内心：xxx
     re.compile(r"^(.{1,8})内心[：:]\s*(.+)"),
-    # 李浮尘心中暗想：xxx / 李浮尘心想：xxx
     re.compile(r"^(.{1,8})(?:心中)?(?:暗想|心想|暗忖|心道|暗自\w+|暗骂)[：:]\s*(.+)"),
-    # xxx内心：xxx (无主语)
     re.compile(r"^内心[：:]\s*(.+)"),
-    # 暗想：xxx / 心道：xxx (leading with thought verb)
     re.compile(r"^(暗想|心想|暗忖|心道|暗骂|心说)[：:]\s*(.+)"),
-    # 心里（xxx）：yyy — thought with parenthetical
     re.compile(r"^(.{1,8})心里[（(].+[）)][：:]\s*(.+)"),
 ]
 
@@ -34,27 +40,28 @@ _VO_INDICATORS: list[str] = [
     "低声骂", "暗骂", "腹诽",
 ]
 
-# Patterns for spoken self-talk that should be dialogue
+# Patterns for spoken self-talk that should be dialogue_block
 _SELF_TALK_PATTERNS: list[re.Pattern] = [
     re.compile(r"^(.{1,8})(喃喃道|自言自语道|轻声说|低声道|嘀咕道|嘟囔道)[：:]\s*(.+)"),
 ]
 
 
-def fix_element_types(elements: list[Element]) -> list[Element]:
-    """Correct element type misclassifications in place.
+def fix_element_types(elements: list[ScriptElement]) -> list[ScriptElement]:
+    """Correct element type misclassifications.
 
     Fixes applied:
-    1. Internal monologue marked as ``action`` → ``dialogue`` with ``(V.O.)``
-    2. Spoken self-talk (喃喃自语) → ``dialogue``
-    3. Dialogue with embedded character name → split
+    1. Internal monologue ActionElement → DialogueBlock with (V.O.)
+    2. Spoken self-talk ActionElement → DialogueBlock
 
-    Returns the modified elements list (mutated in place).
+    Returns a new list (does not mutate in place).
     """
+    result: list[ScriptElement] = []
     for elem in elements:
-        if elem.type != "action":
+        if not isinstance(elem, ActionElement) and getattr(elem, "type", "") != "action":
+            result.append(elem)
             continue
 
-        content = elem.content.strip()
+        content = (getattr(elem, "text", None) or getattr(elem, "content", "")).strip()
 
         # Fix 1: Internal monologue patterns
         matched = False
@@ -63,29 +70,38 @@ def fix_element_types(elements: list[Element]) -> list[Element]:
             if m:
                 groups = m.groups()
                 if len(groups) >= 2 and groups[0] and groups[1]:
-                    # Has separate speaker and monologue content
                     speaker = groups[0].strip()
                     monologue = groups[1].strip()
-                    elem.type = "dialogue"
-                    elem.content = f"({speaker}, V.O.) {monologue}"
+                    result.append(DialogueBlock(
+                        character_name=speaker,
+                        dialogue=monologue,
+                        character_extension="(V.O.)" if "V.O." not in monologue else None,
+                        source_ref=elem.source_ref,
+                    ))
                 elif len(groups) >= 1:
-                    # No explicit speaker
-                    elem.type = "dialogue"
-                    elem.content = f"(V.O.) {groups[0].strip()}"
+                    result.append(DialogueBlock(
+                        character_name="",
+                        dialogue=groups[0].strip(),
+                        character_extension="(V.O.)",
+                        source_ref=elem.source_ref,
+                    ))
                 matched = True
                 break
 
         if matched:
             continue
 
-        # Fix 2: Self-talk indicators (spoken aloud, should be dialogue)
+        # Fix 2: Self-talk indicators
         for pattern in _SELF_TALK_PATTERNS:
             m = pattern.match(content)
             if m and len(m.groups()) >= 3:
                 speaker = m.group(1).strip()
                 speech = m.group(3).strip()
-                elem.type = "dialogue"
-                elem.content = f"{speaker}: {speech}"
+                result.append(DialogueBlock(
+                    character_name=speaker,
+                    dialogue=speech,
+                    source_ref=elem.source_ref,
+                ))
                 matched = True
                 break
 
@@ -95,72 +111,68 @@ def fix_element_types(elements: list[Element]) -> list[Element]:
         # Fix 3: V.O. indicators — extract quoted speech
         for indicator in _VO_INDICATORS:
             if indicator in content:
-                # Extract quoted speech if present
                 quote_match = re.search(r"['\"'「](.+?)['\"'」]", content)
                 if quote_match:
-                    elem.type = "dialogue"
-                    elem.content = f"(V.O.) {quote_match.group(1)}"
+                    result.append(DialogueBlock(
+                        character_name="",
+                        dialogue=quote_match.group(1),
+                        character_extension="(V.O.)",
+                        source_ref=elem.source_ref,
+                    ))
                     matched = True
                     break
 
-    return elements
+        if not matched:
+            result.append(elem)
+
+    return result
 
 
-def split_embedded_character(elements: list[Element]) -> list[Element]:
-    """Split elements where the speaker name is embedded in content.
+def split_embedded_character(elements: list[ScriptElement]) -> list[ScriptElement]:
+    """Split DialogueBlocks where the speaker name is embedded in dialogue content.
 
-    Detects patterns like ``二喜(大喊)：苦根！`` and splits into:
-        - type: character, content: 二喜
-        - type: parenthetical, content: 大喊
-        - type: dialogue, content: 苦根！
-
-    Also handles ``福贵(对牛)：今天有庆...`` and similar.
+    Detects patterns like ``二喜(大喊)：苦根！`` inside a DialogueBlock's dialogue
+    field and extracts the character_name + parenthetical.
     """
-    new_elements: list[Element] = []
+    new_elements: list[ScriptElement] = []
     for elem in elements:
-        if elem.type != "dialogue":
+        if not isinstance(elem, DialogueBlock) and getattr(elem, "type", "") not in ("dialogue", "dialogue_block"):
             new_elements.append(elem)
             continue
 
-        # Pattern: "Name(emotion)：content" or "Name：content"
-        # Use non-greedy name match that stops before paren or colon
+        # Only process if character_name is empty or generic
+        content = getattr(elem, "dialogue", None) or getattr(elem, "content", "")
         match = re.match(
-            r"^([^(（：:]{1,12})"          # name: non-paren/colon chars only
+            r"^([^(（：:]{1,12})"
             r"\s*"
-            r"(?:[（(]([^)）]{1,10})[)）])?\s*"
+            r"(?:[（(]([^)）]{1,10})[）)])?\s*"
             r"[：:]\s*"
             r"(.+)$",
-            elem.content,
+            content,
         )
         if match and len(match.group(1)) <= 12:
             character_name = match.group(1).strip()
             parenthetical = match.group(2)
             dialogue_text = match.group(3).strip()
 
-            # Only split if the "name" looks like a character, not a sentence start
             if _looks_like_character_name(character_name):
-                char_elem = Element(
-                    type="character",
-                    content=character_name,
-                    source_ref=elem.source_ref,
-                )
-                new_elements.append(char_elem)
-
-                if parenthetical:
-                    par_elem = Element(
-                        type="parenthetical",
-                        content=parenthetical,
-                        source_ref=elem.source_ref,
-                    )
-                    new_elements.append(par_elem)
-
-                dial_elem = Element(
-                    type="dialogue",
-                    content=dialogue_text,
-                    source_ref=elem.source_ref,
-                )
-                new_elements.append(dial_elem)
-                continue
+                if parenthetical and not parenthetical.startswith("("):
+                    parenthetical = f"({parenthetical})"
+                if isinstance(elem, DialogueBlock):
+                    elem.character_name = character_name
+                    elem.dialogue = dialogue_text
+                    if parenthetical:
+                        elem.parenthetical = parenthetical
+                else:
+                    # Backward-compat Element: replace with DialogueBlock
+                    sr = getattr(elem, "source_ref", None)
+                    new_elements.append(DialogueBlock(
+                        character_name=character_name,
+                        dialogue=dialogue_text,
+                        parenthetical=parenthetical,
+                        source_ref=sr,
+                    ))
+                    continue  # skip fallback append
 
         new_elements.append(elem)
 
@@ -169,15 +181,12 @@ def split_embedded_character(elements: list[Element]) -> list[Element]:
 
 def _looks_like_character_name(text: str) -> bool:
     """Heuristic: does this text fragment look like a character name?"""
-    # Character names are usually 2-4 Chinese characters, or known patterns
     if len(text) <= 1:
         return False
     if len(text) > 8:
         return False
-    # Contains only Chinese characters (and maybe a period/interpunct for titles)
     if not re.match(r"^[一-鿿·]+$", text):
         return False
-    # Not a common dialogue opener or grammatical particle
     common_openers = {
         "然后", "所以", "但是", "因为", "如果", "虽然", "不过",
         "于是", "接着", "忽然", "突然", "这时", "那时", "只见",
@@ -188,18 +197,34 @@ def _looks_like_character_name(text: str) -> bool:
     return True
 
 
-def flag_missing_source_refs(elements: list[Element]) -> list[dict]:
+def flag_missing_source_refs(elements: list[ScriptElement]) -> list[dict]:
     """Identify elements with null source_ref (potentially hallucinated).
 
     Returns a list of warning dicts, one per element with missing source_ref.
     """
     flagged: list[dict] = []
     for i, elem in enumerate(elements):
-        if elem.source_ref is None:
+        # Extract source_ref across all element types (handles both
+        # typed ScriptElement and backward-compat Element shim)
+        sr = getattr(elem, "source_ref", None)
+        if sr is None:
+            elem_type = getattr(elem, "type", "unknown")
+            # Get a content preview
+            if isinstance(elem, ActionElement) or elem_type == "action":
+                preview = (getattr(elem, "text", None) or getattr(elem, "content", ""))[:80]
+            elif isinstance(elem, DialogueBlock) or elem_type in ("dialogue", "dialogue_block"):
+                preview = (getattr(elem, "dialogue", None) or getattr(elem, "content", ""))[:80]
+            elif isinstance(elem, (TransitionElement, LyricElement, BoneyardElement, SectionElement, SynopsisElement)):
+                preview = getattr(elem, "text", "")[:80]
+            else:
+                preview = (getattr(elem, "text", None) or getattr(elem, "dialogue", None) or getattr(elem, "content", ""))[:80]
+
             flagged.append({
                 "index": i,
-                "type": elem.type,
-                "content_preview": elem.content[:80],
-                "severity": "warning" if elem.type == "action" else "error",
+                "type": elem_type,
+                "content_preview": preview,
+                "severity": "warning" if (isinstance(elem, ActionElement) or elem_type == "action") else "error",
             })
     return flagged
+
+

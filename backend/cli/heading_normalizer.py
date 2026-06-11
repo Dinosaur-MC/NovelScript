@@ -1,48 +1,52 @@
 """Scene heading normalizer — deterministic post-processing for slug lines.
 
-Normalises scene headings to conform to the standard screenplay format::
+Returns a structured ``Heading`` object (Schema §5.5.2) rather than a flat
+string.  Handles:
 
-    [INT./EXT.] LOCATION - TIME_OF_DAY [ (FLASHBACK|FLASHFORWARD|DREAM|MONTAGE|LATER|MOMENTS LATER)]
-
-Handles:
 - Chinese → English prefix (内景 → INT., 外景 → EXT.)
 - Chinese → English time-of-day (白天 → DAY, etc.)
+- MORNING / AFTERNOON → DAY (not in Schema TimeOfDay enum)
 - Missing INT./EXT. prefix (heuristic detection)
-- Non-standard flashback markers → (FLASHBACK)
-- Multi-location slash clean-up
+- Non-standard flashback / dream / montage markers → narrative_mode
+- ``.`` forced-heading marker → is_forced
 """
 
 from __future__ import annotations
 
 import re
 
+from cli.models import Heading, IntExt, NarrativeMode, TimeOfDay
+
 # Mapping from Chinese time-of-day to standard English
-_TIME_MAP: dict[str, str] = {
-    "白天": "DAY",
-    "日": "DAY",
-    "夜晚": "NIGHT",
-    "夜": "NIGHT",
-    "深夜": "NIGHT",
-    "傍晚": "DUSK",
-    "黄昏": "DUSK",
-    "午后": "AFTERNOON",
-    "下午": "AFTERNOON",
-    "清晨": "DAWN",
-    "早晨": "MORNING",
-    "上午": "MORNING",
-    "几天后": "LATER",
-    "数日后": "LATER",
-    "次日": "LATER",
-    "当晚": "NIGHT",
-    "黎明": "DAWN",
+_TIME_MAP: dict[str, TimeOfDay] = {
+    "白天": TimeOfDay.DAY,
+    "日": TimeOfDay.DAY,
+    "夜晚": TimeOfDay.NIGHT,
+    "夜": TimeOfDay.NIGHT,
+    "深夜": TimeOfDay.NIGHT,
+    "傍晚": TimeOfDay.DUSK,
+    "黄昏": TimeOfDay.DUSK,
+    "下午": TimeOfDay.DAY,       # Schema has no AFTERNOON → map to DAY
+    "午后": TimeOfDay.DAY,
+    "清晨": TimeOfDay.DAWN,
+    "早晨": TimeOfDay.DAWN,
+    "上午": TimeOfDay.DAY,       # Schema has no MORNING → map to DAY
+    "几天后": TimeOfDay.LATER,
+    "数日后": TimeOfDay.LATER,
+    "次日": TimeOfDay.LATER,
+    "当晚": TimeOfDay.NIGHT,
+    "黎明": TimeOfDay.DAWN,
+    "连续": TimeOfDay.CONTINUOUS,
+    "稍后": TimeOfDay.LATER,
+    "片刻后": TimeOfDay.LATER,
 }
 
 # Mapping from Chinese location prefixes to standard slug prefixes
-_LOC_PREFIX_MAP: dict[str, str] = {
-    "内景": "INT.",
-    "外景": "EXT.",
-    "内外景": "INT./EXT.",
-    "内/外景": "INT./EXT.",
+_LOC_PREFIX_MAP: dict[str, IntExt] = {
+    "内景": IntExt.INT,
+    "外景": IntExt.EXT,
+    "内外景": IntExt.INT_EXT,
+    "内/外景": IntExt.INT_EXT,
 }
 
 # Internal location indicators (heuristic — presence of any word suggests INT.)
@@ -53,128 +57,153 @@ _INTERIOR_INDICATORS: list[str] = [
     "练功房", "丹房", "药房", "藏经阁", "祠堂", "澡堂",
     "客栈", "酒楼", "茶馆", "酒馆", "妓院", "当铺",
     "山洞", "洞府", "地宫", "地下", "暗道", "密室",
+    "武学阁", "议事大厅", "餐厅",
 ]
 
-# Non-standard flashback markers to normalise
-_FLASHBACK_MARKERS: list[str] = [
-    "闪回 - ", "闪回-", "闪回：",
-    "回忆 - ", "回忆：",
-    "(闪回)", "（闪回）",
-    "闪回 ", "回忆 ",
-]
+# Special markers → NarrativeMode
+_SPECIAL_MAP: dict[str, NarrativeMode] = {
+    "FLASHBACK": NarrativeMode.FLASHBACK,
+    "闪回": NarrativeMode.FLASHBACK,
+    "回忆": NarrativeMode.FLASHBACK,
+    "倒叙": NarrativeMode.FLASHBACK,
+    "DREAM": NarrativeMode.DREAM,
+    "梦境": NarrativeMode.DREAM,
+    "梦": NarrativeMode.DREAM,
+    "VISION": NarrativeMode.VISION,
+    "MONTAGE": NarrativeMode.MONTAGE,
+    "蒙太奇": NarrativeMode.MONTAGE,
+    "FLASHFORWARD": NarrativeMode.FLASHFORWARD,
+}
 
 
-def normalize_heading(heading: str) -> str:
-    """Normalize a single scene heading to standard slug-line format.
+def normalize_heading(heading: str) -> Heading:
+    """Normalize a single scene heading to a structured Heading object.
 
     Handles:
     - Chinese → English prefix (内景 → INT., 外景 → EXT.)
     - Chinese → English time-of-day (白天 → DAY, etc.)
     - Missing INT./EXT. prefix (heuristic detection)
-    - Non-standard flashback markers → (FLASHBACK)
-    - Multi-location slash merge
+    - Non-standard flashback/dream markers → narrative_mode
+    - ``.`` forced-heading marker → is_forced
 
     Returns:
-        Normalised heading string, e.g. ``EXT. 练武场 - DAY``.
+        Structured ``Heading`` with parsed sub-fields.
     """
+    # Pass through if already a Heading object
+    if isinstance(heading, Heading):
+        return heading
+
     original = heading.strip()
 
-    # Step 1: Extract and normalise flashback / dream markers
-    flashback = False
-    dream = False
-    for marker in _FLASHBACK_MARKERS:
-        if original.startswith(marker) or marker in original:
-            flashback = True
-            original = original.replace(marker, "").strip()
-            # Also handle trailing Chinese markers
-            original = re.sub(r"\s*[（(]闪回[）)]\s*", "", original)
+    # Step 0: Detect forced heading (Fountain '.' prefix)
+    is_forced = False
+    if original.startswith("."):
+        is_forced = True
+        original = original[1:].strip()
 
-    # Check for dream marker
-    if "梦" in original and ("(" in original or "（" in original):
-        dream_m = re.search(r"[（(]梦[）)]", original)
-        if dream_m:
-            dream = True
-            original = original[:dream_m.start()] + original[dream_m.end():]
-            original = original.strip()
+    # Step 1: Extract and normalise special markers → narrative_mode
+    narrative_mode: NarrativeMode | None = None
+
+    # 1a. Check for prefix-style flashback/memory markers ("闪回 - ", "回忆 - ", etc.)
+    for marker, mode in _SPECIAL_MAP.items():
+        if len(marker) >= 2 and not marker.startswith("("):
+            if original.startswith(marker):
+                narrative_mode = mode
+                original = original[len(marker):].strip()
+                # Remove optional dash/colon separator
+                original = re.sub(r"^[-\s:：]+\s*", "", original)
+                break
+
+    # 1b. Check for markers in parentheses at end of heading
+    special_match = re.search(r"[（(]([^)）]+)[）)]$", original)
+    if special_match:
+        raw_special = special_match.group(1).strip().upper()
+        paren_mode = _SPECIAL_MAP.get(raw_special)
+        if paren_mode is None:
+            paren_mode = _SPECIAL_MAP.get(special_match.group(1).strip())
+        if paren_mode and narrative_mode is None:
+            narrative_mode = paren_mode
+        original = original[:special_match.start()].strip()
 
     # Step 2: Detect existing INT./EXT. prefix
-    prefix: str | None = None
+    int_ext: IntExt | None = None
     for cn_prefix, en_prefix in _LOC_PREFIX_MAP.items():
         if original.startswith(cn_prefix):
-            prefix = en_prefix
+            int_ext = en_prefix
             original = original[len(cn_prefix):].strip()
             # Remove leading punctuation if present
             original = re.sub(r"^[.。,，、]\s*", "", original)
             break
 
     # Handle shorthand: "内. " or "外. " (Chinese literal with dot)
-    if prefix is None:
+    if int_ext is None:
         shorthand_m = re.match(r"^(内|外|内外)\s*[.。]\s*", original)
         if shorthand_m:
-            shorthands = {"内": "INT.", "外": "EXT.", "内外": "INT./EXT."}
-            prefix = shorthands[shorthand_m.group(1)]
+            shorthands: dict[str, IntExt] = {"内": IntExt.INT, "外": IntExt.EXT, "内外": IntExt.INT_EXT}
+            int_ext = shorthands[shorthand_m.group(1)]
             original = original[shorthand_m.end():].strip()
 
     # Step 3: If no prefix, detect from location semantics
-    if prefix is None:
-        # Check for standard English prefixes already present
+    if int_ext is None:
         m = re.match(r"^(INT\.|EXT\.|INT\./EXT\.|I/E\.)\s+", original)
         if m:
-            prefix = m.group(1)
-            if prefix == "I/E.":
-                prefix = "INT./EXT."
+            prefix_str = m.group(1)
+            if prefix_str == "I/E.":
+                int_ext = IntExt.INT_EXT
+            elif prefix_str == "INT./EXT.":
+                int_ext = IntExt.INT_EXT
+            elif prefix_str.rstrip(".") == "INT":
+                int_ext = IntExt.INT
+            elif prefix_str.rstrip(".") == "EXT":
+                int_ext = IntExt.EXT
+            else:
+                int_ext = IntExt.EXT  # fallback
             original = original[m.end():].strip()
         else:
             # Heuristic: interior keywords → INT., else EXT.
             if any(indicator in original for indicator in _INTERIOR_INDICATORS):
-                prefix = "INT."
+                int_ext = IntExt.INT
             else:
-                prefix = "EXT."
+                int_ext = IntExt.EXT
 
     # Step 4: Extract and normalise time-of-day
-    time_part = "DAY"  # default
-    special = ""
+    time_of_day: TimeOfDay = TimeOfDay.DAY  # default
     location = original
 
-    # First, detect special markers already in parentheses
-    special_match = re.search(r"[（(]([^)）]+)[）)]$", original)
-    if special_match:
-        location = original[:special_match.start()].strip()
-        raw_special = special_match.group(1).strip().upper()
-        # Map known Chinese specials
-        _SPECIAL_MAP = {
-            "闪回": "FLASHBACK", "回忆": "FLASHBACK", "梦境": "DREAM", "梦": "DREAM",
-            "蒙太奇": "MONTAGE", "连续": "CONTINUOUS", "稍后": "LATER",
-            "片刻后": "MOMENTS LATER", "后来": "LATER", "倒叙": "FLASHBACK",
-        }
-        special = _SPECIAL_MAP.get(raw_special, raw_special)
-
-    # Match trailing time patterns: "LOCATION - TIME" or "LOCATION - TIME (SPECIAL)"
+    # Match trailing time patterns: "LOCATION - TIME"
     time_match = re.search(
         r"\s*[-—]\s*"
         r"([^\s(（]+)"
-        r"(?:\s*[（(]([^)）]+)[）)])?$",
+        r"(?:\s*[（(][^)）]*[）)])?$",
         location,
     )
     if time_match:
         location = location[:time_match.start()].strip()
         raw_time = time_match.group(1).strip()
-        time_part = _TIME_MAP.get(raw_time, raw_time.upper())
-        if time_match.group(2) and not special:
-            special = time_match.group(2)
+        time_of_day = _TIME_MAP.get(raw_time, TimeOfDay.UNKNOWN)
+        # Try uppercased for English input
+        if time_of_day == TimeOfDay.UNKNOWN:
+            raw_upper = raw_time.upper()
+            try:
+                time_of_day = TimeOfDay(raw_upper)
+            except ValueError:
+                time_of_day = TimeOfDay.UNKNOWN
 
-    # Step 5: Clean location (remove trailing punctuation, normalise spaces)
+    # Step 5: Clean location
     location = re.sub(r"\s*/\s*", " / ", location).strip()
     location = re.sub(r"[.。,，、]$", "", location).strip()
-    # Dedupe spaces
     location = re.sub(r"\s{2,}", " ", location)
 
-    # Step 6: Assemble
-    if flashback:
-        special = "FLASHBACK" if not special else f"FLASHBACK, {special}"
-    elif dream:
-        special = "DREAM" if not special else f"DREAM, {special}"
+    # Step 6: Assemble heading text
+    prefix_str = int_ext.value if int_ext else "EXT."
+    mode_suffix = f" ({narrative_mode.value})" if narrative_mode else ""
+    text = f"{prefix_str} {location} - {time_of_day.value}{mode_suffix}"
 
-    if special:
-        return f"{prefix} {location} - {time_part} ({special})"
-    return f"{prefix} {location} - {time_part}"
+    return Heading(
+        text=text,
+        int_ext=int_ext,
+        location=location,
+        time_of_day=time_of_day,
+        is_forced=is_forced,
+        narrative_mode=narrative_mode,
+    )

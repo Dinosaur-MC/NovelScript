@@ -41,8 +41,9 @@ def merge_tiny_scenes(
         can_merge = (
             len(scene.elements) < min_elements
             and (not same_location_only or _same_location(prev, scene))
-            and _time_compatible(prev.time_of_day, scene.time_of_day)
-            and _special_compatible(prev.heading, scene.heading)
+            and _time_compatible(_heading_tod(prev), _heading_tod(scene))
+            and _special_compatible(
+                _heading_text(prev), _heading_text(scene))
         )
 
         if can_merge:
@@ -62,10 +63,32 @@ def merge_tiny_scenes(
     return merged
 
 
+def _heading_text(s: Scene) -> str:
+    """Extract heading text from a Scene (handles both Heading objects and raw strings)."""
+    if hasattr(s.heading, "text"):
+        return s.heading.text
+    return str(s.heading)
+
+
+def _heading_location(s: Scene) -> str:
+    """Extract location from a Scene heading."""
+    if hasattr(s.heading, "location"):
+        return s.heading.location
+    return ""
+
+
+def _heading_tod(s: Scene) -> str:
+    """Extract time_of_day from a Scene heading."""
+    if hasattr(s.heading, "time_of_day"):
+        tod = s.heading.time_of_day
+        return tod.value if hasattr(tod, "value") else str(tod)
+    return ""
+
+
 def _same_location(a: Scene, b: Scene) -> bool:
     """Check if two scenes are at the same location."""
-    aloc = a.location.strip().lower()
-    bloc = b.location.strip().lower()
+    aloc = _heading_location(a).strip().lower()
+    bloc = _heading_location(b).strip().lower()
     if not aloc or not bloc:
         return False
     return aloc == bloc
@@ -78,19 +101,21 @@ def _time_compatible(t1: str, t2: str) -> bool:
     if t1u == t2u:
         return True
     compatible_pairs = {
-        ("DAY", "MORNING"), ("DAY", "AFTERNOON"),
-        ("NIGHT", "DUSK"), ("DUSK", "NIGHT"),
-        ("DAY", "DUSK"),  # transitional
-        ("MORNING", "AFTERNOON"),  # same part of day
-        ("DAWN", "MORNING"),  # early morning
+        ("DAY", "DAY"), ("NIGHT", "DUSK"), ("DUSK", "NIGHT"),
+        ("DAY", "DUSK"), ("DAY", "DAWN"), ("DAWN", "DAY"),
+        ("DAY", "MORNING"), ("MORNING", "DAY"),  # backward compat
+        ("DAY", "AFTERNOON"), ("AFTERNOON", "DAY"),  # backward compat
+        ("MORNING", "AFTERNOON"), ("DAWN", "MORNING"),
     }
     return (t1u, t2u) in compatible_pairs or (t2u, t1u) in compatible_pairs
 
 
 def _special_compatible(h1: str, h2: str) -> bool:
     """Two headings are compatible if they have the same flashback/dream status."""
-    has_fb1 = "FLASHBACK" in h1.upper()
-    has_fb2 = "FLASHBACK" in h2.upper()
-    has_dr1 = "DREAM" in h1.upper()
-    has_dr2 = "DREAM" in h2.upper()
+    s1 = str(h1).upper() if not isinstance(h1, str) else h1.upper()
+    s2 = str(h2).upper() if not isinstance(h2, str) else h2.upper()
+    has_fb1 = "FLASHBACK" in s1
+    has_fb2 = "FLASHBACK" in s2
+    has_dr1 = "DREAM" in s1
+    has_dr2 = "DREAM" in s2
     return has_fb1 == has_fb2 and has_dr1 == has_dr2
