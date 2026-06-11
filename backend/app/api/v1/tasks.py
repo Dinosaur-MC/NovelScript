@@ -258,19 +258,32 @@ def create_task(
     except Exception:
         logger.warning("Redis unavailable — pipeline input not cached. Worker will read from DB.")
 
-    # ── dispatch pipeline to Celery worker ────────────────────────────
-    from app.tasks.pipeline import run_pipeline
+    # ── dispatch pipeline ────────────────────────────────────────────
+    # Try Celery first; fall back to Redis simple queue on failure.
+    celery_dispatched = False
+    try:
+        from app.tasks.pipeline import run_pipeline
 
-    celery_kwargs: dict = {}
-    if body.style_direction:
-        celery_kwargs["style_direction"] = body.style_direction
+        celery_kwargs: dict = {}
+        if body.style_direction:
+            celery_kwargs["style_direction"] = body.style_direction
 
-    run_pipeline.apply_async(
-        args=(task_id_str, str(novel_id)),
-        kwargs=celery_kwargs,
-        task_id=task_id_str,
-        expires=7200,
-    )
+        run_pipeline.apply_async(
+            args=(task_id_str, str(novel_id)),
+            kwargs=celery_kwargs,
+            task_id=task_id_str,
+            expires=7200,
+        )
+        celery_dispatched = True
+        logger.info("Task %s dispatched via Celery.", task_id_str)
+    except Exception as exc:
+        logger.warning("Celery unavailable for task %s: %s — falling back to simple queue.", task_id_str, exc)
+
+    if not celery_dispatched:
+        from app.services.simple_queue import enqueue_pipeline
+        enqueued = enqueue_pipeline(task_id_str, str(novel_id), body.style_direction)
+        if not enqueued:
+            logger.error("Failed to enqueue task %s — no worker will process it.", task_id_str)
 
     return BaseResponse(
         code=200,
@@ -654,20 +667,32 @@ def resume_task(
         except Exception:
             logger.warning("Redis unavailable — pipeline input not cached for resume.")
 
-    # ── re-dispatch pipeline to Celery worker ─────────────────────────
-    from app.tasks.pipeline import run_pipeline
-
+    # ── re-dispatch pipeline ─────────────────────────────────────────
+    # Try Celery first; fall back to Redis simple queue on failure.
     stored_style = (task.pipeline_config or {}).get("style_direction", "")
-    celery_kwargs: dict = {}
-    if stored_style:
-        celery_kwargs["style_direction"] = stored_style
+    celery_dispatched = False
+    try:
+        from app.tasks.pipeline import run_pipeline
 
-    run_pipeline.apply_async(
-        args=(str(task.id), str(novel_id)),
-        kwargs=celery_kwargs,
-        task_id=str(task.id),
-        expires=7200,
-    )
+        celery_kwargs: dict = {}
+        if stored_style:
+            celery_kwargs["style_direction"] = stored_style
+
+        run_pipeline.apply_async(
+            args=(str(task.id), str(novel_id)),
+            kwargs=celery_kwargs,
+            task_id=str(task.id),
+            expires=7200,
+        )
+        celery_dispatched = True
+    except Exception as exc:
+        logger.warning("Celery unavailable for resume of task %s: %s — falling back to simple queue.", task.id, exc)
+
+    if not celery_dispatched:
+        from app.services.simple_queue import enqueue_pipeline
+        enqueued = enqueue_pipeline(str(task.id), str(novel_id), stored_style)
+        if not enqueued:
+            logger.error("Failed to enqueue resumed task %s.", task.id)
 
     return BaseResponse(
         code=200,

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # 后台 watcher 控制
 _pipeline_watcher_task: asyncio.Task | None = None
+_simple_queue_task: asyncio.Task | None = None
 _WATCHER_INTERVAL = 5  # seconds
 
 
@@ -107,8 +108,8 @@ async def _pipeline_result_watcher():
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Startup / shutdown hook — init DB on startup, start watcher, dispose on shutdown."""
-    global _pipeline_watcher_task
+    """Startup / shutdown hook — init DB, start watchers, dispose on shutdown."""
+    global _pipeline_watcher_task, _simple_queue_task
 
     # Startup
     from app.core.db import init_db
@@ -119,9 +120,25 @@ async def _lifespan(_app: FastAPI):
     _pipeline_watcher_task = asyncio.create_task(_pipeline_result_watcher())
     logger.info("Pipeline result watcher launched.")
 
+    # Start simple queue worker (Celery fallback — processes tasks in-process)
+    try:
+        from app.services.simple_queue import worker_loop
+        _simple_queue_task = asyncio.create_task(worker_loop())
+        logger.info("Simple queue worker launched (Celery fallback).")
+    except Exception as exc:
+        logger.warning("Failed to start simple queue worker: %s", exc)
+
     yield
 
     # Shutdown
+    if _simple_queue_task:
+        _simple_queue_task.cancel()
+        try:
+            await _simple_queue_task
+        except asyncio.CancelledError:
+            pass
+        _simple_queue_task = None
+
     if _pipeline_watcher_task:
         _pipeline_watcher_task.cancel()
         try:
