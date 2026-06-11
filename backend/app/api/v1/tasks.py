@@ -457,12 +457,12 @@ async def stream_progress(
                             logger.info("Pipeline output persisted for task %s (script=%s).", task_id, script_id)
                     elif output and output.status == "failed":
                         # Persist failure status
-                        task = db.get(Task, tid)
-                        if task:
-                            task.status = "failed"
-                            task.error_message = (output.error_message or "Pipeline failed")[:5000]
-                            task.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-                            db.add(task)
+                        failed_task = db.get(Task, tid)
+                        if failed_task:
+                            failed_task.status = "failed"
+                            failed_task.error_message = (output.error_message or "Pipeline failed")[:5000]
+                            failed_task.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+                            db.add(failed_task)
                             db.commit()
                         data["error"] = output.error_message or "Pipeline failed"
                     # Release lock on terminal state

@@ -15,9 +15,53 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from app.core.auth_middleware import get_current_user
 from app.core.db import _session_factory
+from app.core.security import create_access_token, hash_password
 from app.main import app
-from app.models.sql import Novel, Task
+from app.models.sql import Novel, Task, User
+
+# ── Test user for auth (shared across all tests in this module) ──────
+_SSE_TEST_USER_ID: uuid.UUID | None = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _mock_auth_for_sse():
+    """Create a test user and override get_current_user for SSE tests.
+
+    SSE tests use httpx directly (not TestClient), so normal dependency
+    overrides via the ``client`` fixture don't apply.  We override
+    ``get_current_user`` at the module level instead.
+    """
+    global _SSE_TEST_USER_ID
+    with _session_factory() as s:
+        user = s.query(User).filter(User.email == "sse_test@test.local").first()
+        if user is None:
+            user = User(
+                email="sse_test@test.local",
+                username="sse_tester",
+                password_hash=hash_password("test1234"),
+                display_name="SSE Tester",
+                role="admin",
+                is_active=True,
+            )
+            s.add(user)
+            s.flush()
+            s.commit()
+        _SSE_TEST_USER_ID = user.id
+
+    async def _override_get_current_user():
+        return User(
+            id=_SSE_TEST_USER_ID,
+            email="sse_test@test.local",
+            username="sse_tester",
+            role="admin",
+            is_active=True,
+        )
+
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 # ---------------------------------------------------------------------------

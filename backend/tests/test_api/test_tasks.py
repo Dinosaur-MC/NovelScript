@@ -101,7 +101,7 @@ def test_create_task(client: TestClient, test_novel_id: str, auth_headers: dict)
 
     # Also verify the lightweight status endpoint
     task_id = body["data"]["task_id"]
-    status_resp = client.get(f"/api/v1/tasks/{task_id}/status")
+    status_resp = client.get(f"/api/v1/tasks/{task_id}/status", headers=auth_headers)
     assert status_resp.status_code == 200
     assert status_resp.json()["data"]["status"] == "pending"
     assert status_resp.json()["data"]["progress"] == 0
@@ -163,7 +163,7 @@ def test_valid_status_transition(
     assert resp.json()["data"]["progress"] == 100
 
     # Verify the detail endpoint reflects the final state
-    detail = client.get(f"/api/v1/tasks/{task_id}")
+    detail = client.get(f"/api/v1/tasks/{task_id}", headers=auth_headers)
     assert detail.status_code == 200
     assert detail.json()["data"]["status"] == "completed"
     assert detail.json()["data"]["progress"] == 100
@@ -190,7 +190,7 @@ def test_invalid_skip_transition_422(
     assert resp.status_code == 422, resp.text
 
     # The task should still be pending
-    status = client.get(f"/api/v1/tasks/{task_id}/status")
+    status = client.get(f"/api/v1/tasks/{task_id}/status", headers=auth_headers)
     assert status.json()["data"]["status"] == "pending"
 
 
@@ -222,7 +222,7 @@ def test_resume_from_failed(
     assert resp.json()["data"]["status"] == "converting"
 
     # error_message must be cleared on resume
-    status = client.get(f"/api/v1/tasks/{task_id}/status")
+    status = client.get(f"/api/v1/tasks/{task_id}/status", headers=auth_headers)
     assert status.json()["data"]["error_message"] is None
 
     # Resume a non-failed task → 422

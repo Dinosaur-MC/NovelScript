@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 import fakeredis
+from sqlmodel import SQLModel
 
 from app.core.db import _engine, _session_factory, init_db
 from app.core.redis import get_redis
@@ -22,21 +23,46 @@ _TEST_USER_PASSWORD = "testrunner1234"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _mock_celery_dispatch():
-    """Prevent Celery from trying to connect to Redis during tests.
+def _mock_celery_and_redis():
+    """Prevent Celery + background watchers from connecting during tests.
 
-    All ``run_pipeline.apply_async()`` calls become no-ops.
+    Mocks:
+    1. ``run_pipeline.apply_async`` — Celery dispatch becomes no-op.
+    2. ``get_redis_client`` — background watcher uses this directly (not the
+       FastAPI ``get_redis`` dependency). Without this mock it would try to
+       connect to real Redis and hang.
+    3. ``simple_queue.worker_loop`` — its ``BRPOP`` call is a synchronous
+       blocking operation that would block the TestClient's event loop,
+       causing all tests to hang indefinitely.
     """
-    with patch("app.tasks.pipeline.run_pipeline.apply_async"):
+    with (
+        patch("app.tasks.pipeline.run_pipeline.apply_async"),
+        patch("app.core.redis.get_redis_client") as mock_get_client,
+        patch("app.services.simple_queue.worker_loop"),
+    ):
+        fake = fakeredis.FakeRedis(decode_responses=True)
+        mock_get_client.return_value = fake
         yield
 
 
 @pytest.fixture(scope="session")
 def db_engine():
-    """Initialise the database once per test session."""
+    """Initialise the database once per test session.
+
+    Uses `SQLModel.metadata.create_all()` instead of the full ``init_db()``
+    — much faster because it skips:
+    - Extension creation (assumes uuid-ossp, vector, pg_trgm exist)
+    - init.sql DDL parsing and execution
+    - v3 migration backfill
+    - Admin account seeding
+
+    Tables are only created if they don't exist (idempotent).
+    """
     global _DB_INITIALISED
     if not _DB_INITIALISED:
-        init_db()
+        # Fast idempotent table creation — no DDL parsing
+        import app.models.sql as _sql_models  # noqa: F401
+        SQLModel.metadata.create_all(_engine)
         _DB_INITIALISED = True
     yield
     # Dispose engine pool so connections don't linger after tests

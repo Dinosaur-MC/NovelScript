@@ -81,7 +81,7 @@ def test_upload_empty_400(client, auth_headers):
 # ---------------------------------------------------------------------------
 
 
-def test_list_paginated(client, db):
+def test_list_paginated(client, db, auth_headers):
     """GET / returns paginated novels with total count."""
     # Seed 5 novels
     for i in range(5):
@@ -93,20 +93,20 @@ def test_list_paginated(client, db):
     db.flush()
 
     # Page 1: limit 2
-    resp = client.get("/api/v1/novels/?page=1&limit=2")
+    resp = client.get("/api/v1/novels/?page=1&limit=2", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["total"] >= 5
     assert len(body["data"]["items"]) == 2
 
     # Page 3: should have at least 1 item
-    resp2 = client.get("/api/v1/novels/?page=3&limit=2")
+    resp2 = client.get("/api/v1/novels/?page=3&limit=2", headers=auth_headers)
     assert resp2.status_code == 200, resp2.text
     body2 = resp2.json()
     assert len(body2["data"]["items"]) >= 1
 
     # No page param → defaults to page 1
-    resp3 = client.get("/api/v1/novels/")
+    resp3 = client.get("/api/v1/novels/", headers=auth_headers)
     assert resp3.status_code == 200, resp3.text
 
 
@@ -115,7 +115,7 @@ def test_list_paginated(client, db):
 # ---------------------------------------------------------------------------
 
 
-def test_get_single_novel(client, db):
+def test_get_single_novel(client, db, auth_headers):
     """GET /{novel_id} returns novel detail with nested chapters."""
     nid = uuid.uuid4()
     novel = Novel(
@@ -138,7 +138,7 @@ def test_get_single_novel(client, db):
         db.add(ch)
     db.flush()
 
-    resp = client.get(f"/api/v1/novels/{nid}")
+    resp = client.get(f"/api/v1/novels/{nid}", headers=auth_headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["data"]["novel"]["title"] == "Detail Test Novel"

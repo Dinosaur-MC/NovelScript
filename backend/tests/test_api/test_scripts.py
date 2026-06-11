@@ -145,14 +145,14 @@ def _make_task(session, novel_id: uuid.UUID, **kwargs) -> uuid.UUID:
 # ---------------------------------------------------------------------------
 
 
-def test_list_scripts(client, db):
+def test_list_scripts(client, db, auth_headers_scripts):
     """GET /api/scripts/ — list scripts with filters and scene_count."""
     nid = _make_novel(db, title="List Test Novel")
     tid = _make_task(db, nid, script_json={"scenes": [{"id": 1}, {"id": 2}, {"id": 3}]})
     db.flush()
 
     # List all scripts (v3: Scripts table may already have entries from other tests)
-    resp = client.get("/api/v1/scripts/")
+    resp = client.get("/api/v1/scripts/", headers=auth_headers_scripts)
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 200
@@ -162,23 +162,23 @@ def test_list_scripts(client, db):
     ours = [i for i in items if i.get("scene_count") == 3]
     assert len(ours) >= 1
 
-    resp2 = client.get(f"/api/v1/scripts/?novel_id={nid}")
+    resp2 = client.get(f"/api/v1/scripts/?novel_id={nid}", headers=auth_headers_scripts)
     assert resp2.status_code == 200
     items2 = resp2.json()["data"]["items"]
     assert all(i["novel_id"] == str(nid) for i in items2)
 
-    resp3 = client.get("/api/v1/scripts/?status=completed")
+    resp3 = client.get("/api/v1/scripts/?status=completed", headers=auth_headers_scripts)
     assert resp3.status_code == 200
     items3 = resp3.json()["data"]["items"]
     assert all(i["status"] == "completed" for i in items3)
 
-    resp4 = client.get("/api/v1/scripts/?page=1&limit=1")
+    resp4 = client.get("/api/v1/scripts/?page=1&limit=1", headers=auth_headers_scripts)
     assert resp4.status_code == 200
     assert resp4.json()["data"]["limit"] == 1
     assert resp4.json()["data"]["page"] == 1
 
 
-def test_get_script(client, db):
+def test_get_script(client, db, auth_headers_scripts):
     """GET /api/scripts/{script_id} — return full script data."""
     nid = _make_novel(db, title="Get Test Novel")
     sid = _make_task(
@@ -190,7 +190,7 @@ def test_get_script(client, db):
     )
     db.flush()
 
-    resp = client.get(f"/api/v1/scripts/{sid}")
+    resp = client.get(f"/api/v1/scripts/{sid}", headers=auth_headers_scripts)
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 200
@@ -202,7 +202,7 @@ def test_get_script(client, db):
     assert data["script_fountain"] == "INT. ROOM - DAY\n\nHello world!"
     assert data["characters_json"] == {"hero": {"name": "John", "age": 30}}
 
-    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}")
+    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}", headers=auth_headers_scripts)
     assert resp404.status_code == 404
 
 
@@ -228,7 +228,7 @@ def test_put_valid_yaml(client_and_session):
     assert data["validation"]["valid"] is True
     assert data["validation"]["errors"] is None
 
-    resp_get = tc.get(f"/api/v1/scripts/{tid}")
+    resp_get = tc.get(f"/api/v1/scripts/{tid}", headers=auth_headers)
     assert resp_get.status_code == 200
     assert resp_get.json()["data"]["script_yaml"] == valid_yaml
 
@@ -257,7 +257,7 @@ def test_put_invalid_yaml_422(client, db, auth_headers_scripts):
     assert "Invalid YAML" in body.get("detail", "")
 
 
-def test_export(client, db):
+def test_export(client, db, auth_headers_scripts):
     """GET /api/scripts/{task_id}/export — raw text in yaml/json/fountain."""
     sample_yaml = "scenes:\n  - id: 1\n    heading: Export Test"
     sample_json = {"scenes": [{"id": 1, "heading": "Export Test"}]}
@@ -271,21 +271,21 @@ def test_export(client, db):
     )
     db.flush()
 
-    resp_yaml = client.get(f"/api/v1/scripts/{tid}/export?format=yaml")
+    resp_yaml = client.get(f"/api/v1/scripts/{tid}/export?format=yaml", headers=auth_headers_scripts)
     assert resp_yaml.status_code == 200
     assert resp_yaml.text == sample_yaml
 
-    resp_json = client.get(f"/api/v1/scripts/{tid}/export?format=json")
+    resp_json = client.get(f"/api/v1/scripts/{tid}/export?format=json", headers=auth_headers_scripts)
     assert resp_json.status_code == 200
     parsed = json.loads(resp_json.text)
     assert parsed == sample_json
 
-    resp_fountain = client.get(f"/api/v1/scripts/{tid}/export?format=fountain")
+    resp_fountain = client.get(f"/api/v1/scripts/{tid}/export?format=fountain", headers=auth_headers_scripts)
     assert resp_fountain.status_code == 200
     assert resp_fountain.text == sample_fountain
 
-    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}/export?format=yaml")
+    resp404 = client.get(f"/api/v1/scripts/{uuid.uuid4()}/export?format=yaml", headers=auth_headers_scripts)
     assert resp404.status_code == 404
 
-    resp_bad = client.get(f"/api/v1/scripts/{tid}/export?format=invalid")
+    resp_bad = client.get(f"/api/v1/scripts/{tid}/export?format=invalid", headers=auth_headers_scripts)
     assert resp_bad.status_code == 422
