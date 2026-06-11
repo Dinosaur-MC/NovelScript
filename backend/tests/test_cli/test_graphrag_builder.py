@@ -15,12 +15,12 @@ from cli.models import Chapter, KnowledgeEdge, KnowledgeGraph, KnowledgeNode
 
 _VALID_KG = KnowledgeGraph(
     nodes=[
-        KnowledgeNode(id="n_01", name="张三", node_type="character",
+        KnowledgeNode(id="char_01", name="张三", node_type="character",
                       properties={"traits": ["勇敢"]}),
-        KnowledgeNode(id="n_02", name="京城", node_type="location"),
+        KnowledgeNode(id="loc_01", name="京城", node_type="location"),
     ],
     edges=[
-        KnowledgeEdge(source_node_id="n_01", target_node_id="n_02",
+        KnowledgeEdge(source_node_id="char_01", target_node_id="loc_01",
                       relation="located_in", weight=0.9),
     ],
 )
@@ -42,7 +42,7 @@ class TestExtractGraph:
             mock_get.return_value = fake_llm
             kg = extract_graph([chapter])
         assert len(kg.nodes) == 2
-        assert kg.nodes[0].name == "张三"
+        assert kg.nodes[0].label == "张三"
         assert len(kg.edges) == 1
         assert kg.edges[0].relation == "located_in"
 
@@ -74,16 +74,16 @@ class TestExtractGraph:
 class TestKnowledgeGraphModel:
     def test_valid_model(self) -> None:
         kg = KnowledgeGraph(
-            nodes=[KnowledgeNode(id="n_01", name="张三", node_type="character",
+            nodes=[KnowledgeNode(id="char_01", name="张三", node_type="character",
                                  properties={"traits": ["勇敢"]})],
-            edges=[KnowledgeEdge(source_node_id="n_01", target_node_id="n_02",
+            edges=[KnowledgeEdge(source_node_id="char_01", target_node_id="char_02",
                                  relation="knows", weight=1.0)],
         )
         assert len(kg.nodes) == 1
 
     def test_missing_node_type_raises(self) -> None:
         with pytest.raises(ValidationError):
-            KnowledgeNode(id="n_01", name="张三")
+            KnowledgeNode(id="char_01", name="张三")
 
     def test_missing_node_id_raises(self) -> None:
         with pytest.raises(ValidationError):
@@ -91,10 +91,10 @@ class TestKnowledgeGraphModel:
 
     def test_weight_out_of_range_raises(self) -> None:
         with pytest.raises(ValidationError):
-            KnowledgeEdge(source_node_id="n_01", target_node_id="n_02",
+            KnowledgeEdge(source_node_id="char_01", target_node_id="char_02",
                           relation="x", weight=99.0)
 
     def test_edge_default_weight(self) -> None:
-        edge = KnowledgeEdge(source_node_id="n_01", target_node_id="n_02",
+        edge = KnowledgeEdge(source_node_id="char_01", target_node_id="char_02",
                              relation="x")
         assert edge.weight == 1.0

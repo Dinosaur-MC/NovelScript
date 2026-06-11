@@ -16,7 +16,7 @@ def _scene(sid: str, location: str, time: str, elements: list[Element],
         location=location,
         time_of_day=time,
         elements=elements,
-        characters_present=["n_01"],
+        characters_present=["char_01"],
     )
 
 
@@ -60,15 +60,15 @@ class TestMergeTinyScenes:
         s2 = _scene("s_0002", "大殿", "DAY", [_elem()],
                      heading="INT. 大殿 - DAY (LATER)")
         result = merge_tiny_scenes([s1, s2])
-        assert result[0].heading == "INT. 大殿 - DAY"  # keeps first
+        assert "INT. 大殿 - DAY" in result[0].heading.text  # keeps first
 
     def test_merge_union_characters(self) -> None:
         s1 = _scene("s_0001", "大殿", "DAY", [_elem(), _elem()])
-        s1.characters_present = ["n_01", "n_02"]
+        s1.characters_present = ["char_01", "char_02"]
         s2 = _scene("s_0002", "大殿", "DAY", [_elem()])
-        s2.characters_present = ["n_03"]
+        s2.characters_present = ["char_03"]
         result = merge_tiny_scenes([s1, s2])
-        assert set(result[0].characters_present) == {"n_01", "n_02", "n_03"}
+        assert set(result[0].characters_present) == {"char_01", "char_02", "char_03"}
 
     def test_chain_merge(self) -> None:
         """Three scenes at same location — first big, then two tiny."""

@@ -10,7 +10,7 @@ from langchain_core.runnables import RunnableLambda
 
 from cli.converter import _inject_source_refs, _summarize_kg, SceneList, convert_chapter
 from cli.models import (
-    Chapter, Element, KnowledgeEdge, KnowledgeGraph, KnowledgeNode, Scene,
+    Chapter, Element, KnowledgeEdge, KnowledgeGraph, KnowledgeNode, Scene, SourceRef,
 )
 
 
@@ -23,13 +23,13 @@ def sample_chapter() -> Chapter:
 def sample_kg() -> KnowledgeGraph:
     return KnowledgeGraph(
         nodes=[
-            KnowledgeNode(id="n_01", name="张三", node_type="character",
+            KnowledgeNode(id="char_01", name="张三", node_type="character",
                           properties={"aliases": ["三哥"], "traits": ["勇敢"]}),
-            KnowledgeNode(id="n_02", name="大殿", node_type="location",
+            KnowledgeNode(id="loc_01", name="大殿", node_type="location",
                           properties={"description": "皇宫正殿"}),
         ],
         edges=[
-            KnowledgeEdge(source_node_id="n_01", target_node_id="n_02",
+            KnowledgeEdge(source_node_id="char_01", target_node_id="loc_01",
                           relation="located_in", weight=0.9),
         ],
     )
@@ -46,7 +46,7 @@ class TestSummarizeKG:
 
     def test_characters_with_aliases(self) -> None:
         kg = KnowledgeGraph(nodes=[
-            KnowledgeNode(id="n_01", name="张三", node_type="character",
+            KnowledgeNode(id="char_01", name="张三", node_type="character",
                           properties={"aliases": ["三哥", "三爷"]}),
         ])
         assert "三哥" in _summarize_kg(kg)
@@ -58,29 +58,30 @@ class TestInjectSourceRefs:
                       elements=[Element(type="action", content="张三大步走进大殿")],
                       characters_present=[])
         scenes = _inject_source_refs([scene], sample_chapter)
-        assert scenes[0].elements[0].source_ref["confidence"] == "exact"
+        assert scenes[0].elements[0].source_ref.confidence == "exact"
 
     def test_content_not_found_gets_estimated(self, sample_chapter: Chapter) -> None:
         scene = Scene(scene_id="s_000", heading="x", location="x", time_of_day="x",
                       elements=[Element(type="dialogue", content="这句话不在原文中")],
                       characters_present=[])
         scenes = _inject_source_refs([scene], sample_chapter)
-        assert scenes[0].elements[0].source_ref["confidence"] == "estimated"
+        assert scenes[0].elements[0].source_ref.confidence == "estimated"
 
     def test_preserves_existing_source_ref(self) -> None:
         ch = Chapter(text="any", title="T", index=1)
+        existing_ref = SourceRef(chapter_id="existing", offset=[1, 2])
         scene = Scene(scene_id="s_001", heading="x", location="x", time_of_day="x",
                       elements=[Element(type="action", content="any",
-                                        source_ref={"chapter_id": "existing", "offset": [1, 2]})],
+                                        source_ref=existing_ref)],
                       characters_present=[])
         scenes = _inject_source_refs([scene], ch)
-        assert scenes[0].elements[0].source_ref == {"chapter_id": "existing", "offset": [1, 2]}
+        assert scenes[0].elements[0].source_ref is existing_ref
 
 
 _MOCK_SCENE_LIST = SceneList(scenes=[
     Scene(scene_id="s_000", heading="内. 大殿 - 日", location="大殿", time_of_day="日",
           elements=[Element(type="action", content="张三大步走进大殿")],
-          characters_present=["n_01"]),
+          characters_present=["char_01"]),
 ])
 
 _MOCK_SCENE_LIST_JSON = _MOCK_SCENE_LIST.model_dump_json()

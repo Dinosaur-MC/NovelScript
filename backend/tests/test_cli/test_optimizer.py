@@ -31,18 +31,18 @@ def sample_scenes() -> list[Scene]:
         Scene(scene_id="s_001", heading="内. 大殿 - 日", location="大殿",
               time_of_day="日",
               elements=[Element(type="action", content="张三走进大殿。")],
-              characters_present=["n_01"]),
+              characters_present=["char_01"]),
         Scene(scene_id="s_002", heading="外. 花园 - 夜", location="花园",
               time_of_day="夜",
               elements=[Element(type="action", content="李四在月下独酌。")],
-              characters_present=["n_02"]),
+              characters_present=["char_02"]),
     ]
 
 
 @pytest.fixture
 def sample_kg() -> KnowledgeGraph:
     return KnowledgeGraph(
-        nodes=[KnowledgeNode(id="n_01", name="张三", node_type="character",
+        nodes=[KnowledgeNode(id="char_01", name="张三", node_type="character",
                              properties={"traits": ["勇敢"]})],
     )
 
@@ -51,7 +51,7 @@ _MOCK_RESULT = SceneList(scenes=[
     Scene(scene_id="s_001", heading="内. 大殿 - 日", location="大殿",
           time_of_day="日",
           elements=[Element(type="action", content="张三走进大殿。")],
-          characters_present=["n_01"]),
+          characters_present=["char_01"]),
 ])
 
 _MOCK_DICT = _MOCK_RESULT.model_dump()
@@ -83,7 +83,7 @@ class TestOptimize:
             Scene(scene_id=f"s_{i:03d}", heading=f"场景 {i}", location="某地",
                   time_of_day="日",
                   elements=[Element(type="action", content=f"这是第{i}个场景的内容。" * 20)],
-                  characters_present=["n_01"])
+                  characters_present=["char_01"])
             for i in range(15)
         ]
 

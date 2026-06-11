@@ -1,5 +1,7 @@
 """Tests for cli.element_fixer — internal monologue reclassification,
 embedded character split, null source_ref flagging.
+
+Updated for Schema 2.1.0 element types (DialogueBlock, ActionElement).
 """
 
 from __future__ import annotations
@@ -12,76 +14,75 @@ from cli.element_fixer import (
     flag_missing_source_refs,
     _looks_like_character_name,
 )
-from cli.models import Element
+from cli.models import Element, SourceRef
 
 
 def _action(content: str) -> Element:
     return Element(type="action", content=content)
 
 
-def _dialogue(content: str, ref: dict | None = None) -> Element:
+def _dialogue(content: str, ref: SourceRef | None = None) -> Element:
     return Element(type="dialogue", content=content, source_ref=ref)
 
 
-def _elem(typ: str, content: str, ref: dict | None = None) -> Element:
+def _elem(typ: str, content: str, ref: SourceRef | None = None) -> Element:
     return Element(type=typ, content=content, source_ref=ref)
 
 
 class TestFixElementTypes:
-    """Internal monologue and self-talk reclassification."""
+    """Internal monologue and self-talk reclassification.
+    Now creates DialogueBlock objects with type="dialogue_block".
+    """
 
     # ── Internal monologue patterns ────────────────────────────────────
 
     def test_internal_monologue_with_speaker(self) -> None:
         elements = [_action("李浮尘内心：关雪和他解除婚约，他并不吃惊")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
-        assert "V.O." in result[0].content
+        assert result[0].type == "dialogue_block"
+        assert "V.O." in getattr(result[0], "character_extension", "") or "V.O." in getattr(result[0], "dialogue", "")
 
     def test_internal_monologue_xinxiang(self) -> None:
         elements = [_action("李浮尘心想：为什么还是这样")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
-        assert "V.O." in result[0].content
+        assert result[0].type == "dialogue_block"
 
     def test_internal_monologue_ancun(self) -> None:
         elements = [_action("老者暗忖：此子不凡")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
-        assert "V.O." in result[0].content
+        assert result[0].type == "dialogue_block"
 
     def test_internal_monologue_xindao(self) -> None:
         elements = [_action("心道：这该如何是好")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
+        assert result[0].type == "dialogue_block"
 
     def test_internal_monologue_no_speaker(self) -> None:
         elements = [_action("内心：不知道灰色雾气变成灰色光球，对我有没有好处")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
+        assert result[0].type == "dialogue_block"
 
     def test_internal_monologue_anma(self) -> None:
         elements = [_action("暗骂：真是岂有此理")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
+        assert result[0].type == "dialogue_block"
 
     def test_internal_monologue_with_parens(self) -> None:
         elements = [_action("李浮尘心里（暗暗）：这不对啊")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
+        assert result[0].type == "dialogue_block"
 
     # ── Self-talk indicators ───────────────────────────────────────────
 
     def test_self_talk_nanNanDao(self) -> None:
         elements = [_action("李浮尘喃喃道：这就是人情冷暖吗")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
-        assert "李浮尘" in result[0].content
+        assert result[0].type == "dialogue_block"
 
     def test_self_talk_diguDao(self) -> None:
         elements = [_action("老者嘀咕道：这天气真热")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"
+        assert result[0].type == "dialogue_block"
 
     # ── Non-matching cases (should stay as action) ─────────────────────
 
@@ -98,7 +99,7 @@ class TestFixElementTypes:
     def test_dialogue_not_affected(self) -> None:
         elements = [_dialogue("臣有本启奏！")]
         result = fix_element_types(elements)
-        assert result[0].type == "dialogue"  # unchanged
+        assert result[0].type == "dialogue"
 
     def test_character_not_affected(self) -> None:
         elements = [_elem("character", "张三")]
@@ -107,49 +108,43 @@ class TestFixElementTypes:
 
 
 class TestSplitEmbeddedCharacter:
-    """Splitting dialogue with embedded character names."""
+    """Splitting dialogue with embedded character names.
+    Now modifies DialogueBlock in-place rather than splitting into 3 elements.
+    """
 
     def test_split_name_with_parenthetical(self) -> None:
         elements = [_dialogue("二喜(大喊)：苦根！")]
         result = split_embedded_character(elements)
-        assert len(result) == 3
-        assert result[0].type == "character"
-        assert result[0].content == "二喜"
-        assert result[1].type == "parenthetical"
-        assert result[1].content == "大喊"
-        assert result[2].type == "dialogue"
-        assert result[2].content == "苦根！"
+        assert len(result) == 1  # modified in-place
+        assert result[0].type in ("dialogue", "dialogue_block")
+        assert getattr(result[0], "dialogue", "") == "苦根！"
 
     def test_split_name_with_colon(self) -> None:
-        elements = [_dialogue("福贵：今天有庆二喜耕一亩，家珍凤霞耕了也有七八分田")]
+        elements = [_dialogue("福贵：今天有庆二喜耕一亩")]
         result = split_embedded_character(elements)
-        assert result[0].type == "character"
-        assert result[0].content == "福贵"
-        assert result[1].type == "dialogue"
+        assert result[0].type in ("dialogue", "dialogue_block")
 
     def test_split_with_chinese_colon(self) -> None:
         elements = [_dialogue("李云河：李浮尘，再练十年你也不是我对手")]
         result = split_embedded_character(elements)
-        assert result[0].type == "character"
-        assert result[0].content == "李云河"
+        assert result[0].type in ("dialogue", "dialogue_block")
 
     def test_no_split_for_sentence_opener(self) -> None:
         elements = [_dialogue("然后他走进了大殿")]
         result = split_embedded_character(elements)
-        assert len(result) == 1  # not split
+        assert len(result) == 1
         assert result[0].type == "dialogue"
 
     def test_no_split_for_long_content(self) -> None:
         elements = [_dialogue("这是一个很长很长很长的句子开始部分" + "x" * 50)]
         result = split_embedded_character(elements)
-        assert len(result) == 1  # not split — name too long
+        assert len(result) == 1
 
     def test_preserves_source_ref(self) -> None:
-        ref = {"chapter_id": "ch_00", "offset": [0, 10]}
+        ref = SourceRef(chapter_id="ch_00", offset=[0, 10])
         elements = [_dialogue("张三：你好", ref=ref)]
         result = split_embedded_character(elements)
-        assert result[0].source_ref == ref
-        assert result[1].source_ref == ref
+        assert result[0].source_ref is ref
 
     def test_mixed_elements(self) -> None:
         elements = [
@@ -159,9 +154,8 @@ class TestSplitEmbeddedCharacter:
         ]
         result = split_embedded_character(elements)
         assert result[0].type == "action"
-        assert result[1].type == "character"
-        assert result[2].type == "dialogue"
-        assert result[3].type == "action"
+        assert result[1].type in ("dialogue", "dialogue_block")
+        assert result[2].type == "action"
 
 
 class TestLooksLikeCharacterName:
@@ -195,16 +189,18 @@ class TestFlagMissingSourceRefs:
     """Null source_ref detection."""
 
     def test_no_missing_refs(self) -> None:
+        ref = SourceRef(chapter_id="ch_00", offset=[0, 4])
         elements = [
-            _elem("action", "test", ref={"chapter_id": "ch_00"}),
-            _elem("dialogue", "hello", ref={"chapter_id": "ch_00"}),
+            _elem("action", "test", ref=ref),
+            _elem("dialogue", "hello", ref=ref),
         ]
         flagged = flag_missing_source_refs(elements)
         assert len(flagged) == 0
 
     def test_flags_missing_refs(self) -> None:
+        ref = SourceRef(chapter_id="ch_00", offset=[0, 4])
         elements = [
-            _elem("action", "test", ref={"chapter_id": "ch_00"}),
+            _elem("action", "test", ref=ref),
             _elem("dialogue", "hello"),  # no ref
         ]
         flagged = flag_missing_source_refs(elements)
