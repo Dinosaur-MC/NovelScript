@@ -18,7 +18,18 @@ Fountain extension.
 
 from __future__ import annotations
 
-from cli.models import Element, Scene, Script
+from cli.models import (
+    ActionElement,
+    BoneyardElement,
+    DialogueBlock,
+    LyricElement,
+    Scene,
+    Script,
+    ScriptElement,
+    SectionElement,
+    SynopsisElement,
+    TransitionElement,
+)
 
 
 def to_fountain(script: Script) -> str:
@@ -29,7 +40,7 @@ def to_fountain(script: Script) -> str:
     lines: list[str] = []
 
     # --- Title page ---
-    title = script.meta.get("source_file", "Untitled")
+    title = script.title_page.title or script.meta.get("source_file", "Untitled")
     lines.append(f"Title: {title}")
     lines.append("Credit: Adapted by NovelScript Pipeline")
     lines.append("Source: Novel → Script Conversion")
@@ -43,17 +54,17 @@ def to_fountain(script: Script) -> str:
         # Scene heading — preceded by a blank line
         if i > 0:
             lines.append("")
-        lines.append(scene.heading)
+        heading_text = scene.heading.text if hasattr(scene.heading, "text") else str(scene.heading)
+        lines.append(heading_text)
         lines.append("")  # blank line after heading (Fountain requirement)
 
-        # Render elements as dialogue-block-aware groups
+        # Render elements
         fountain_lines = _render_scene_elements(scene.elements)
-        # Strip trailing blank lines so we control spacing before ===
         while fountain_lines and fountain_lines[-1] == "":
             fountain_lines.pop()
         lines.extend(fountain_lines)
 
-        # Scene separator (page break) — blank line then === then blank
+        # Scene separator (page break)
         lines.append("")
         lines.append("===")
         lines.append("")
@@ -61,121 +72,73 @@ def to_fountain(script: Script) -> str:
     return "\n".join(lines)
 
 
-def _render_scene_elements(elements: list[Element]) -> list[str]:
-    """Render scene elements, preserving Fountain's Character→Dialogue flow.
-
-    In Fountain, Character cues must be immediately followed by Dialogue
-    or Parenthetical with NO blank line between them.  This function
-    groups consecutive character/parenthetical/dialogue elements into
-    "dialogue blocks" and renders them accordingly.
-    """
+def _render_scene_elements(elements: list[ScriptElement]) -> list[str]:
+    """Render scene elements in Fountain format."""
     if not elements:
         return []
 
     result: list[str] = []
-    i = 0
 
-    while i < len(elements):
-        elem = elements[i]
-        etype = elem.type
-        content = elem.content.strip()
-
-        if etype == "character":
-            # Start of a dialogue block: Character → Dialogue/Parenthetical chain
-            # Fountain: one blank line before character cue
+    for elem in elements:
+        if isinstance(elem, DialogueBlock):
+            # Character → Parenthetical? → Dialogue
             if result and result[-1] != "":
                 result.append("")
-            block_lines, i = _render_dialogue_block(elements, i)
-            result.extend(block_lines)
-            continue
+            char_line = elem.character_name.upper()
+            if elem.character_extension:
+                char_line += f" {elem.character_extension}"
+            result.append(char_line)
+            if elem.parenthetical:
+                p = elem.parenthetical
+                result.append(p if p.startswith("(") else f"({p})")
+            result.append(elem.dialogue)
+            result.append("")  # blank after block
 
-        elif etype == "heading":
-            # Sub-heading within a scene
+        elif isinstance(elem, ActionElement):
             if result and result[-1] != "":
                 result.append("")
-            result.append(content)
+            text = elem.text
+            if elem.is_forced:
+                text = f"!{text}"
+            if elem.is_centered:
+                text = f"> {text} <"
+            result.append(text)
             result.append("")
 
-        elif etype == "transition":
-            # Transition: blank line before, > TO:, blank line after
+        elif isinstance(elem, TransitionElement):
             if result and result[-1] != "":
                 result.append("")
-            if content.endswith("TO:") or content.endswith("TO："):
-                result.append(content.upper())
+            text = elem.text
+            if text.endswith("TO:") or text.endswith("TO："):
+                result.append(text.upper())
             else:
-                result.append(f"> {content.upper()}")
+                result.append(f"> {text.upper()}")
             result.append("")
 
-        elif etype == "lyric":
-            # Lyric: start with ~
+        elif isinstance(elem, LyricElement):
             if result and result[-1] != "":
                 result.append("")
-            result.append(f"~ {content}")
+            result.append(f"~ {elem.text}")
             result.append("")
 
-        else:
-            # action, note, parenthetical (orphaned), dialogue (orphaned), default
-            if etype in ("parenthetical", "dialogue"):
-                # Orphaned parenthetical/dialogue (no preceding character cue)
-                if result and result[-1] != "":
-                    result.append("")
-                if etype == "parenthetical":
-                    result.append(f"({content})" if not content.startswith("(") else content)
-                else:
-                    result.append(content)
+        elif isinstance(elem, SectionElement):
+            if result and result[-1] != "":
                 result.append("")
-            else:
-                # Action / note — blank line before (if not already blank)
-                if result and result[-1] != "":
-                    result.append("")
-                result.append(content)
-                result.append("")
+            result.append(f"{'#' * elem.level} {elem.text}")
+            result.append("")
 
-        i += 1
+        elif isinstance(elem, SynopsisElement):
+            if result and result[-1] != "":
+                result.append("")
+            result.append(f"= {elem.text}")
+            result.append("")
+
+        elif isinstance(elem, BoneyardElement):
+            if result and result[-1] != "":
+                result.append("")
+            result.append(f"/* {elem.text} */")
+            result.append("")
+
+        # PageBreakElement and unknowns are silently skipped
 
     return result
-
-
-def _render_dialogue_block(elements: list[Element], start: int) -> tuple[list[str], int]:
-    """Render a Character→(Parenthetical|Dialogue)* block.
-
-    Fountain rule: "A Character element is any line entirely in uppercase,
-    with one empty line before it and without an empty line after it."
-
-    The blank line BEFORE the character cue is handled by the caller.
-    This function renders the character + its following dialogue/parenthetical
-    elements with NO blank lines between them.
-
-    Returns:
-        (rendered_lines, next_index) where next_index is the index AFTER
-        the last element consumed by this block.
-    """
-    result: list[str] = []
-    i = start
-
-    # First element MUST be character
-    char_elem = elements[i]
-    char_name = char_elem.content.strip().upper()
-    result.append(char_name)
-    i += 1
-
-    # Consume following dialogue and parenthetical elements (no blank lines)
-    while i < len(elements):
-        etype = elements[i].type
-        content = elements[i].content.strip()
-
-        if etype == "dialogue":
-            result.append(content)
-            i += 1
-        elif etype == "parenthetical":
-            paren_content = content if content.startswith("(") else f"({content})"
-            result.append(paren_content)
-            i += 1
-        else:
-            # End of dialogue block — next element is action/heading/transition/etc.
-            break
-
-    # Blank line after dialogue block ends (Fountain requirement)
-    result.append("")
-
-    return result, i

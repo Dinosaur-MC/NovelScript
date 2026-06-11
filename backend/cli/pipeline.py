@@ -335,7 +335,7 @@ async def run_from_chapters(
     # 5.5a. Assign globally unique scene IDs
     _assign_scene_ids(all_scenes)
 
-    # 5.5b. Normalize scene headings
+    # 5.5b. Normalize scene headings (now returns structured Heading objects)
     for scene in all_scenes:
         scene.heading = normalize_heading(scene.heading)
 
@@ -406,15 +406,45 @@ async def run_from_chapters(
     characters = [
         ScriptCharacter(
             id=n.id,
-            name=n.name,
-            aliases=n.properties.get("aliases", []),
-            properties=n.properties,
+            name=n.label,
+            aliases=n.metadata.get("aliases", []),
+            description="，".join(n.metadata.get("traits", [])) if n.metadata.get("traits") else "",
+            metadata={k: v for k, v in n.metadata.items() if k not in ("aliases", "traits")},
         )
         for n in kg.nodes
-        if n.node_type == "character"
+        if n.type == "character"
     ]
 
+    # Build title_page from source metadata
+    from datetime import datetime, timezone
+
+    from cli.models import SystemMeta, TitlePage
+
+    title_page = TitlePage(
+        title=source_name or "Untitled",
+        draft_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    )
+
+    usage_summary_text = (
+        f"总调用 {sum(v.get('calls', 0) for k, v in usage.items() if k != 'total_cost_yuan')} 次, "
+        f"总费用 ¥{usage.get('total_cost_yuan', 0):.4f}"
+    )
+
+    system_meta = SystemMeta(
+        document_id=source_name or "",
+        model=_detect_model(usage),
+        source_word_count=total_chars,
+        warnings=[w["content_preview"] for w in null_ref_warnings[:10]],
+    )
+
+    # Preserve pipeline-internal diagnostics in system_meta.warnings
+    if usage_summary_text:
+        if len(system_meta.warnings) < 20:
+            system_meta.warnings.append(usage_summary_text)
+
     script = Script(
+        title_page=title_page,
+        system_meta=system_meta,
         meta=meta,
         summary=narrative,
         characters=characters,
@@ -507,14 +537,14 @@ def _classify_narrative_layers(scenes: list[Scene]) -> dict:
     current_layer = "FRAME"
 
     for scene in scenes:
-        heading = scene.heading
-        if heading.startswith("FRAME:") or "FRAME:" in heading:
+        heading_text = scene.heading.text if hasattr(scene.heading, "text") else str(scene.heading)
+        if heading_text.startswith("FRAME:") or "FRAME:" in heading_text:
             current_layer = "FRAME"
             layers["FRAME"].append(scene.scene_id)
-        elif "(FLASHBACK WITHIN FLASHBACK)" in heading:
+        elif "(FLASHBACK WITHIN FLASHBACK)" in heading_text:
             current_layer = "FLASHBACK_NESTED"
             layers["FLASHBACK_NESTED"].append(scene.scene_id)
-        elif "(FLASHBACK)" in heading:
+        elif "(FLASHBACK)" in heading_text:
             current_layer = "FLASHBACK"
             layers["FLASHBACK"].append(scene.scene_id)
         else:
@@ -554,11 +584,19 @@ def _narrative_summary(summaries: list[str], kg: KnowledgeGraph) -> str:
         return _programmatic_summary(kg)
 
 
+def _detect_model(usage: dict) -> str:
+    """Extract the primary model name from token-usage records."""
+    for key in usage:
+        if key not in ("total_cost_yuan",):
+            return key
+    return "unknown"
+
+
 def _programmatic_summary(kg: KnowledgeGraph) -> str:
     """Fallback: count-based summary when LLM is unavailable."""
-    char_names = [n.name for n in kg.nodes if n.node_type == "character"]
-    loc_names = [n.name for n in kg.nodes if n.node_type == "location"]
-    ec = len([n for n in kg.nodes if n.node_type == "event"])
+    char_names = [n.label for n in kg.nodes if n.type == "character"]
+    loc_names = [n.label for n in kg.nodes if n.type == "location"]
+    ec = len([n for n in kg.nodes if n.type == "event"])
     return (
         f"共 {len(char_names)} 个主要角色"
         + (f"（{', '.join(char_names[:8])}...）" if len(char_names) > 8 else f"（{', '.join(char_names)}）")
