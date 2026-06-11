@@ -258,32 +258,51 @@ def create_task(
     except Exception:
         logger.warning("Redis unavailable — pipeline input not cached. Worker will read from DB.")
 
+    # ── Acquire distributed lock (prevents double-dispatch) ────────────
+    from app.services.task_lock import try_acquire_task_lock, release_task_lock
+
+    if not try_acquire_task_lock(task_id_str):
+        logger.info("Task %s is already locked — another dispatch is in progress.", task_id_str)
+        return BaseResponse(
+            code=200,
+            message="Task already being processed",
+            data={"task_id": task_id_str, "status": task.status},
+        )
+
+    lock_held = True
+
     # ── dispatch pipeline ────────────────────────────────────────────
     # Try Celery first; fall back to Redis simple queue on failure.
-    celery_dispatched = False
     try:
-        from app.tasks.pipeline import run_pipeline
+        try:
+            from app.tasks.pipeline import run_pipeline
 
-        celery_kwargs: dict = {}
-        if body.style_direction:
-            celery_kwargs["style_direction"] = body.style_direction
+            celery_kwargs: dict = {}
+            if body.style_direction:
+                celery_kwargs["style_direction"] = body.style_direction
 
-        run_pipeline.apply_async(
-            args=(task_id_str, str(novel_id)),
-            kwargs=celery_kwargs,
-            task_id=task_id_str,
-            expires=7200,
-        )
-        celery_dispatched = True
-        logger.info("Task %s dispatched via Celery.", task_id_str)
-    except Exception as exc:
-        logger.warning("Celery unavailable for task %s: %s — falling back to simple queue.", task_id_str, exc)
-
-    if not celery_dispatched:
-        from app.services.simple_queue import enqueue_pipeline
-        enqueued = enqueue_pipeline(task_id_str, str(novel_id), body.style_direction)
-        if not enqueued:
-            logger.error("Failed to enqueue task %s — no worker will process it.", task_id_str)
+            run_pipeline.apply_async(
+                args=(task_id_str, str(novel_id)),
+                kwargs=celery_kwargs,
+                task_id=task_id_str,
+                expires=7200,
+            )
+            logger.info("Task %s dispatched via Celery.", task_id_str)
+        except Exception as exc:
+            logger.warning(
+                "Celery unavailable for task %s: %s — falling back to simple queue.",
+                task_id_str, exc,
+            )
+            from app.services.simple_queue import enqueue_pipeline
+            enqueued = enqueue_pipeline(task_id_str, str(novel_id), body.style_direction)
+            if enqueued:
+                logger.info("Task %s enqueued to simple queue.", task_id_str)
+            else:
+                logger.error("Failed to enqueue task %s — no worker will process it.", task_id_str)
+    except Exception:
+        release_task_lock(task_id_str)
+        lock_held = False
+        raise
 
     return BaseResponse(
         code=200,
@@ -425,6 +444,7 @@ async def stream_progress(
                 data: dict = {"progress": 100}
                 try:
                     from app.services.pipeline_executor import persist_pipeline_output
+                    from app.services.task_lock import release_task_lock
 
                     output = load_pipeline_result(r, task_id)
                     if output and output.status == "completed":
@@ -445,6 +465,8 @@ async def stream_progress(
                             db.add(task)
                             db.commit()
                         data["error"] = output.error_message or "Pipeline failed"
+                    # Release lock on terminal state
+                    release_task_lock(task_id)
                 except Exception as exc:
                     logger.exception("Failed to persist pipeline output for task %s.", task_id)
                     data["error"] = str(exc)
@@ -667,32 +689,52 @@ def resume_task(
         except Exception:
             logger.warning("Redis unavailable — pipeline input not cached for resume.")
 
+    # ── Acquire distributed lock (prevents double-dispatch) ──────────
+    from app.services.task_lock import try_acquire_task_lock, release_task_lock
+
+    task_id_str = str(task.id)
+    if not try_acquire_task_lock(task_id_str):
+        logger.warning("Task %s is locked — another worker is already processing it.", task_id_str)
+        return BaseResponse(
+            code=200,
+            message="Task already being processed by another worker",
+            data={"task_id": task_id_str, "status": "converting"},
+        )
+
     # ── re-dispatch pipeline ─────────────────────────────────────────
     # Try Celery first; fall back to Redis simple queue on failure.
     stored_style = (task.pipeline_config or {}).get("style_direction", "")
-    celery_dispatched = False
+    lock_held = True
     try:
-        from app.tasks.pipeline import run_pipeline
+        try:
+            from app.tasks.pipeline import run_pipeline
 
-        celery_kwargs: dict = {}
-        if stored_style:
-            celery_kwargs["style_direction"] = stored_style
+            celery_kwargs: dict = {}
+            if stored_style:
+                celery_kwargs["style_direction"] = stored_style
 
-        run_pipeline.apply_async(
-            args=(str(task.id), str(novel_id)),
-            kwargs=celery_kwargs,
-            task_id=str(task.id),
-            expires=7200,
-        )
-        celery_dispatched = True
-    except Exception as exc:
-        logger.warning("Celery unavailable for resume of task %s: %s — falling back to simple queue.", task.id, exc)
-
-    if not celery_dispatched:
-        from app.services.simple_queue import enqueue_pipeline
-        enqueued = enqueue_pipeline(str(task.id), str(novel_id), stored_style)
-        if not enqueued:
-            logger.error("Failed to enqueue resumed task %s.", task.id)
+            run_pipeline.apply_async(
+                args=(task_id_str, str(novel_id)),
+                kwargs=celery_kwargs,
+                task_id=task_id_str,
+                expires=7200,
+            )
+            logger.info("Task %s re-dispatched via Celery.", task_id_str)
+        except Exception as exc:
+            logger.warning(
+                "Celery unavailable for resume of task %s: %s — falling back to simple queue.",
+                task_id_str, exc,
+            )
+            from app.services.simple_queue import enqueue_pipeline
+            enqueued = enqueue_pipeline(task_id_str, str(novel_id), stored_style)
+            if enqueued:
+                logger.info("Task %s enqueued to simple queue.", task_id_str)
+            else:
+                logger.error("Failed to enqueue resumed task %s.", task_id_str)
+    except Exception:
+        release_task_lock(task_id_str)
+        lock_held = False
+        raise
 
     return BaseResponse(
         code=200,

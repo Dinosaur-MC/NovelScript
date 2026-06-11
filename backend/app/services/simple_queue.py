@@ -112,6 +112,16 @@ async def worker_loop():
 
                 logger.info("Simple queue worker picked up task %s.", task_id)
 
+                # ── Distributed lock: skip if Celery already claimed this task ─
+                from app.services.task_lock import try_acquire_task_lock, release_task_lock
+
+                if not try_acquire_task_lock(task_id):
+                    logger.info(
+                        "Task %s is locked (Celery took over) — removing from simple queue.",
+                        task_id,
+                    )
+                    continue
+
                 # Load pipeline input
                 from app.services.pipeline_dto import (
                     PipelineOutput,
@@ -131,13 +141,14 @@ async def worker_loop():
                 # Run the pipeline inline
                 output = await _run_pipeline_inline(task_id, novel_id, pipeline_input, style)
 
-                # Store result in Redis
+                # Store result in Redis + release lock
                 store_pipeline_result(r, task_id, output)
+                release_task_lock(task_id)
                 logger.info("Simple queue: task %s completed (status=%s).", task_id, output.status)
 
             except Exception as exc:
                 logger.exception("Simple queue worker error processing task.")
-                # Store failure
+                # Store failure + release lock
                 try:
                     from app.core.redis import get_redis_client as grc2
                     from app.services.pipeline_dto import PipelineOutput, store_pipeline_result
@@ -147,6 +158,7 @@ async def worker_loop():
                             r2, data.get("task_id", "unknown"),
                             PipelineOutput(status="failed", error_message=str(exc)),
                         )
+                    release_task_lock(data.get("task_id", "unknown"))
                 except Exception:
                     pass
 

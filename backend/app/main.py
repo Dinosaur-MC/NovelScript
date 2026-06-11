@@ -78,8 +78,10 @@ async def _pipeline_result_watcher():
                                 uuid.UUID(task_id),
                                 uuid.UUID(output.novel_id) if output.novel_id else uuid.UUID(task_id),
                             )
-                            # Remove the key after successful persistence
+                            # Remove the result key + release task lock
                             redis_conn.delete(key)
+                            from app.services.task_lock import release_task_lock
+                            release_task_lock(task_id)
                             logger.info(
                                 "Watcher: persisted task %s (status=%s).",
                                 task_id, output.status,
