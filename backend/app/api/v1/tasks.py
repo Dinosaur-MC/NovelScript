@@ -397,13 +397,15 @@ async def stream_progress(
             if state == "PROGRESS":
                 p = info.get("progress", last_progress)
                 s = info.get("stage", last_stage)
+                # Derive task status from stage (same logic as Celery _on_progress)
+                ss = "preprocessing" if s in ("starting", "chunking", "summarizing", "graphrag", "rag") else "converting"
                 # Only emit if something changed (avoid redundant events)
                 if p != last_progress or s != last_stage:
                     last_progress = p
                     last_stage = s
                     yield {
                         "event": "progress",
-                        "data": json.dumps({"progress": p, "stage": s}, ensure_ascii=False),
+                        "data": json.dumps({"progress": p, "stage": s, "status": ss}, ensure_ascii=False),
                     }
             elif state == "SUCCESS":
                 # Read PipelineOutput from Redis and persist to DB

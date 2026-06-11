@@ -14,8 +14,8 @@ import {
   ArrowLeftOutlined,
 } from "@ant-design/icons";
 import { getNovel, listNovelTasks, type Novel, type NovelTaskItem } from "../api/novels";
-import { createTask } from "../api/tasks";
-import { deleteTask } from "../api/tasks";
+import { createTask, deleteTask } from "../api/tasks";
+import { useSSE } from "../hooks/useSSE";
 import { AppHeader } from "../components/AppHeader";
 import { useAuthStore } from "../stores/auth-store";
 import { useTaskStore } from "../stores/task-store";
@@ -48,6 +48,23 @@ export default function NovelPage() {
   const [loading, setLoading] = useState(true);
   const [taskLoading, setTaskLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const taskStatus = useTaskStore((s) => s.status);
+
+  // Subscribe to SSE for real-time task updates when a task is active
+  useSSE(
+    useCallback(() => {
+      // On task complete: refresh the task list to show the new script
+      message.success("转换任务已完成！");
+      loadTasks(page);
+    }, [page]),
+  );
+
+  // Auto-refresh task list when task transitions from active to terminal
+  useEffect(() => {
+    if (taskStatus === "completed" || taskStatus === "failed") {
+      loadTasks(page);
+    }
+  }, [taskStatus, page, loadTasks]);
 
   const loadNovel = useCallback(async () => {
     if (!novelId) return;
@@ -160,6 +177,26 @@ export default function NovelPage() {
               新建转换任务
             </Button>
           </div>
+
+          {/* Active task live indicator */}
+          {taskStatus && taskStatus !== "completed" && taskStatus !== "failed" && taskStatus !== null && (
+            <div style={{
+              background: "var(--color-bg-elevated)",
+              border: "1px solid var(--color-primary)",
+              borderRadius: 8, padding: "12px 16px", marginBottom: 16,
+              display: "flex", alignItems: "center", gap: 12,
+            }}>
+              <SyncOutlined spin style={{ color: "var(--color-primary)", fontSize: 20 }} />
+              <div style={{ flex: 1 }}>
+                <strong>当前转换</strong>
+                <span style={{ marginLeft: 8 }}>
+                  <Tag color={STATUS_MAP[taskStatus]?.color ?? "default"}>
+                    {STATUS_MAP[taskStatus]?.label ?? taskStatus}
+                  </Tag>
+                </span>
+              </div>
+            </div>
+          )}
 
           {taskLoading && tasks.length === 0 ? (
             <div style={{ textAlign: "center", padding: 48 }}><Spin /></div>

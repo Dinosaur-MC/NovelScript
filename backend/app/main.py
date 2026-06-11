@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from starlette.exceptions import HTTPException
@@ -16,20 +17,119 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 后台 watcher 控制
+_pipeline_watcher_task: asyncio.Task | None = None
+_WATCHER_INTERVAL = 5  # seconds
+
+
+async def _pipeline_result_watcher():
+    """Background watcher — persists completed pipeline results to DB.
+
+    Celery writes results to Redis.  This watcher runs in the Main process,
+    periodically checks Redis for unpersisted results, and writes them
+    to the database.  Guarantees delivery even when no SSE client is connected.
+
+    Data flow:  Celery → Redis ← Main (watcher) → DB
+    """
+    from app.services.pipeline_dto import (
+        REDIS_RESULT_PREFIX,
+        REDIS_RESULT_TTL,
+        load_pipeline_result,
+    )
+    from app.services.pipeline_executor import persist_pipeline_output
+
+    logger.info("Pipeline result watcher started (interval=%ds).", _WATCHER_INTERVAL)
+
+    while True:
+        try:
+            await asyncio.sleep(_WATCHER_INTERVAL)
+
+            # Get a Redis connection (sync in background thread is fine)
+            from app.core.redis import get_redis_client
+
+            redis_conn = get_redis_client()
+            if redis_conn is None:
+                continue
+
+            # Scan for pipeline result keys
+            cursor = 0
+            while True:
+                cursor, keys = redis_conn.scan(
+                    cursor=cursor,
+                    match=f"{REDIS_RESULT_PREFIX}*",
+                    count=20,
+                )
+                for key in keys:
+                    task_id = key.replace(REDIS_RESULT_PREFIX, "")
+                    try:
+                        output = load_pipeline_result(redis_conn, task_id)
+                        if output is None:
+                            continue
+
+                        from app.core.db import _session_factory
+
+                        session = _session_factory()
+                        try:
+                            import uuid
+                            persist_pipeline_output(
+                                session,
+                                output,
+                                uuid.UUID(task_id),
+                                uuid.UUID(output.novel_id) if output.novel_id else uuid.UUID(task_id),
+                            )
+                            # Remove the key after successful persistence
+                            redis_conn.delete(key)
+                            logger.info(
+                                "Watcher: persisted task %s (status=%s).",
+                                task_id, output.status,
+                            )
+                        except Exception:
+                            session.rollback()
+                            logger.exception(
+                                "Watcher: failed to persist task %s.", task_id,
+                            )
+                        finally:
+                            session.close()
+                    except Exception:
+                        logger.exception("Watcher: error processing key %s.", key)
+
+                if cursor == 0:
+                    break
+
+        except asyncio.CancelledError:
+            logger.info("Pipeline result watcher cancelled.")
+            break
+        except Exception:
+            logger.exception("Pipeline result watcher error (will retry).")
+
 
 # ========== 生命周期 ==========
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """Startup / shutdown hook — init DB on startup, dispose pool on shutdown."""
+    """Startup / shutdown hook — init DB on startup, start watcher, dispose on shutdown."""
+    global _pipeline_watcher_task
+
     # Startup
     from app.core.db import init_db
     init_db()
     logger.info("Database initialised.")
 
+    # Start background pipeline result watcher (guaranteed persistence)
+    _pipeline_watcher_task = asyncio.create_task(_pipeline_result_watcher())
+    logger.info("Pipeline result watcher launched.")
+
     yield
 
     # Shutdown
+    if _pipeline_watcher_task:
+        _pipeline_watcher_task.cancel()
+        try:
+            await _pipeline_watcher_task
+        except asyncio.CancelledError:
+            pass
+        _pipeline_watcher_task = None
+
     from app.core.db import dispose_engine
     dispose_engine()
     logger.info("Engine pool disposed.")

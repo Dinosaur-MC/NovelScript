@@ -242,9 +242,10 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
             token_usage=script.meta.get("usage", {}) if hasattr(script, "meta") else {},
         )
 
-        # ── Store result in Redis for Main process ───────────────────────
+        # ── Store result in Redis for Main process to consume ────────────
         if redis_conn:
             store_pipeline_result(redis_conn, task_id, output)
+            logger.info("Pipeline output stored in Redis for task %s.", task_id)
 
         total_cost = output.token_usage.get("total_cost_yuan", 0)
         logger.info("Pipeline completed for task %s: %d scenes (¥%.4f).", task_id, len(output.scenes), total_cost)
@@ -255,7 +256,7 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
         logger.exception("Pipeline failed for task %s.", task_id)
         msg = traceback.format_exc()
 
-        # Store failure in Redis
+        # Store failure in Redis for Main process to consume
         try:
             from app.core.redis import get_redis_sync
             redis_conn = get_redis_sync()
