@@ -347,6 +347,248 @@ def _fail(session, task_id: uuid.UUID, message: str) -> None:
         session.rollback()
 
 
+def persist_pipeline_output(
+    session,
+    output,
+    task_id: uuid.UUID,
+    novel_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
+) -> str | None:
+    """Persist a PipelineOutput to the database.
+
+    Creates/updates the Task and Script records, persisting chapters,
+    embeddings, KG nodes/edges.
+
+    Returns the Script ID if a Script was created, else None.
+    This function is called by the Main process (FastAPI), NOT by Celery.
+    """
+    from app.models.sql import Script as ScriptModel
+
+    data = output if hasattr(output, "to_dict") else output
+    status = getattr(data, "status", "failed")
+    script_id: str | None = None
+
+    try:
+        # ── Update Task ────────────────────────────────────────────────
+        task = session.get(Task, task_id)
+        if task is None:
+            logger.error("Task %s not found in DB — cannot persist output.", task_id)
+            return None
+
+        if status == "completed":
+            task.status = "completed"
+            task.progress = 100
+            task.summary = getattr(data, "summary", "")
+            from cli.exporter import to_yaml
+            # Reconstruct script object for YAML/Fountain
+            script_obj = _build_script_obj(data)
+            if script_obj:
+                task.script_yaml = to_yaml(script_obj)
+                task.script_json = script_obj.model_dump(mode="json") if hasattr(script_obj, "model_dump") else getattr(data, "script_json", {})
+                from cli.fountain_exporter import to_fountain
+                task.script_fountain = to_fountain(script_obj)
+            task.characters_json = getattr(data, "characters", [])
+            task.token_usage = getattr(data, "token_usage", {})
+            task.error_message = None
+        else:
+            task.status = "failed"
+            task.error_message = getattr(data, "error_message", "Pipeline failed")[:5000]
+
+        task.updated_at = datetime.now(timezone.utc)
+        session.add(task)
+
+        # ── Create/Update Script ───────────────────────────────────────
+        if status == "completed":
+            if task.script_id:
+                script_row = session.get(ScriptModel, task.script_id)
+            else:
+                script_row = None
+
+            if script_row is None:
+                script_row = ScriptModel(
+                    novel_id=novel_id,
+                    user_id=user_id or task.user_id,
+                    title=task.summary or "Generated Script",
+                    source_type="generated",
+                )
+                session.add(script_row)
+                session.flush()
+                task.script_id = script_row.id
+                session.add(task)
+
+            if script_obj:
+                script_row.script_yaml = task.script_yaml
+                script_row.script_json = task.script_json
+                script_row.script_fountain = task.script_fountain
+                script_row.characters_json = task.characters_json
+                script_row.summary = task.summary
+                script_row.token_usage = task.token_usage
+                script_row.status = "completed"
+                script_row.updated_at = datetime.now(timezone.utc)
+                session.add(script_row)
+
+            script_id = str(script_row.id) if script_row else None
+
+        # ── Commit main result ─────────────────────────────────────────
+        session.commit()
+        logger.info("Pipeline output persisted for task %s (script_id=%s).", task_id, script_id)
+
+        # ── Chapters, embeddings, KG (best-effort, independent txn) ────
+        try:
+            chapters_data = getattr(data, "chapters", [])
+            if chapters_data:
+                _persist_chapters_from_dto(session, novel_id, chapters_data)
+
+            embeddings_map = getattr(data, "embeddings_map", {})
+            if embeddings_map:
+                _persist_embeddings_from_dto(session, novel_id, embeddings_map)
+
+            kg = getattr(data, "knowledge_graph", None)
+            if kg and getattr(kg, "nodes", []):
+                _persist_kg_from_dto(session, kg, task_id, novel_id, script_id)
+
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.warning("Cache persistence failed (non-critical).")
+
+        return script_id
+
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to persist pipeline output for task %s.", task_id)
+        return None
+
+
+def _build_script_obj(data):
+    """Reconstruct a CLI Script object from PipelineOutput data."""
+    try:
+        from cli.models import Script as CLIScript, Scene, Character, KnowledgeGraph, KnowledgeNode as CLINode, KnowledgeEdge as CLIEdge
+
+        scenes_data = getattr(data, "scenes", []) or data.get("scenes", []) if isinstance(data, dict) else []
+        characters_data = getattr(data, "characters", []) or data.get("characters", []) if isinstance(data, dict) else []
+        summary = getattr(data, "summary", "") or data.get("summary", "") if isinstance(data, dict) else ""
+        token_usage = getattr(data, "token_usage", {}) or data.get("token_usage", {}) if isinstance(data, dict) else {}
+
+        scenes = [Scene(**s) if isinstance(s, dict) else s for s in scenes_data]
+        characters = [Character(**c) if isinstance(c, dict) else Character(id=c.get("id",""), name=c.get("name","")) for c in characters_data]
+
+        # KG
+        kg_data = getattr(data, "knowledge_graph", None) or (data.get("knowledge_graph") if isinstance(data, dict) else None)
+        kg = None
+        if kg_data:
+            nodes_data = getattr(kg_data, "nodes", []) or kg_data.get("nodes", []) if isinstance(kg_data, dict) else []
+            edges_data = getattr(kg_data, "edges", []) or kg_data.get("edges", []) if isinstance(kg_data, dict) else []
+            nodes = [
+                CLINode(id=n["id"] if isinstance(n, dict) else n.id, label=n["label"] if isinstance(n, dict) else n.label, type=n["type"] if isinstance(n, dict) else n.type, metadata=n.get("metadata", {}) if isinstance(n, dict) else n.metadata)
+                for n in nodes_data
+            ]
+            edges = [
+                CLIEdge(source=e["source"] if isinstance(e, dict) else e.source, target=e["target"] if isinstance(e, dict) else e.target, relation=e.get("relation", "") if isinstance(e, dict) else e.relation, weight=e.get("weight", 1.0) if isinstance(e, dict) else e.weight)
+                for e in edges_data
+            ]
+            kg = KnowledgeGraph(nodes=nodes, edges=edges)
+
+        cli_script = CLIScript(
+            scenes=scenes,
+            characters=characters,
+            summary=summary,
+            knowledge_graph=kg,
+            meta={"usage": token_usage},
+        )
+        return cli_script
+    except Exception:
+        logger.exception("Failed to build script object from PipelineOutput.")
+        return None
+
+
+def _persist_chapters_from_dto(session, novel_id: uuid.UUID, chapters_data: list) -> None:
+    """Persist chapters from PipelineOutput chapter list."""
+    from app.models.sql import Chapter as ChapterModel
+
+    session.query(ChapterModel).filter(ChapterModel.novel_id == novel_id).delete()
+    session.flush()
+
+    for ch in chapters_data:
+        index = ch.index if hasattr(ch, "index") else ch["index"]
+        title = ch.title if hasattr(ch, "title") else ch.get("title", "")
+        text = ch.text if hasattr(ch, "text") else ch.get("text", "")
+        row = ChapterModel(novel_id=novel_id, chapter_index=index, title=title, content=text)
+        session.add(row)
+
+    logger.info("Persisted %d chapter(s) from pipeline output.", len(chapters_data))
+
+
+def _persist_embeddings_from_dto(session, novel_id: uuid.UUID, embeddings_map: dict[int, list[float]]) -> None:
+    """Persist chapter embeddings from pipeline output."""
+    from app.models.sql import Chapter as ChapterModel
+
+    rows = (
+        session.query(ChapterModel)
+        .filter(ChapterModel.novel_id == novel_id)
+        .order_by(ChapterModel.chapter_index.asc())
+        .all()
+    )
+    for row in rows:
+        vec = embeddings_map.get(row.chapter_index)
+        if vec and len(vec) == 1536:
+            row.embedding = vec
+            session.add(row)
+
+    logger.info("Persisted %d embedding(s) from pipeline output.", len(embeddings_map))
+
+
+def _persist_kg_from_dto(session, kg, task_id: uuid.UUID, novel_id: uuid.UUID, script_id_str: str | None = None) -> None:
+    """Persist KG nodes/edges from PipelineOutput knowledge_graph."""
+    from app.models.sql import KnowledgeNode, KnowledgeEdge
+
+    nodes_data = kg.nodes if hasattr(kg, "nodes") else kg.get("nodes", [])
+    edges_data = kg.edges if hasattr(kg, "edges") else kg.get("edges", [])
+
+    if not nodes_data:
+        return
+
+    script_uuid = uuid.UUID(script_id_str) if script_id_str else None
+    id_map: dict[str, uuid.UUID] = {}
+
+    for n in nodes_data:
+        nid = n.id if hasattr(n, "id") else n["id"]
+        label = n.label if hasattr(n, "label") else n["label"]
+        ntype = n.type if hasattr(n, "type") else n["type"]
+        metadata = n.metadata if hasattr(n, "metadata") else n.get("metadata", {})
+
+        db_id = uuid.uuid4()
+        id_map[nid] = db_id
+        db_node = KnowledgeNode(
+            id=db_id, novel_id=novel_id, script_id=script_uuid, task_id=task_id,
+            node_type=ntype, name=label,
+            aliases=metadata.get("aliases", []),
+            description=metadata.get("description", ""),
+            properties=metadata,
+        )
+        session.add(db_node)
+
+    session.flush()
+
+    for e in edges_data:
+        src = e.source if hasattr(e, "source") else e["source"]
+        tgt = e.target if hasattr(e, "target") else e["target"]
+        rel = e.relation if hasattr(e, "relation") else e.get("relation", "")
+        wgt = e.weight if hasattr(e, "weight") else e.get("weight", 1.0)
+
+        src_id = id_map.get(src)
+        tgt_id = id_map.get(tgt)
+        if src_id and tgt_id:
+            db_edge = KnowledgeEdge(
+                novel_id=novel_id, script_id=script_uuid, task_id=task_id,
+                source_node_id=src_id, target_node_id=tgt_id,
+                relation=rel, weight=wgt,
+            )
+            session.add(db_edge)
+
+    logger.info("Persisted KG: %d node(s), %d edge(s).", len(nodes_data), len(edges_data))
+
+
 def recover_stale_tasks() -> int:
     """Mark in-flight tasks as ``failed`` after a full system restart.
 

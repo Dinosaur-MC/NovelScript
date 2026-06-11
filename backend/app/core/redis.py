@@ -73,3 +73,17 @@ def get_redis_client() -> redis.Redis:
     or startup scripts) where ``Depends()`` is not available.
     """
     return redis.Redis(connection_pool=_get_pool())
+
+
+def get_redis_sync() -> redis.Redis | None:
+    """Get a Redis client, returning None if unreachable (no exception).
+
+    Safe to call from Celery workers or startup code where Redis may
+    not be available.  Graceful degradation — callers check for None.
+    """
+    try:
+        return get_redis_client()
+    except Exception:
+        logger = __import__("logging").getLogger(__name__)
+        logger.warning("Redis unavailable — returning None.")
+        return None

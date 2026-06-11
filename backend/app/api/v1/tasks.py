@@ -3,6 +3,21 @@
 POST / dispatches a Celery task that runs the pipeline in a background
 worker.  GET /{task_id}/stream provides real-time SSE progress events by
 polling Celery's ``AsyncResult`` (Redis-backed, no DB writes for ticks).
+
+Data flow::
+
+  Main (FastAPI):
+    1. Load novel data from DB
+    2. Serialize to PipelineInput (Redis)
+    3. Dispatch Celery task
+  Celery Worker:
+    1. Read PipelineInput from Redis
+    2. Run pipeline (no DB access)
+    3. Return PipelineOutput via Celery result backend
+  Main (FastAPI):
+    1. Detect SUCCESS via AsyncResult (SSE)
+    2. Read PipelineOutput from Redis
+    3. Persist results to DB
 """
 
 from __future__ import annotations
@@ -16,16 +31,26 @@ from typing import Optional
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.celery_app import celery_app
 from app.core.db import get_db
+from app.core.redis import get_redis
 from app.models.http import BaseResponse
-from app.models.sql import AuditLog, Novel, Script, Task, User
+from app.models.sql import AuditLog, Chapter as ChapterModel, KnowledgeEdge, KnowledgeNode, Novel, Script, Task, User
 from app.services.base import BaseCRUD
+from app.services.pipeline_dto import (
+    ChapterData,
+    KnowledgeGraphData,
+    KGEdgeData,
+    KGNodeData,
+    PipelineInput,
+    store_pipeline_input,
+    load_pipeline_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,11 +126,15 @@ def create_task(
     body: CreateTaskRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    r = Depends(get_redis),
 ):
     """Create a new conversion task for a novel.
 
-    Returns ``{task_id, status: "pending"}`` on success.
-    Immediately dispatches the pipeline to a Celery background worker.
+    Data flow:
+    1. Load novel + chapters + KG from DB
+    2. Serialize to PipelineInput and store in Redis
+    3. Dispatch Celery worker (no DB access from worker)
+    4. Returns ``{task_id, status: "pending"}`` on success.
     """
     try:
         novel_id = uuid.UUID(body.novel_id)
@@ -131,12 +160,104 @@ def create_task(
         pipeline_config=pipeline_config,
     )
     task = task_crud.create(db, task)
-
-    logger.info("Task %s created for novel %s", task.id, novel_id)
-
-    # ── commit BEFORE dispatching Celery task ─────────────────────────
-    # The Celery worker opens its own independent DB session.
     db.commit()
+
+    task_id_str = str(task.id)
+    logger.info("Task %s created for novel %s", task_id_str, novel_id)
+
+    # ── Load novel data from DB ───────────────────────────────────────
+    source_text = (novel.source_text or "").strip()
+    novel_title = novel.title or ""
+
+    # Load chapters
+    chapter_rows = (
+        db.query(ChapterModel)
+        .filter(ChapterModel.novel_id == novel_id)
+        .order_by(ChapterModel.chapter_index.asc())
+        .all()
+    )
+    chapters: list[ChapterData] = []
+    embeddings_map: dict[int, list[float]] = {}
+    for ch in chapter_rows:
+        chapters.append(ChapterData(
+            index=ch.chapter_index,
+            title=ch.title or f"第{ch.chapter_index+1}章",
+            text=ch.content or "",
+        ))
+        if ch.embedding is not None and len(ch.embedding) > 0:
+            embeddings_map[ch.chapter_index] = list(ch.embedding)
+
+    # Load cached KG
+    kg_nodes = (
+        db.query(KnowledgeNode)
+        .filter(KnowledgeNode.novel_id == novel_id)
+        .all()
+    )
+    cached_kg = None
+    if kg_nodes:
+        from cli.models import _TYPE_PREFIX
+        # Rebuild type prefix map
+        type_prefix: dict[str, str] = {
+            "character": "char", "location": "loc", "item": "item",
+            "event": "event", "organization": "org",
+        }
+        id_map: dict[uuid.UUID, str] = {}
+        cli_nodes: list[KGNodeData] = []
+        counters: dict[str, int] = {}
+        for n in kg_nodes:
+            prefix = type_prefix.get(n.node_type, "node")
+            idx = counters.get(prefix, 0) + 1
+            counters[prefix] = idx
+            cli_id = f"{prefix}_{idx:02d}"
+            id_map[n.id] = cli_id
+            cli_nodes.append(KGNodeData(
+                id=cli_id, label=n.name, type=n.node_type,
+                metadata={
+                    **(n.properties or {}),
+                    "aliases": n.aliases or [],
+                    "description": n.description or "",
+                },
+            ))
+
+        node_uuids = list(id_map.keys())
+        cli_edges: list[KGEdgeData] = []
+        if node_uuids:
+            db_edges = (
+                db.query(KnowledgeEdge)
+                .filter(
+                    KnowledgeEdge.novel_id == novel_id,
+                    KnowledgeEdge.source_node_id.in_(node_uuids),
+                    KnowledgeEdge.target_node_id.in_(node_uuids),
+                )
+                .all()
+            )
+            for e in db_edges:
+                src = id_map.get(e.source_node_id)
+                tgt = id_map.get(e.target_node_id)
+                if src and tgt:
+                    cli_edges.append(KGEdgeData(source=src, target=tgt, relation=e.relation, weight=e.weight or 1.0))
+
+        cached_kg = KnowledgeGraphData(nodes=cli_nodes, edges=cli_edges)
+
+    # ── Build PipelineInput and store in Redis ────────────────────────
+    pipeline_input = PipelineInput(
+        task_id=task_id_str,
+        novel_id=str(novel_id),
+        source_text=source_text,
+        novel_title=novel_title,
+        style_direction=body.style_direction,
+        chapters=chapters,
+        embeddings_map=embeddings_map,
+        cached_kg=cached_kg,
+    )
+
+    # Graceful degradation: if Redis is down, pipeline input will be read
+    # from DB by the Celery worker (fallback).
+    try:
+        store_pipeline_input(r, task_id_str, pipeline_input)
+        logger.info("Pipeline input stored in Redis for task %s", task_id_str)
+    except Exception:
+        logger.warning("Redis unavailable — pipeline input not cached. Worker will read from DB.")
 
     # ── dispatch pipeline to Celery worker ────────────────────────────
     from app.tasks.pipeline import run_pipeline
@@ -146,16 +267,16 @@ def create_task(
         celery_kwargs["style_direction"] = body.style_direction
 
     run_pipeline.apply_async(
-        args=(str(task.id), str(novel_id)),
+        args=(task_id_str, str(novel_id)),
         kwargs=celery_kwargs,
-        task_id=str(task.id),  # so AsyncResult(task_id) works
-        expires=7200,          # drop from queue after 2h if not picked up
+        task_id=task_id_str,
+        expires=7200,
     )
 
     return BaseResponse(
         code=200,
         message="Task created",
-        data={"task_id": str(task.id), "status": task.status},
+        data={"task_id": task_id_str, "status": task.status},
     )
 
 
@@ -217,7 +338,11 @@ def list_tasks(
 
 
 @router.get("/{task_id}/stream")
-async def stream_progress(task_id: str, db: Session = Depends(get_db)):
+async def stream_progress(
+    task_id: str,
+    db: Session = Depends(get_db),
+    r = Depends(get_redis),
+):
     """SSE endpoint — streams pipeline progress events in real time.
 
     Polls Celery's ``AsyncResult`` (Redis) for progress.  No DB writes
@@ -282,15 +407,33 @@ async def stream_progress(task_id: str, db: Session = Depends(get_db)):
                         "data": json.dumps({"progress": p, "stage": s}, ensure_ascii=False),
                     }
             elif state == "SUCCESS":
-                # Fetch script_id from DB (set by pipeline on completion)
+                # Read PipelineOutput from Redis and persist to DB
                 data: dict = {"progress": 100}
                 try:
-                    db.expire_all()
-                    fresh = db.get(Task, tid)
-                    if fresh and fresh.script_id:
-                        data["script_id"] = str(fresh.script_id)
-                except Exception:
-                    pass
+                    from app.services.pipeline_executor import persist_pipeline_output
+
+                    output = load_pipeline_result(r, task_id)
+                    if output and output.status == "completed":
+                        script_id = persist_pipeline_output(
+                            db, output, tid,
+                            uuid.UUID(output.novel_id) if output.novel_id else tid,
+                        )
+                        if script_id:
+                            data["script_id"] = script_id
+                            logger.info("Pipeline output persisted for task %s (script=%s).", task_id, script_id)
+                    elif output and output.status == "failed":
+                        # Persist failure status
+                        task = db.get(Task, tid)
+                        if task:
+                            task.status = "failed"
+                            task.error_message = (output.error_message or "Pipeline failed")[:5000]
+                            task.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+                            db.add(task)
+                            db.commit()
+                        data["error"] = output.error_message or "Pipeline failed"
+                except Exception as exc:
+                    logger.exception("Failed to persist pipeline output for task %s.", task_id)
+                    data["error"] = str(exc)
                 yield {"event": "complete", "data": json.dumps(data, ensure_ascii=False)}
                 return
             elif state == "FAILURE":
@@ -432,9 +575,11 @@ def resume_task(
     task_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    r = Depends(get_redis),
 ):
     """Resume a failed task (failed -> converting).
 
+    Data flow: reload novel data from DB, store in Redis, dispatch Celery.
     Returns 422 if the task is not in ``failed`` status.
     """
     try:
@@ -470,20 +615,54 @@ def resume_task(
         detail={"from": "failed", "to": "converting"},
     )
 
-    # ── commit BEFORE dispatching Celery task ─────────────────────────
     db.commit()
+
+    # ── Reload novel data and store PipelineInput in Redis ──────────────
+    novel_id = task.novel_id
+    novel = novel_crud.get(db, novel_id)
+    if novel:
+        source_text = (novel.source_text or "").strip()
+        novel_title = novel.title or ""
+
+        chapter_rows = (
+            db.query(ChapterModel)
+            .filter(ChapterModel.novel_id == novel_id)
+            .order_by(ChapterModel.chapter_index.asc())
+            .all()
+        )
+        chapters = [
+            ChapterData(index=ch.chapter_index, title=ch.title or f"第{ch.chapter_index+1}章", text=ch.content or "")
+            for ch in chapter_rows
+        ]
+        embeddings_map = {
+            ch.chapter_index: list(ch.embedding)
+            for ch in chapter_rows if ch.embedding is not None and len(ch.embedding) > 0
+        }
+
+        # Rebuild style direction
+        style_direction = (task.pipeline_config or {}).get("style_direction", "")
+
+        pipeline_input = PipelineInput(
+            task_id=str(task.id), novel_id=str(novel_id),
+            source_text=source_text, novel_title=novel_title,
+            style_direction=style_direction,
+            chapters=chapters, embeddings_map=embeddings_map,
+        )
+        try:
+            store_pipeline_input(r, str(task.id), pipeline_input)
+        except Exception:
+            logger.warning("Redis unavailable — pipeline input not cached for resume.")
 
     # ── re-dispatch pipeline to Celery worker ─────────────────────────
     from app.tasks.pipeline import run_pipeline
 
-    # Restore style_direction from stored pipeline_config
-    celery_kwargs: dict = {}
     stored_style = (task.pipeline_config or {}).get("style_direction", "")
+    celery_kwargs: dict = {}
     if stored_style:
         celery_kwargs["style_direction"] = stored_style
 
     run_pipeline.apply_async(
-        args=(str(task.id), str(task.novel_id)),
+        args=(str(task.id), str(novel_id)),
         kwargs=celery_kwargs,
         task_id=str(task.id),
         expires=7200,

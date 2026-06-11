@@ -1,50 +1,72 @@
 """Celery task — runs the novel-to-script pipeline in a background worker.
 
-Dispatched by ``POST /novels/upload`` (auto) or ``POST /tasks`` (manual).
-Progress is reported through Celery's built-in ``self.update_state()``
-which writes to Redis; the FastAPI SSE endpoint reads it back via
-``AsyncResult(task_id)`` — no DB writes for incremental progress ticks.
+Refactored data flow (no DB access from Celery)::
 
-Only the final result (completed / failed) is persisted to the database.
+  Main (FastAPI):
+    1. Load novel data from DB
+    2. Serialize to PipelineInput (Redis)
+    3. Dispatch Celery task with Redis key reference
 
-Concurrency model
------------------
-Celery natively handles queuing + concurrency:
+  Celery Worker:
+    1. Read PipelineInput from Redis
+    2. Run pipeline (in-memory only)
+    3. Write PipelineOutput to Redis via result backend
 
-- ``apply_async()``           → task lands in Redis broker queue
-- ``worker_prefetch_multiplier=1`` → each worker grabs only 1 task at a time
-- ``--concurrency=N``        → at most N tasks run concurrently per worker
-- ``task_acks_late=True``    → task re-queued if worker crashes mid-execution
-
-Inside each pipeline run, ``asyncio.Semaphore(LLM_MAX_CONCURRENCY)`` gates
-the 3 concurrent LLM stages (Summarization / Conversion / Optimization)
-so the LLM API is never flooded even within a single task.
+  Main (FastAPI):
+    1. Detect SUCCESS via AsyncResult (SSE)
+    2. Read PipelineOutput from Redis
+    3. Persist results to DB
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import traceback
 import uuid
-from datetime import datetime, timezone
 
 from app.core.celery_app import celery_app
-from app.core.db import _session_factory
-from app.models.sql import (
-    Chapter as ChapterModel,
-    KnowledgeEdge,
-    KnowledgeNode,
-    Novel,
-    Task,
+from app.services.pipeline_dto import (
+    ChapterData,
+    KnowledgeGraphData,
+    KGEdgeData,
+    KGNodeData,
+    PipelineInput,
+    PipelineOutput,
+    load_pipeline_input,
+    store_pipeline_result,
 )
+
 from cli.exporter import to_yaml
 from cli.fountain_exporter import to_fountain
 from cli.models import Chapter, KnowledgeEdge as CLIEdge
 from cli.models import KnowledgeGraph, KnowledgeNode as CLINode
-from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
+
+
+def _reconstruct_kg(kg_data: KnowledgeGraphData | None) -> KnowledgeGraph | None:
+    """Reconstruct CLI KnowledgeGraph from DTO."""
+    if not kg_data or not kg_data.nodes:
+        return None
+    nodes = [
+        CLINode(id=n.id, label=n.label, type=n.type, metadata=n.metadata)
+        for n in kg_data.nodes
+    ]
+    edges = [
+        CLIEdge(source=e.source, target=e.target, relation=e.relation, weight=e.weight)
+        for e in kg_data.edges
+    ]
+    return KnowledgeGraph(nodes=nodes, edges=edges)
+
+
+def _build_pipeline_chapters(chapters_data: list[ChapterData]) -> list[Chapter]:
+    """Build CLI Chapter list from DTO."""
+    return [
+        Chapter(text=ch.text, title=ch.title, index=ch.index)
+        for ch in chapters_data
+    ]
 
 
 # =============================================================================
@@ -60,241 +82,190 @@ logger = logging.getLogger(__name__)
     time_limit=7800,       # 2h 10m — hard limit
 )
 def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -> dict:
-    """Execute the full novel-to-script pipeline for *task_id*.
+    """Execute the full novel-to-script pipeline, reading input from Redis.
 
     Args:
-        task_id:  Task UUID string (also used as the Celery task id so
-                  ``AsyncResult(task_id)`` works from FastAPI).
-        novel_id: Novel UUID string.
-        style_direction:  Optional AI scriptwriting / style instruction
-                  injected into Conversion and Optimization prompts.
+        task_id:  Task UUID (also used as Redis key).
+        novel_id: Novel UUID (for result tracking).
+        style_direction:  Optional AI scriptwriting direction.
 
     Returns:
-        ``{"status": "completed", "scenes": N}`` on success.
-
-    Celery queues excess tasks automatically in Redis — if all workers are
-    busy, new tasks wait in the broker until a worker is free.
+        Dict with results which Celery stores in Redis (result backend).
+        The Main process detects completion via AsyncResult and persists.
     """
     tid = uuid.UUID(task_id)
-    nid = uuid.UUID(novel_id)
-    session = _session_factory()
 
     try:
-        # ---- validate task state ---------------------------------------------
-        # Celery may re-queue stale/duplicate tasks on restart.  Only run if
-        # the task is in a valid starting state (pending or failed → resume).
-        task = session.get(Task, tid)
-        if task is None:
-            logger.warning("Task %s not found in DB — skipping.", task_id)
-            session.close()
-            return {"status": "skipped", "reason": "task not found"}
-        if task.status not in ("pending", "failed"):
-            logger.info(
-                "Task %s has status '%s' — skipping (only pending/failed tasks can run).",
-                task_id, task.status,
-            )
-            session.close()
-            return {"status": "skipped", "reason": f"invalid status: {task.status}"}
-        # Stale task guard: if a pending task is older than 3h, it's from a
-        # previous session and should not be executed (the caller should
-        # create a fresh task instead).
-        if task.created_at:
-            age = (datetime.now(timezone.utc) - task.created_at).total_seconds()
-            if age > 10800:  # 3 hours
-                logger.info(
-                    "Task %s is %d seconds old (>3h) — skipping stale task.",
-                    task_id, int(age),
+        # ── Load input from Redis (preferred — no DB access) ─────────────
+        from app.core.redis import get_redis_sync
+
+        redis_conn = get_redis_sync()
+        pipeline_input = None
+        if redis_conn is not None:
+            pipeline_input = load_pipeline_input(redis_conn, task_id)
+
+        # ── Fallback: load from DB (legacy path, Redis unavailable) ─────
+        if pipeline_input is None:
+            logger.warning("Pipeline input not in Redis — falling back to DB for task %s.", task_id)
+            from app.core.db import _session_factory
+            fallback_session = _session_factory()
+            try:
+                from app.models.sql import Chapter as ChapterModel, KnowledgeEdge, KnowledgeNode, Novel, Task as TaskModel
+                from app.services.pipeline_executor import _load_chapters, _load_cached_kg
+
+                task_row = fallback_session.get(TaskModel, tid)
+                if task_row is None:
+                    fallback_session.close()
+                    return {"status": "failed", "error": f"Task {task_id} not found in DB"}
+
+                novel = fallback_session.get(Novel, tid) if False else None
+                novel = fallback_session.query(Novel).filter(Novel.id == task_row.novel_id).first()
+                if novel is None:
+                    fallback_session.close()
+                    # Attempt to find novel directly
+                    novel = fallback_session.get(Novel, task_row.novel_id)
+                if novel is None:
+                    fallback_session.close()
+                    return {"status": "failed", "error": f"Novel not found for task {task_id}"}
+
+                source_text = (novel.source_text or "").strip()
+                chapters, embeddings_map = _load_chapters(fallback_session, task_row.novel_id)
+                cached_kg = _load_cached_kg(fallback_session, task_row.novel_id)
+
+                # Build PipelineInput from DB data
+                chapter_data_list = []
+                if chapters:
+                    for ch in chapters:
+                        chapter_data_list.append(ChapterData(
+                            index=ch.index, title=ch.title, text=ch.text,
+                        ))
+                kg_data = None
+                if cached_kg:
+                    kg_data = KnowledgeGraphData(
+                        nodes=[KGNodeData(id=n.id, label=n.label, type=n.type, metadata=n.metadata) for n in cached_kg.nodes],
+                        edges=[KGEdgeData(source=e.source, target=e.target, relation=e.relation, weight=e.weight) for e in cached_kg.edges],
+                    )
+                pipeline_input = PipelineInput(
+                    task_id=task_id, novel_id=str(task_row.novel_id),
+                    source_text=source_text, novel_title=novel.title or "",
+                    style_direction=style_direction,
+                    chapters=chapter_data_list,
+                    embeddings_map=embeddings_map,
+                    cached_kg=kg_data,
                 )
-                session.close()
-                return {"status": "skipped", "reason": f"stale task ({int(age)}s old)"}
+            finally:
+                fallback_session.close()
 
-        # ---- load novel -------------------------------------------------
-        novel = session.get(Novel, nid)
-        if novel is None:
-            _fail(session, tid, f"Novel {novel_id} not found.")
-            session.close()
-            return {"status": "failed", "error": f"Novel {novel_id} not found."}
+        if pipeline_input is None:
+            return {"status": "failed", "error": f"Cannot load pipeline input for task {task_id}"}
 
-        source = (novel.source_text or "").strip()
+        source = (pipeline_input.source_text or "").strip()
         if not source:
-            logger.warning("Novel %s has no source_text — task stays pending.", nid)
-            session.close()
             return {"status": "pending", "reason": "empty source"}
 
-        # ---- progress callback (Redis-only via Celery built-in state) ---
+        # ── Progress callback (Redis-only via Celery built-in state) ────
         def _on_progress(progress: int, stage: str) -> None:
             try:
-                # Update DB for state machine transitions (infrequent)
-                task = session.get(Task, tid)
-                if task is None:
-                    return
-                current_status = task.status
-                if stage in ("starting", "chunking", "summarizing", "graphrag", "rag"):
-                    if current_status == "pending":
-                        task.status = "preprocessing"
-                elif stage in ("converting",):
-                    if current_status in ("pending", "preprocessing"):
-                        task.status = "converting"
-                if task.status != current_status:
-                    task.updated_at = datetime.now(timezone.utc)
-                    session.add(task)
-                    session.commit()
-
-                # Report progress to Redis (no DB write for the % value)
                 self.update_state(
                     state="PROGRESS",
                     meta={"progress": progress, "stage": stage},
                 )
             except Exception:
                 logger.exception("Progress callback failed (ignored).")
-                session.rollback()
 
-        # ---- load cache from DB -----------------------------------------
-        from app.services.pipeline_executor import (
-            _load_chapters,
-            _load_cached_kg,
-        )
-        from cli.pipeline import run_from_chapters, run_from_text
+        # ── Reconstruct CLI objects ──────────────────────────────────────
+        chapters = _build_pipeline_chapters(pipeline_input.chapters)
+        cached_kg = _reconstruct_kg(pipeline_input.cached_kg)
+        embeddings_map = pipeline_input.embeddings_map
 
-        chapters, embeddings_map = _load_chapters(session, nid)
-        cached_kg = _load_cached_kg(session, nid)
-
-        # ---- build FAISS from cached embeddings --------------------------
+        # ── Build FAISS from cached embeddings ──────────────────────────
+        faiss_index = None
         if chapters and embeddings_map:
             from cli.rag_builder import build_index_from_db_embeddings
 
             faiss_index = build_index_from_db_embeddings(chapters, embeddings_map)
-        else:
-            faiss_index = None
 
-        # ---- run pipeline ------------------------------------------------
+        # ── Run pipeline ─────────────────────────────────────────────────
         if chapters:
+            from cli.pipeline import run_from_chapters
+
             script = asyncio.run(
                 run_from_chapters(
                     chapters,
                     progress_callback=_on_progress,
-                    source_name=novel.title or str(nid),
+                    source_name=pipeline_input.novel_title or str(novel_id),
                     faiss_index=faiss_index,
                     kg=cached_kg,
-                    style_direction=style_direction,
+                    style_direction=style_direction or pipeline_input.style_direction,
                 )
             )
         else:
+            from cli.pipeline import run_from_text
+
             script = asyncio.run(
                 run_from_text(
                     source,
                     progress_callback=_on_progress,
-                    source_name=novel.title or str(nid),
-                    style_direction=style_direction,
+                    source_name=pipeline_input.novel_title or str(novel_id),
+                    style_direction=style_direction or pipeline_input.style_direction,
                 )
             )
 
-        # ---- persist final results to DB ---------------------------------
-        from app.services.pipeline_executor import (
-            _persist_chapters,
-            _persist_embeddings,
-            _persist_kg,
-        )
-
-        task = session.get(Task, tid)
-        if task is None:
-            return {"status": "failed", "error": f"Task {task_id} not found."}
-
-        task.status = "completed"
-        task.progress = 100
-        task.summary = script.summary
-        task.script_yaml = to_yaml(script)
-        task.script_json = script.model_dump(mode="json")
-        task.script_fountain = to_fountain(script)
-        task.characters_json = [
-            {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties, "node_type": "character"}
-            for c in script.characters
-        ]
-        # Persist token usage from the pipeline's meta output
-        task.token_usage = script.meta.get("usage", {})
-        task.updated_at = datetime.now(timezone.utc)
-        session.add(task)
-
-        # v3: populate Script entity
-        from app.models.sql import Script as ScriptModel
-        if task.script_id:
-            script_row = session.get(ScriptModel, task.script_id)
-        else:
-            script_row = None
-        if script_row is None:
-            script_row = ScriptModel(
-                novel_id=nid,
-                user_id=task.user_id,
-                title=task.summary or "Generated Script",
-                source_type="generated",
+        # ── Build PipelineOutput ─────────────────────────────────────────
+        pipeline_kg = getattr(script, "knowledge_graph", None)
+        kg_output = None
+        if pipeline_kg and pipeline_kg.nodes:
+            kg_output = KnowledgeGraphData(
+                nodes=[
+                    KGNodeData(id=n.id, label=n.label, type=n.type, metadata=n.metadata)
+                    for n in pipeline_kg.nodes
+                ],
+                edges=[
+                    KGEdgeData(source=e.source, target=e.target, relation=e.relation, weight=e.weight)
+                    for e in pipeline_kg.edges
+                ],
             )
-            session.add(script_row)
-            session.flush()
-            task.script_id = script_row.id
-            session.add(task)
-        script_row.script_yaml = task.script_yaml
-        script_row.script_json = task.script_json
-        script_row.script_fountain = task.script_fountain
-        script_row.characters_json = task.characters_json
-        script_row.summary = task.summary
-        script_row.token_usage = task.token_usage
-        script_row.status = "completed"
-        script_row.updated_at = datetime.now(timezone.utc)
-        session.add(script_row)
 
-        # ── Commit main result first (Script + Task = completed) ────────
-        # This ensures the pipeline output is saved even if cache persistence
-        # fails (e.g. UniqueViolation from a concurrent pipeline run).
-        session.commit()
-        logger.info(
-            "Pipeline completed for task %s: %d scenes.",
-            task_id, len(script.scenes),
+        output = PipelineOutput(
+            status="completed",
+            scenes=[s.model_dump(mode="json") for s in script.scenes] if hasattr(script, "scenes") else [],
+            summary=script.summary if hasattr(script, "summary") else "",
+            script_yaml=to_yaml(script),
+            script_json=script.model_dump(mode="json"),
+            script_fountain=to_fountain(script),
+            characters=[
+                {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties, "node_type": "character"}
+                for c in (script.characters if hasattr(script, "characters") else [])
+            ],
+            chapters=pipeline_input.chapters,
+            knowledge_graph=kg_output,
+            token_usage=script.meta.get("usage", {}) if hasattr(script, "meta") else {},
         )
 
-        # ── Cache for future runs (best-effort, independent transaction) ─
-        # If another worker already cached this data, IntegrityError is
-        # caught and logged — no effect on the completed pipeline result.
-        try:
-            if not chapters:
-                _persist_chapters(session, nid, script.meta.get("chapter_summaries", []))
-            if not embeddings_map and faiss_index is None:
-                _persist_embeddings(session, nid, source, script)
-            if cached_kg is None:
-                _persist_kg(session, script, tid, nid, script_row.id if script_row else None)
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            logger.info("Cache persistence skipped (already cached by another pipeline run).")
+        # ── Store result in Redis for Main process ───────────────────────
+        if redis_conn:
+            store_pipeline_result(redis_conn, task_id, output)
 
-        session.close()
+        total_cost = output.token_usage.get("total_cost_yuan", 0)
+        logger.info("Pipeline completed for task %s: %d scenes (¥%.4f).", task_id, len(output.scenes), total_cost)
 
-        total_cost = script.meta.get("usage", {}).get("total_cost_yuan", 0)
-        logger.info("Pipeline cost: ¥%.4f.", total_cost)
-        return {"status": "completed", "scenes": len(script.scenes)}
+        return output.to_dict()
 
     except Exception:
         logger.exception("Pipeline failed for task %s.", task_id)
         msg = traceback.format_exc()
-        _fail(session, tid, msg)
-        session.close()
+
+        # Store failure in Redis
+        try:
+            from app.core.redis import get_redis_sync
+            redis_conn = get_redis_sync()
+            if redis_conn:
+                store_pipeline_result(
+                    redis_conn,
+                    task_id,
+                    PipelineOutput(status="failed", error_message=msg),
+                )
+        except Exception:
+            logger.exception("Failed to persist failure result to Redis.")
+
         return {"status": "failed", "error": msg}
-
-
-# =============================================================================
-# Internal
-# =============================================================================
-
-
-def _fail(session, task_id: uuid.UUID, message: str) -> None:
-    """Persist ``failed`` status to DB."""
-    try:
-        task = session.get(Task, task_id)
-        if task is not None:
-            task.status = "failed"
-            task.error_message = message[:5000]
-            task.updated_at = datetime.now(timezone.utc)
-            session.add(task)
-            session.commit()
-    except Exception:
-        logger.exception("Failed to persist failure for task %s.", task_id)
-        session.rollback()
