@@ -74,6 +74,16 @@ def _load_chapters(
 # ---------------------------------------------------------------------------
 
 
+# Map from node_type to ID prefix for CLI-compatible identifiers
+_TYPE_PREFIX: dict[str, str] = {
+    "character":    "char",
+    "location":     "loc",
+    "item":         "item",
+    "event":        "event",
+    "organization": "org",
+}
+
+
 def _load_cached_kg(session, novel_id: uuid.UUID) -> KnowledgeGraph | None:
     """Reconstruct a pipeline ``KnowledgeGraph`` from DB tables.
 
@@ -88,17 +98,22 @@ def _load_cached_kg(session, novel_id: uuid.UUID) -> KnowledgeGraph | None:
     if not nodes:
         return None
 
-    # Build map: DB UUID → CLI string id (n_01, n_02, ...)
+    # Build map: DB UUID → CLI string id with type-specific prefix
+    # (char_01, loc_01, item_01, event_01, org_01, ...)
     id_map: dict[uuid.UUID, str] = {}
     cli_nodes: list[CLINode] = []
-    for i, n in enumerate(nodes):
-        cli_id = f"n_{i+1:02d}"
+    _counters: dict[str, int] = {}
+    for n in nodes:
+        prefix = _TYPE_PREFIX.get(n.node_type, "node")
+        idx = _counters.get(prefix, 0) + 1
+        _counters[prefix] = idx
+        cli_id = f"{prefix}_{idx:02d}"
         id_map[n.id] = cli_id
         cli_nodes.append(CLINode(
             id=cli_id,
-            name=n.name,
-            node_type=n.node_type,
-            properties={
+            label=n.name,
+            type=n.node_type,
+            metadata={
                 **(n.properties or {}),
                 "aliases": n.aliases or [],
                 "description": n.description or "",
@@ -126,8 +141,8 @@ def _load_cached_kg(session, novel_id: uuid.UUID) -> KnowledgeGraph | None:
         tgt = id_map.get(e.target_node_id)
         if src and tgt:
             cli_edges.append(CLIEdge(
-                source_node_id=src,
-                target_node_id=tgt,
+                source=src,
+                target=tgt,
                 relation=e.relation,
                 weight=e.weight or 1.0,
             ))
@@ -264,7 +279,7 @@ def _persist_embeddings(
 def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID, script_id: uuid.UUID | None = None) -> None:
     """Persist CLI KnowledgeGraph nodes/edges to DB tables.
 
-    Maps CLI string ids (``n_01``) → DB UUIDs, inserts nodes first
+    Maps CLI string ids (``char_01``) → DB UUIDs, inserts nodes first
     then edges referencing those UUIDs.  Skips gracefully when the
     KG is empty.
     """
@@ -284,11 +299,11 @@ def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID, script
             novel_id=novel_id,
             script_id=script_id,
             task_id=task_id,
-            node_type=n.node_type,
-            name=n.name,
-            aliases=n.properties.get("aliases", []),
-            description=n.properties.get("description", ""),
-            properties=n.properties,
+            node_type=n.type,
+            name=n.label,
+            aliases=n.metadata.get("aliases", []),
+            description=n.metadata.get("description", ""),
+            properties=n.metadata,
         )
         db_nodes.append(db_node)
         session.add(db_node)
@@ -296,8 +311,8 @@ def _persist_kg(session, script, task_id: uuid.UUID, novel_id: uuid.UUID, script
     session.flush()  # populate UUIDs for FK references
 
     for e in kg.edges:
-        src_id = id_map.get(e.source_node_id)
-        tgt_id = id_map.get(e.target_node_id)
+        src_id = id_map.get(e.source)
+        tgt_id = id_map.get(e.target)
         if src_id is None or tgt_id is None:
             continue
         db_edge = KnowledgeEdge(

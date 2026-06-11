@@ -50,16 +50,17 @@ logger = logging.getLogger(__name__)
 # DeepSeek API configuration
 # ---------------------------------------------------------------------------
 
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_FAST_MODE = os.getenv("DEEPSEEK_FAST_MODE", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Model routing table — maps pipeline stage → DeepSeek model name
 # ---------------------------------------------------------------------------
 
 MODEL_ROUTING: dict[str, str] = {
-    "global_extraction": "deepseek-v4-pro",
+    "global_extraction": "deepseek-v4-flash" if DEEPSEEK_FAST_MODE else "deepseek-v4-pro",
     "scene_conversion": "deepseek-v4-flash",
-    "consistency_check": "deepseek-v4-pro",
+    "consistency_check": "deepseek-v4-flash" if DEEPSEEK_FAST_MODE else "deepseek-v4-pro",
     "chapter_split": "deepseek-v4-flash",
     "chapter_summary": "deepseek-v4-flash",
     "ai_chat": "deepseek-v4-flash",
