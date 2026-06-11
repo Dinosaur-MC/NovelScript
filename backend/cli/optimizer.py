@@ -171,10 +171,24 @@ def _invoke_chain(
 
 
 def _serialize_scenes(scenes: list[Scene]) -> str:
+    def _elem_dict(e):
+        d = {"type": e.type}
+        if hasattr(e, "text"):
+            d["text"] = e.text
+        if hasattr(e, "dialogue"):
+            d["dialogue"] = e.dialogue
+        if hasattr(e, "character_name"):
+            d["character_name"] = e.character_name
+        return d
+
     return json.dumps(
-        [{"scene_id": s.scene_id, "heading": s.heading, "location": s.location,
-          "time_of_day": s.time_of_day,
-          "elements": [{"type": e.type, "content": e.content} for e in s.elements],
+        [{"scene_id": s.scene_id,
+          "heading": s.heading.text if hasattr(s.heading, "text") else str(s.heading),
+          "location": s.heading.location if hasattr(s.heading, "location") else "",
+          "time_of_day": (s.heading.time_of_day.value
+                          if hasattr(s.heading, "time_of_day") and hasattr(s.heading.time_of_day, "value")
+                          else str(s.heading.time_of_day)),
+          "elements": [_elem_dict(e) for e in s.elements],
           "characters_present": s.characters_present} for s in scenes],
         ensure_ascii=False, indent=2,
     )
@@ -208,9 +222,9 @@ def _batch_scenes(scenes: list[Scene]) -> list[list[Scene]]:
 def _summarize_kg(kg: KnowledgeGraph) -> str:
     if not kg.nodes:
         return ""
-    chars = [n for n in kg.nodes if n.node_type == "character"]
+    chars = [n for n in kg.nodes if n.type == "character"]
     return "人物参考：\n" + "\n".join(
-        f"  {c.name} (traits: {c.properties.get('traits', [])})" for c in chars
+        f"  {c.label} (traits: {c.metadata.get('traits', [])})" for c in chars
     )
 
 
@@ -223,16 +237,19 @@ def _restore_source_refs(original: list[Scene], optimized: list[Scene]) -> list[
     """
     for idx, (orig, opt) in enumerate(zip(original, optimized)):
         # Build a content→source_ref map for this original scene
-        ref_map: dict[str, dict] = {}
+        ref_map: dict[str, object] = {}
         for e in orig.elements:
             if e.source_ref:
-                ref_map[e.content] = e.source_ref
+                key = getattr(e, "text", None) or getattr(e, "dialogue", None) or getattr(e, "content", "")
+                if key:
+                    ref_map[key] = e.source_ref
 
         for ei, elem in enumerate(opt.elements):
             if elem.source_ref is not None:
                 continue  # already has a ref
-            if elem.content in ref_map:
-                elem.source_ref = ref_map[elem.content]
+            key = getattr(elem, "text", None) or getattr(elem, "dialogue", None) or getattr(elem, "content", "")
+            if key and key in ref_map:
+                elem.source_ref = ref_map[key]
             elif ei < len(orig.elements) and orig.elements[ei].source_ref:
                 # Position-based fallback when the LLM lightly edited content
                 elem.source_ref = orig.elements[ei].source_ref

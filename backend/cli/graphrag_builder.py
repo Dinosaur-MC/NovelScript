@@ -45,7 +45,13 @@ _PROMPT = ChatPromptTemplate.from_messages([
 实体类型: character, location, item, event, organization
 关系类型: friend_of, enemy_of, master_of, subordinate_of, family_of, lover_of, located_in, belongs_to, owns, used_by, participates_in, causes, leads_to
 
-每个实体必须有唯一的 id (n_01, n_02, ...)。人物实体的 properties 中必须包含 aliases (数组) 和 traits (数组)。
+每个实体必须有唯一的 id，按实体类型使用不同前缀：
+- 人物 (character):     char_01, char_02, ...
+- 地点 (location):      loc_01, loc_02, ...
+- 物品 (item):          item_01, item_02, ...
+- 事件 (event):         event_01, event_02, ...
+- 组织 (organization):  org_01, org_02, ...
+人物实体的 properties 中必须包含 aliases (数组) 和 traits (数组)。
 
 === 关系权重 (weight) 规则 (0.0-1.0) ===
 - 1.0：确定且强烈的关系（血亲、核心敌友、明确的师徒）
@@ -214,9 +220,9 @@ def _format_prior_entities(kg: KnowledgeGraph) -> str:
 
     lines = ["【已提取的实体（如果以下实体再次出现，请复用相同的 id）】"]
     for n in kg.nodes:
-        aliases = n.properties.get("aliases", [])
+        aliases = n.metadata.get("aliases", [])
         alias_hint = f" 别名: {', '.join(aliases[:5])}" if aliases else ""
-        lines.append(f"  {n.id}: {n.name} ({n.node_type}){alias_hint}")
+        lines.append(f"  {n.id}: {n.label} ({n.type}){alias_hint}")
     return "\n".join(lines) + "\n"
 
 
@@ -228,18 +234,18 @@ def _merge_kg(accumulated: KnowledgeGraph, incoming: KnowledgeGraph) -> Knowledg
     are merged into the existing properties.  Edges referencing the old id
     are re-pointed.
     """
-    # Build lookup: (name, node_type) → accumulated node id
+    # Build lookup: (label, type) → accumulated node id
     name_map: dict[tuple[str, str], str] = {}
     for n in accumulated.nodes:
-        name_map[(n.name, n.node_type)] = n.id
-        for alias in n.properties.get("aliases", []):
-            name_map[(alias, n.node_type)] = n.id
+        name_map[(n.label, n.type)] = n.id
+        for alias in n.metadata.get("aliases", []):
+            name_map[(alias, n.type)] = n.id
 
     # Map incoming ids → merged ids (could be an accumulated id)
     id_map: dict[str, str] = {}
 
     for n in incoming.nodes:
-        key = (n.name, n.node_type)
+        key = (n.label, n.type)
         if key in name_map:
             # Reuse existing id; merge aliases/traits
             id_map[n.id] = name_map[key]
@@ -257,15 +263,15 @@ def _merge_kg(accumulated: KnowledgeGraph, incoming: KnowledgeGraph) -> Knowledg
     # Merge edges, re-pointing source/target to resolved ids
     seen_edges: set[tuple[str, str, str]] = set()
     for e in accumulated.edges:
-        seen_edges.add((e.source_node_id, e.target_node_id, e.relation))
+        seen_edges.add((e.source, e.target, e.relation))
     for e in incoming.edges:
-        src = id_map.get(e.source_node_id, e.source_node_id)
-        tgt = id_map.get(e.target_node_id, e.target_node_id)
+        src = id_map.get(e.source, e.source)
+        tgt = id_map.get(e.target, e.target)
         key = (src, tgt, e.relation)
         if key not in seen_edges:
             seen_edges.add(key)
-            e.source_node_id = src
-            e.target_node_id = tgt
+            e.source = src
+            e.target = tgt
             accumulated.edges.append(e)
 
     return accumulated
@@ -273,26 +279,26 @@ def _merge_kg(accumulated: KnowledgeGraph, incoming: KnowledgeGraph) -> Knowledg
 
 def _merge_node_properties(existing: KnowledgeNode, incoming: KnowledgeNode) -> None:
     """Merge *incoming* aliases and traits into *existing* (in-place)."""
-    existing_aliases: list[str] = existing.properties.get("aliases", [])
-    incoming_aliases: list[str] = incoming.properties.get("aliases", [])
+    existing_aliases: list[str] = existing.metadata.get("aliases", [])
+    incoming_aliases: list[str] = incoming.metadata.get("aliases", [])
     for a in incoming_aliases:
         if a not in existing_aliases:
             existing_aliases.append(a)
-    existing.properties["aliases"] = existing_aliases
+    existing.metadata["aliases"] = existing_aliases
 
-    existing_traits: list[str] = existing.properties.get("traits", [])
-    incoming_traits: list[str] = incoming.properties.get("traits", [])
+    existing_traits: list[str] = existing.metadata.get("traits", [])
+    incoming_traits: list[str] = incoming.metadata.get("traits", [])
     for t in incoming_traits:
         if t not in existing_traits:
             existing_traits.append(t)
-    existing.properties["traits"] = existing_traits
+    existing.metadata["traits"] = existing_traits
 
-    # Merge top-level properties that aren't aliases/traits
-    for k, v in incoming.properties.items():
+    # Merge top-level metadata that aren't aliases/traits
+    for k, v in incoming.metadata.items():
         if k in ("aliases", "traits"):
             continue
-        if k not in existing.properties:
-            existing.properties[k] = v
+        if k not in existing.metadata:
+            existing.metadata[k] = v
 
 
 def extract_graph_incremental(
