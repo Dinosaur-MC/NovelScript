@@ -5,6 +5,9 @@ Routes
 POST /chat/{script_id}        — Send a chat message; optionally get a JSON Patch back.
 POST /apply_patch/{script_id} — Apply a JSON Patch to the script's script_json.
 POST /undo/{script_id}        — Roll back the most recent patch operation.
+
+Uses LangGraph for structured tool-call based patch generation (S5).
+GraphRAG context enriches AI prompts with entity/relation data from KG.
 """
 
 from __future__ import annotations
@@ -16,8 +19,9 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select as sa_select
+from sqlalchemy import desc, select as sa_select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -26,16 +30,9 @@ from cli.llm_router import get_llm, invoke_llm_with_retry
 from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
-from app.models.sql import (
-    Dialogue,
-    KnowledgeEdge,
-    KnowledgeNode,
-    Operation,
-    Script,
-    Task,
-    User,
-)
+from app.models.sql import Dialogue, KnowledgeEdge, KnowledgeNode, Operation, Script, Task, User
 from app.services.base import BaseCRUD
+from app.services.graphrag_service import build_graph_context, generate_patch_with_langgraph
 
 logger = logging.getLogger(__name__)
 
@@ -172,41 +169,19 @@ def _parse_script_id(raw: str) -> uuid.UUID:
         raise HTTPException(status_code=422, detail=f"Invalid script_id: {raw!r}")
 
 
-# ── JSON Patch extraction ───────────────────────────────────────────
-
-_PATCH_PATTERN = re.compile(
-    r'```(?:json)?\s*\n?\s*(\{.*?"op"\s*:\s*"(?:replace|add|remove)".*?\})\s*\n?\s*```',
-    re.DOTALL,
-)
-
-
-def _extract_json_patch(text: str) -> Optional[dict]:
-    """Try to extract a JSON Patch object from an AI reply."""
-    for match in _PATCH_PATTERN.finditer(text):
-        try:
-            obj = json.loads(match.group(1))
-            if "op" in obj and "path" in obj:
-                return obj
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
-# ── GraphRAG context ────────────────────────────────────────────────
-
-def _build_graph_context(db: Session, script_id: uuid.UUID, query: str) -> str:
-    """Return relevant KG context for a chat query."""
-    lines: list[str] = []
-    return "\n".join(lines)
-
+# ── Chat message builder (with GraphRAG context) ────────────────────
 
 def _build_chat_messages(
+    db: Session,
     script: Script,
     user_message: str,
     *,
     scene_id: Optional[str] = None,
 ) -> list[dict[str, str]]:
-    """Construct the LLM message list for an editor chat turn from Script data."""
+    """Construct the LLM message list for an editor chat turn.
+
+    Includes GraphRAG context from the knowledge graph (S5).
+    """
     context_parts: list[str] = []
 
     if script.summary:
@@ -216,6 +191,15 @@ def _build_chat_messages(
         context_parts.append(
             f"## Characters\n```json\n{json.dumps(script.characters_json, ensure_ascii=False, indent=2)}\n```"
         )
+
+    # ── GraphRAG context (S5) ────────────────────────────────────────
+    novel_id = str(script.novel_id) if script.novel_id else None
+    script_id = str(script.id) if script.id else ""
+    kg_context = build_graph_context(
+        db, novel_id=novel_id, script_id=script_id, query=user_message,
+    )
+    if kg_context:
+        context_parts.append(kg_context)
 
     if script.script_yaml:
         yaml_text = script.script_yaml
@@ -227,28 +211,34 @@ def _build_chat_messages(
 
     if scene_id and script.script_json:
         scenes = script.script_json.get("scenes", [])
-        target_scene = None
-        for s in scenes:
-            if isinstance(s, dict) and s.get("id") == scene_id:
-                target_scene = s
-                break
+        target_scene = next(
+            (s for s in scenes if isinstance(s, dict) and s.get("id") == scene_id),
+            None,
+        )
         if target_scene:
             context_parts.append(
                 f"## Current Scene ({scene_id})\n```json\n{json.dumps(target_scene, ensure_ascii=False, indent=2)}\n```"
             )
         else:
-            context_parts.append(f"## Note\nScene `{scene_id}` was requested but not found.")
+            context_parts.append(f"## Note\nScene `{scene_id}` was requested but not found in the script. Available scenes: {len(scenes)} total.")
 
     context_block = "\n\n".join(context_parts) if context_parts else "No script context available yet."
 
     system_prompt = (
         "You are an AI script editor for NovelScript. "
         "You help users write and refine structured scripts. "
-        "When you suggest concrete changes, output a JSON Patch operation "
-        "inside a ```json code fence:\n\n"
-        '```json\n{"op": "replace", "path": "/scenes/0/title", "value": "New Title"}\n```\n\n'
-        "Supported operations: replace, add, remove. "
-        "The path is an RFC 6901 JSON Pointer into the script JSON document.\n\n"
+        "When you suggest concrete changes, use the 'apply_script_patch' tool "
+        "to generate a structured JSON Patch operation.\n\n"
+        "Supported patch operations:\n"
+        "- replace: Update an existing value at the given path.\n"
+        "- add: Insert a new value at the given path.\n"
+        "- remove: Delete the value at the given path.\n\n"
+        "Path is an RFC 6901 JSON Pointer into the script JSON document. Examples:\n"
+        '- "/scenes/0/title" — change a scene title\n'
+        '- "/scenes/0/elements/0/dialogue" — change dialogue text\n'
+        '- "/characters/0/name" — rename a character\n\n'
+        "Use the tool to output your patch. If no change is needed, "
+        "just respond conversationally without calling the tool.\n\n"
         "Current task context:\n\n"
         f"{context_block}"
     )
@@ -271,7 +261,12 @@ def chat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Send a message to the AI editor for a given script."""
+    """Send a message to the AI editor for a given script.
+
+    Uses LangGraph workflow with tool calling for structured patch generation (S5).
+    GraphRAG context enriches the prompt with relevant KG entities (S5).
+    Falls back to legacy code-fence extraction if LangGraph is unavailable.
+    """
     sid = _parse_script_id(script_id)
 
     script = script_crud.get(db, sid)
@@ -279,30 +274,51 @@ def chat(
         raise HTTPException(status_code=404, detail=f"Script {script_id!r} not found")
     require_ownership(script, current_user, resource_name="剧本", action="编辑")
 
-    messages = _build_chat_messages(script, body.message, scene_id=body.scene_id)
+    # Build messages with GraphRAG context
+    messages = _build_chat_messages(db, script, body.message, scene_id=body.scene_id)
+
+    # Try LangGraph tool-call approach first
+    patch_obj = None
+    reply_text = ""
+    langgraph_succeeded = False
 
     try:
-        llm = get_llm("ai_chat", 0.7)
-        ai_msg = invoke_llm_with_retry(llm, messages, "ai_chat")
-        reply_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
-
-        thinking = None
-        if hasattr(ai_msg, "additional_kwargs"):
-            thinking = (
-                ai_msg.additional_kwargs.get("reasoning_content")
-                or ai_msg.additional_kwargs.get("thinking")
-            )
-        if not thinking and hasattr(ai_msg, "reasoning_content"):
-            thinking = ai_msg.reasoning_content
+        system_msg = messages[0]["content"]
+        user_msg = messages[1]["content"]
+        reply_text, patch_obj = generate_patch_with_langgraph(system_msg, user_msg)
+        if reply_text:
+            langgraph_succeeded = True
+            logger.info("LangGraph patch generation succeeded for script %s", script_id)
     except Exception as exc:
-        logger.exception("LLM call failed for script %s", script_id)
-        raise HTTPException(status_code=503, detail=f"AI service unavailable: {exc}") from exc
+        logger.warning("LangGraph patch generation failed for script %s: %s", script_id, exc)
+        langgraph_succeeded = False
+
+    # Fallback: legacy LLM call + regex extraction
+    if not langgraph_succeeded or not reply_text:
+        logger.info("Falling back to legacy LLM call for script %s", script_id)
+        try:
+            llm = get_llm("ai_chat", 0.7)
+            ai_msg = invoke_llm_with_retry(llm, messages, "ai_chat")
+            reply_text = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+        except Exception as exc:
+            logger.exception("LLM call failed for script %s", script_id)
+            raise HTTPException(status_code=503, detail=f"AI service unavailable: {exc}") from exc
+
+        # Legacy regex-based patch extraction (fallback)
+        if not patch_obj:
+            patch_obj = _extract_json_patch(reply_text)
+
+    # Extract thinking/reasoning if present (only in legacy path)
+    thinking = None
+    if not langgraph_succeeded:
+        thinking = _extract_thinking(ai_msg)
 
     # Find any associated task for backward compat
     assoc_task = db.execute(
         sa_select(Task).where(Task.script_id == sid).limit(1)
     ).scalar()
 
+    # Persist dialogue
     user_dialogue = Dialogue(
         script_id=sid,
         task_id=assoc_task.id if assoc_task else None,
@@ -322,7 +338,6 @@ def chat(
     )
     dialogue_crud.create(db, assistant_dialogue)
 
-    patch_obj = _extract_json_patch(reply_text)
     if patch_obj:
         assistant_dialogue.patch_json = patch_obj
         db.add(assistant_dialogue)
@@ -501,3 +516,42 @@ def undo(
             "rollback_operation_id": str(rollback.id),
         },
     )
+
+
+# ── Legacy helpers (kept for fallback) ─────────────────────────────
+
+_PATCH_PATTERN = re.compile(
+    r'```(?:json)?\s*\n?\s*(\{.*?"op"\s*:\s*"(?:replace|add|remove)".*?\})\s*\n?\s*```',
+    re.DOTALL,
+)
+
+
+def _extract_json_patch(text: str) -> Optional[dict]:
+    """Try to extract a JSON Patch object from an AI reply.
+
+    Legacy fallback in case LangGraph tool-call is unavailable.
+    """
+    for match in _PATCH_PATTERN.finditer(text):
+        try:
+            obj = json.loads(match.group(1))
+            if "op" in obj and "path" in obj:
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _extract_thinking(ai_msg) -> Optional[str]:
+    """Extract reasoning/thinking from an LLM response."""
+    if ai_msg is None:
+        return None
+    if hasattr(ai_msg, "additional_kwargs"):
+        thinking = (
+            ai_msg.additional_kwargs.get("reasoning_content")
+            or ai_msg.additional_kwargs.get("thinking")
+        )
+        if thinking:
+            return thinking
+    if hasattr(ai_msg, "reasoning_content"):
+        return ai_msg.reasoning_content
+    return None

@@ -195,8 +195,7 @@ def create_task(
     )
     cached_kg = None
     if kg_nodes:
-        from cli.models import _TYPE_PREFIX
-        # Rebuild type prefix map
+        # Rebuild type prefix map (mirrors pipeline_executor._TYPE_PREFIX)
         type_prefix: dict[str, str] = {
             "character": "char", "location": "loc", "item": "item",
             "event": "event", "organization": "org",
