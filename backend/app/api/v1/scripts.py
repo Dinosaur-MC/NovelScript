@@ -364,6 +364,7 @@ def export_script(
     script_id: str,
     format: str = Query("yaml", pattern=r"^(yaml|json|fountain)$"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Export script in the requested format."""
     sid = _parse_id(script_id)

@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _pipeline_watcher_task: asyncio.Task | None = None
 _simple_queue_task: asyncio.Task | None = None
 _WATCHER_INTERVAL = 5  # seconds
+_CONSUMED_MARKER_PREFIX = "pipeline:consumed:"
 
 
 async def _pipeline_result_watcher():
@@ -58,11 +59,15 @@ async def _pipeline_result_watcher():
                 cursor, keys = redis_conn.scan(
                     cursor=cursor,
                     match=f"{REDIS_RESULT_PREFIX}*",
-                    count=20,
+                    count=200,
                 )
                 for key in keys:
                     task_id = key.replace(REDIS_RESULT_PREFIX, "")
                     try:
+                        # Skip if already consumed (marker exists)
+                        if redis_conn.exists(f"{_CONSUMED_MARKER_PREFIX}{task_id}"):
+                            continue
+
                         output = load_pipeline_result(redis_conn, task_id)
                         if output is None:
                             continue
@@ -78,8 +83,13 @@ async def _pipeline_result_watcher():
                                 uuid.UUID(task_id),
                                 uuid.UUID(output.novel_id) if output.novel_id else uuid.UUID(task_id),
                             )
-                            # Remove the result key + release task lock
-                            redis_conn.delete(key)
+                            # Set consumed marker (do NOT delete result key — SSE
+                            # may still need to read script_id from it).
+                            redis_conn.setex(
+                                f"{_CONSUMED_MARKER_PREFIX}{task_id}",
+                                3600,  # 1h — matches Celery result_expires
+                                "1",
+                            )
                             from app.services.task_lock import release_task_lock
                             release_task_lock(task_id)
                             logger.info(

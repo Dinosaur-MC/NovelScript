@@ -121,10 +121,7 @@ class PipelineOutput:
     error_message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        d = asdict(self)
-        if self.knowledge_graph:
-            d["knowledge_graph"] = self.knowledge_graph.to_dict()
-        return d
+        return asdict(self)  # asdict() recursively handles nested dataclasses
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PipelineOutput":

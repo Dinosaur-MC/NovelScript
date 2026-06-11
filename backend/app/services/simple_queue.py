@@ -81,8 +81,6 @@ async def worker_loop():
 
     while True:
         try:
-            await asyncio.sleep(0.1)  # Yield control briefly each iteration
-
             from app.core.redis import get_redis_client
 
             r = get_redis_client()
@@ -206,27 +204,26 @@ async def _run_pipeline_inline(task_id: str, novel_id: str, pipeline_input, styl
         from cli.rag_builder import build_index_from_db_embeddings
         faiss_index = build_index_from_db_embeddings(chapters, pipeline_input.embeddings_map)
 
-    # Progress callback
-    async def _on_progress(progress: int, stage: str) -> None:
+    # Progress callback (synchronous — called from pipeline's internal asyncio loop)
+    import json as _json
+
+    def _on_progress(progress: int, stage: str) -> None:
         try:
             from app.core.redis import get_redis_client
             r = get_redis_client()
             if r:
-                from celery.result import AsyncResult
-                from app.core.celery_app import celery_app
-                # Use Celery's AsyncResult to set state (even without Celery worker)
-                # Fallback: store progress in Redis directly
-                r.setex(f"pipeline:progress:{task_id}", 3600, json.dumps({"progress": progress, "stage": stage}))
+                r.setex(f"pipeline:progress:{task_id}", 3600, _json.dumps({"progress": progress, "stage": stage}))
         except Exception:
             pass
 
-    # Run pipeline
+    # Run pipeline in a thread (pipeline is I/O-bound for LLM calls)
     import asyncio as _asyncio
 
-    if chapters:
-        from cli.pipeline import run_from_chapters
-        script = await _asyncio.to_thread(
-            lambda: _asyncio.run(
+    def _run_pipeline():
+        import asyncio as _inner_asyncio
+        if chapters:
+            from cli.pipeline import run_from_chapters
+            return _inner_asyncio.run(
                 run_from_chapters(
                     chapters,
                     progress_callback=_on_progress,
@@ -236,11 +233,9 @@ async def _run_pipeline_inline(task_id: str, novel_id: str, pipeline_input, styl
                     style_direction=style or pipeline_input.style_direction,
                 )
             )
-        )
-    else:
-        from cli.pipeline import run_from_text
-        script = await _asyncio.to_thread(
-            lambda: _asyncio.run(
+        else:
+            from cli.pipeline import run_from_text
+            return _inner_asyncio.run(
                 run_from_text(
                     source,
                     progress_callback=_on_progress,
@@ -248,7 +243,8 @@ async def _run_pipeline_inline(task_id: str, novel_id: str, pipeline_input, styl
                     style_direction=style or pipeline_input.style_direction,
                 )
             )
-        )
+
+    script = await _asyncio.to_thread(_run_pipeline)
 
     # Build output
     pipeline_kg = getattr(script, "knowledge_graph", None)
