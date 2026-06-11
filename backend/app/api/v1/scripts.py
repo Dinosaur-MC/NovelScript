@@ -84,6 +84,7 @@ def list_scripts(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List scripts — optionally filtered by novel, status, or source type."""
     stmt = select(Script).order_by(Script.updated_at.desc())
@@ -175,7 +176,11 @@ def create_script(
 # ── GET /{script_id} — detail ───────────────────────────────────────
 
 @router.get("/{script_id}")
-def get_script(script_id: str, db: Session = Depends(get_db)):
+def get_script(
+    script_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a script with full artifacts and knowledge graph."""
     sid = _parse_id(script_id)
     script = script_crud.get(db, sid)
@@ -381,6 +386,7 @@ def export_script(
 def list_dialogues(
     script_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Retrieve AI chat history for a script."""
     sid = _parse_id(script_id)

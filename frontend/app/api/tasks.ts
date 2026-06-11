@@ -79,6 +79,10 @@ export function resumeTask(id: string) {
   });
 }
 
+export function deleteTask(id: string) {
+  return request<{ deleted_id: string }>(`/tasks/${id}`, { method: "DELETE" });
+}
+
 /** Create an EventSource for real-time SSE progress streaming. */
 export function createTaskStream(id: string): EventSource {
   const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";

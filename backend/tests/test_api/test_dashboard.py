@@ -1,4 +1,4 @@
-"""Tests for GET /api/v1/tasks/dashboard — user-scoped aggregation endpoint."""
+"""Tests for GET /api/v1/dashboard — user-scoped aggregation endpoint."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from app.core.security import create_access_token, hash_password
 from app.main import app
 from app.models.sql import Novel, Script, Task, User
 
-DASHBOARD_URL = "/api/v1/tasks/dashboard"
+DASHBOARD_URL = "/api/v1/dashboard"
 
 
 # ---------------------------------------------------------------------------

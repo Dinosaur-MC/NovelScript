@@ -168,13 +168,12 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovel(pasteText.trim(), uploadTitle || undefined);
-            const taskRes = await createTask(upRes.novel_id);
-            message.success("上传成功，转换任务已创建");
+            message.success("小说上传成功");
             setUploadOpen(false);
             setPasteText("");
             setUploadTitle("");
-            setTask(taskRes.task_id, upRes.novel_id, null, "pending");
-            navigate(`/workspace/${taskRes.task_id}`);
+            // Refresh the novel list — task creation is done from the novel page
+            load();
         } catch (err) {
             message.error(err instanceof Error ? err.message : "上传失败");
         } finally {
@@ -186,12 +185,11 @@ export function HomePage() {
         setUploading(true);
         try {
             const upRes = await uploadNovelFile(file, uploadTitle || undefined);
-            const taskRes = await createTask(upRes.novel_id);
-            message.success("上传成功，转换任务已创建");
+            message.success("小说上传成功");
             setUploadOpen(false);
             setUploadTitle("");
-            setTask(taskRes.task_id, upRes.novel_id, null, "pending");
-            navigate(`/workspace/${taskRes.task_id}`);
+            // Refresh the novel list — task creation is done from the novel page
+            load();
         } catch (err) {
             message.error(err instanceof Error ? err.message : "上传失败");
         } finally {
@@ -213,9 +211,9 @@ export function HomePage() {
     const handleNewConversion = async (novelId: string) => {
         try {
             const taskRes = await createTask(novelId);
-            message.success("转换任务已创建");
+            message.success("转换任务已创建，前往小说页面查看进度");
             setTask(taskRes.task_id, novelId, null, "pending");
-            navigate(`/workspace/${taskRes.task_id}`);
+            navigate(`/novels/${novelId}`);
         } catch {
             message.error("创建任务失败");
         }
@@ -272,17 +270,8 @@ export function HomePage() {
         return (
             <Card
                 key={n.id}
-                hoverable
                 size="small"
                 className="ns-workspace-card ns-workspace-card-novel"
-                onClick={() => {
-                    if (blockNav.current) {
-                        blockNav.current = false;
-                        return;
-                    }
-                    const scr = scriptsByNovel[n.id]?.[0];
-                    if (scr) navigate(`/workspace/${scr.script_id}`);
-                }}
                 title={
                     <div className="ns-workspace-card-header">
                         <span className="ns-workspace-card-title">《{n.title}》</span>
@@ -321,20 +310,32 @@ export function HomePage() {
                     </span>
                     {n.author && <span className="ns-workspace-card-stat">{n.author}</span>}
                 </div>
-                {st && <Tag color={STATUS_COLOR[st] || "default"}>{STATUS_LABEL[st] || st}</Tag>}
-                {!st && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+                    {st && <Tag color={STATUS_COLOR[st] || "default"}>{STATUS_LABEL[st] || st}</Tag>}
                     <Button
                         size="small"
-                        type="dashed"
-                        icon={<PlusOutlined />}
+                        icon={<BookOutlined />}
                         onClick={(e) => {
                             e.stopPropagation();
-                            handleNewConversion(n.id);
+                            navigate(`/novels/${n.id}`);
                         }}
                     >
-                        开始转换
+                        详情
                     </Button>
-                )}
+                    {!st && (
+                        <Button
+                            size="small"
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleNewConversion(n.id);
+                            }}
+                        >
+                            转换
+                        </Button>
+                    )}
+                </div>
             </Card>
         );
     };

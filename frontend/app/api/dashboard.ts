@@ -40,5 +40,5 @@ export interface DashboardData {
 }
 
 export function getDashboard() {
-  return request<DashboardData>("/tasks/dashboard");
+  return request<DashboardData>("/dashboard");
 }

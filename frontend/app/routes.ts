@@ -5,5 +5,6 @@ export default [
   route("login", "routes/login.tsx"),
   route("workspace", "routes/home.tsx"),
   route("workspace/:scriptId", "routes/workspace.tsx"),
+  route("novels/:novelId", "routes/novel-page.tsx"),
   route("dashboard", "routes/dashboard.tsx"),
 ] satisfies RouteConfig;

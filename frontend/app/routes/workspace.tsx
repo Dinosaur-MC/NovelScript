@@ -1,18 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router";
-import { message, Tag, Button } from "antd";
-import { SyncOutlined, HomeOutlined } from "@ant-design/icons";
+import { message, Button } from "antd";
+import { HomeOutlined } from "@ant-design/icons";
 
 import { getNovel, getNovelKnowledgeGraph } from "../api/novels";
 import { getScript } from "../api/scripts";
-import { getTask } from "../api/tasks";
 import { ApiError } from "../api/types";
-import { useTaskStore } from "../stores/task-store";
 import { useNovelStore } from "../stores/novel-store";
 import { useScriptStore } from "../stores/script-store";
 import { useUIStore } from "../stores/ui-store";
 import { useAutoSave } from "../hooks/useAutoSave";
-import { useSSE } from "../hooks/useSSE";
 import { useNovelReader } from "../hooks/useNovelReader";
 import { useScriptEditor } from "../hooks/useScriptEditor";
 import { useTraceLinking } from "../hooks/useTraceLinking";
@@ -35,7 +32,6 @@ export default function Workspace() {
   const [error, setError] = useState<string | null>(null);
 
   // Stores
-  const setTask = useTaskStore((s) => s.setTask);
   const setNovel = useNovelStore((s) => s.setNovel);
   const setChapters = useNovelStore((s) => s.setChapters);
   const loadScript = useScriptStore((s) => s.loadScript);
@@ -54,67 +50,32 @@ export default function Workspace() {
   const editorHook = useScriptEditor();
   const traceHook = useTraceLinking(readerHook, editorHook);
 
-  // On pipeline complete, navigate to the newly created Script
-  const onTaskComplete = useCallback((scriptId?: string) => {
-    if (scriptId) {
-      navigate(`/workspace/${scriptId}`, { replace: true });
-    }
-  }, [navigate]);
-
-  // Progress polling (SSE) — activates when task-store has a running task
-  useSSE(onTaskComplete);
-
-  // Async data load — Phase 1: Script or Task, Phase 2: Novel + KG
+  // Async data load
   useEffect(() => {
     if (!scriptId) return;
     let cancelled = false;
 
     async function load() {
       try {
-        const workId = scriptId!;
-        let novelId: string | null = null;
-
-        // ── Phase 1: Resolve route param as Script or Task ────────────
+        // Load Script (the only valid source of truth)
+        let scriptData;
         try {
-          // Try as Script first (pipeline completed → Script exists)
-          const scriptData = await getScript(workId);
+          scriptData = await getScript(scriptId!);
+        } catch (err) {
           if (cancelled) return;
-
-          loadScript(scriptData);
-          novelId = scriptData.novel_id;
-          setTask("", novelId ?? "", workId, "completed", 100);
-        } catch {
-          // Not a Script — try as Task (in-progress conversion)
-          try {
-            const taskData = await getTask(workId);
-            if (cancelled) return;
-
-            novelId = taskData.novel_id;
-
-            // If task is already completed, redirect to its Script
-            if (taskData.status === "completed" && taskData.script_id) {
-              if (!cancelled) {
-                navigate(`/workspace/${taskData.script_id}`, { replace: true });
-              }
-              return;
-            }
-
-            // Task still in progress — set up SSE tracking
-            setTask(workId, novelId, null, taskData.status as never, taskData.progress);
-          } catch (taskErr) {
-            // Neither Script nor Task exists
-            if (!cancelled) {
-              if (taskErr instanceof ApiError && taskErr.status === 404) {
-                setError("剧本或任务不存在（可能已被删除）");
-              } else {
-                setError(taskErr instanceof Error ? taskErr.message : "加载失败，请检查网络后重试");
-              }
-            }
-            return;
+          if (err instanceof ApiError && err.status === 404) {
+            setError("剧本不存在（可能已被删除）");
+          } else {
+            setError(err instanceof Error ? err.message : "加载失败，请检查网络后重试");
           }
+          return;
         }
+        if (cancelled) return;
 
-        // ── Phase 2: Fetch novel data (non-critical) ─────────────────
+        loadScript(scriptData);
+        const novelId = scriptData.novel_id;
+
+        // Load novel data (non-critical, for reader panel)
         if (novelId) {
           try {
             const novelData = await getNovel(novelId);
@@ -146,7 +107,15 @@ export default function Workspace() {
 
     load();
     return () => { cancelled = true; };
-  }, [scriptId, loadScript, setTask, setNovel, setChapters, setKnowledgeGraph, navigate]);
+  }, [scriptId]);
+
+  // Clear stores on unmount
+  useEffect(() => {
+    return () => {
+      useScriptStore.getState().clearScript();
+      useNovelStore.getState().clearNovel();
+    };
+  }, []);
 
   if (error) {
     return (
@@ -171,15 +140,9 @@ export default function Workspace() {
             <span className="ns-workspace-loading-text">加载中...</span>
           </div>
         ) : !scriptLoaded ? (
-          <div className="ns-workspace-task-progress">
-            <SyncOutlined spin style={{ fontSize: 48, color: "var(--color-accent-primary)" }} />
-            <h3>剧本转换中</h3>
-            <p className="ns-workspace-task-progress-desc">
-              正在将小说转换为剧本，请稍候…完成后将自动加载到编辑器中。
-            </p>
-            <Button type="link" icon={<HomeOutlined />} onClick={() => navigate("/")}>
-              返回首页
-            </Button>
+          <div className="ns-workspace-loading">
+            <div className="ns-spinner" />
+            <span className="ns-workspace-loading-text">剧本数据加载异常</span>
           </div>
         ) : (
           <div className="ns-workspace-panels">

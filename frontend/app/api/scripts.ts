@@ -1,4 +1,5 @@
 import { request } from "./client";
+import { getAuthToken } from "./types";
 
 export interface ScriptLight {
   script_id: string;
@@ -82,7 +83,12 @@ export async function exportScript(
 ): Promise<string> {
   // Backend returns raw text (PlainTextResponse), not JSON — bypass request().
   const BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api/v1";
-  const res = await fetch(`${BASE_URL}/scripts/${id}/export?format=${format}`);
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${BASE_URL}/scripts/${id}/export?format=${format}`, { headers });
   if (!res.ok) throw new Error(`导出失败 (${res.status})`);
   return res.text();
 }

@@ -55,6 +55,7 @@ export function useSSE(onComplete?: (scriptId?: string) => void) {
           if (data.status === "failed") {
             if (pollRef.current) clearInterval(pollRef.current);
             pollRef.current = null;
+            useTaskStore.getState().setError(data.error_message || "任务失败");
           }
         } catch {
           failures.count++;
@@ -100,6 +101,7 @@ export function useSSE(onComplete?: (scriptId?: string) => void) {
           const data = JSON.parse(e.data);
           if (data.error) {
             console.error("SSE pipeline error:", data.error);
+            useTaskStore.getState().setError(data.error);
           }
         } catch { /* ignore parse errors */ }
         es.close();

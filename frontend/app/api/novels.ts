@@ -75,3 +75,21 @@ export function updateNovel(id: string, data: { title?: string; author?: string 
     body: JSON.stringify(data),
   });
 }
+
+export interface NovelTaskItem {
+  id: string;
+  novel_id: string;
+  script_id: string | null;
+  status: string;
+  progress: number;
+  summary: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export function listNovelTasks(novelId: string, page = 1, limit = 20) {
+  return request<{ tasks: NovelTaskItem[]; total: number; page: number; limit: number }>(
+    `/novels/${novelId}/tasks?page=${page}&limit=${limit}`,
+  );
+}

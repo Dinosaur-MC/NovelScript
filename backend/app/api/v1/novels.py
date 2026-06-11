@@ -18,7 +18,7 @@ from app.core.auth_middleware import get_current_user, require_ownership
 from app.core.db import get_db
 from app.models.http import BaseResponse
 from app.models.sql import Chapter as ChapterModel
-from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Script, User
+from app.models.sql import KnowledgeEdge, KnowledgeNode, Novel, Script, Task, User
 from app.services.base import BaseCRUD
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,7 @@ def list_novels(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List novels with pagination."""
     offset = (page - 1) * limit
@@ -196,7 +197,7 @@ def list_novels(
 
 
 @router.get("/{novel_id}", response_model=BaseResponse)
-def get_novel(novel_id: str, db: Session = Depends(get_db)):
+def get_novel(novel_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Get a single novel with its ordered chapters nested in the response."""
     nid = _parse_uuid(novel_id)
     novel = novel_crud.get(db, nid)
@@ -306,12 +307,64 @@ def delete_novel(
 
 
 # ---------------------------------------------------------------------------
+# GET /{novel_id}/tasks — list tasks belonging to a novel
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{novel_id}/tasks", response_model=BaseResponse)
+def list_novel_tasks(
+    novel_id: str,
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List tasks for a given novel with pagination."""
+    nid = _parse_uuid(novel_id)
+    novel = novel_crud.get(db, nid)
+    if novel is None:
+        raise HTTPException(status_code=404, detail="Novel not found")
+
+    offset = (page - 1) * limit
+    task_crud = BaseCRUD[Task](Task)
+    rows, total = task_crud.list(
+        db, offset=offset, limit=limit,
+        filters={"novel_id": nid, "user_id": current_user.id},
+    )
+
+    return BaseResponse(
+        code=200,
+        message="OK",
+        data={
+            "tasks": [
+                {
+                    "id": str(t.id),
+                    "novel_id": str(t.novel_id),
+                    "script_id": str(t.script_id) if t.script_id else None,
+                    "status": t.status,
+                    "progress": t.progress,
+                    "summary": t.summary,
+                    "error_message": t.error_message,
+                    "pipeline_config": t.pipeline_config,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                }
+                for t in rows
+            ],
+            "total": total,
+            "page": page,
+            "limit": limit,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /{novel_id}/knowledge-graph — knowledge graph scoped by novel
 # ---------------------------------------------------------------------------
 
 
 @router.get("/{novel_id}/knowledge-graph", response_model=BaseResponse)
-def get_novel_knowledge_graph(novel_id: str, db: Session = Depends(get_db)):
+def get_novel_knowledge_graph(novel_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Return the knowledge graph (nodes + edges) for a given novel.
 
     KG data is associated with the novel, not a specific task — successive
