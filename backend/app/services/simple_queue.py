@@ -90,7 +90,8 @@ async def worker_loop():
 
             # Blocking pop with timeout (allows clean CancelledError handling)
             try:
-                result = r.brpop(QUEUE_KEY, timeout=5)
+                # Run sync brpop in a thread to avoid blocking the asyncio event loop
+                result = await asyncio.to_thread(r.brpop, QUEUE_KEY, 5)
             except Exception:
                 await asyncio.sleep(1)
                 continue
