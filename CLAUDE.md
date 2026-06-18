@@ -14,25 +14,28 @@ NovelScript (析幕) is an AI-driven pipeline that converts long-form novels (3+
 |-------|--------|
 | Pipeline CLI | ✅ Complete — 8 stages (incl. post-processing), JSON mode, retry, paragraph splitter, chapter summaries, narrative summary, directory input |
 | Database | ✅ Complete — 9 tables, pgvector HNSW, pg_trgm, sync psycopg2, KG persistence, embedding caching, token_usage tracking |
-| API (25 endpoints) | ✅ Complete — auth (JWT+argon2, ownership checks), novels, scripts, tasks (SSE), editor (GraphRAG-enhanced) |
-| Pipeline ↔ DB Integration | ✅ Complete — Celery worker (Redis broker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
-| Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; run_pipeline.apply_async() |
-| Auth & Security | ✅ Complete — get_current_user (blacklist→cache→DB), jti revocation, login rate limiting, require_ownership helper |
-| Tests | ✅ 288 backend (27 test files, 5 subdirs) + 9 frontend (Vitest), 0 skipped |
+| API (~30 endpoints) | ✅ Complete — auth (JWT+argon2, ownership checks), novels, scripts, tasks (SSE), editor (GraphRAG-enhanced), dashboard |
+| Pipeline ↔ DB Integration | ✅ Complete — Celery via Redis DTOs (no DB access from worker), SSE via AsyncResult polling, DB chapters + KG cache preferred |
+| Background Tasks | ✅ Complete — Celery + Redis replaces daemon threads; fallback to Redis simple queue when Celery unavailable |
+| Auth & Security | ✅ Complete — get_current_user on ALL endpoints (incl. GET), jti revocation, login rate limiting, require_ownership helper |
+| Distributed Lock | ✅ Complete — Redis SET NX EX prevents double-dispatch when Celery recovers mid-queue |
+| GraphRAG | ✅ Complete — KG context injection + LangGraph tool_call for structured patch generation |
+| Tests | ✅ 298 backend (27 test files, 5 subdirs), 0 skipped |
 | Docker | ✅ Complete — multi-stage Dockerfile (api/worker targets), docker-compose (prod/dev profiles, 5 services) |
 
 ### Frontend Status Summary
 
 | Layer | Status |
 |-------|--------|
-| Routes | 4 (home, login, dashboard, workspace) |
-| Components | 11 (NovelReader, ScriptEditor, ScriptPreview, KnowledgeGraph, AIChat, RightPanel, TaskBar, StatusBar, Splitter, HomePage, ClientOnly) |
+| Routes | 5 (home, login, dashboard, workspace, novel/:id) |
+| Components | 12 (NovelReader, ScriptEditor, ScriptPreview, KnowledgeGraph, AIChat, RightPanel, TaskBar, StatusBar, Splitter, HomePage, ClientOnly, NovelPage) |
 | API Modules | 6 (auth, novels, scripts, tasks, editor, types) |
-| Zustand Stores | 6 (auth, novel, script, editor, task, ui) |
-| Hooks | 6 (useAutoSave, useKeyboard, useNovelReader, useSSE, useScriptEditor, useTraceLinking) |
+| Stores | 6 (auth, novel, script, editor, task, ui) |
+| Hooks | 7 (useAutoSave, useKeyboard, useNovelReader, useSSE, useScriptEditor, useTraceLinking, useTaskSSE) |
+| SSE Manager | Singleton with shared EventSource connections (reference-counted, no duplicate streams) |
 | Frontend Tests | 9 (3 hooks, 6 stores) |
 
-**API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/editor/`  (all write endpoints use auth middleware)
+**API URL tree:** `/api/v1/auth/*` `/novels/` `/scripts/` `/tasks/` `/dashboard/` `/editor/`  (all endpoints use auth middleware)
 
 ### Pipeline Stages (v0.3.0)
 
@@ -109,7 +112,7 @@ uv run python main.py                           # Start dev server (uvicorn, por
 # Celery Worker (separate terminal — required for pipeline tasks):
 celery -A app.core.celery_app worker --loglevel=info --concurrency=2
 
-uv run pytest                                   # Run tests (158 passing)
+uv run pytest                                   # Run tests (298 passing)
 uv run python -m cli.pipeline <input.txt>       # Pipeline standalone (no DB)
 uv run python -m cli.pipeline chapters/ -o out.yaml  # Directory input
 uv add <package>                                # Add a dependency
@@ -151,24 +154,31 @@ pnpm run test:watch                             # Vitest watch mode
 ```
 backend/
 ├── app/
-│   ├── main.py                # FastAPI app factory — lifespan, CORS, exception handlers
-│   ├── api/v1/                # 25 endpoints: auth, novels, scripts, tasks, editor
+│   ├── main.py                # FastAPI app factory — lifespan (background watcher + simple queue),
+│   │                          #   CORS, exception handlers
+│   ├── api/v1/                # ~30 endpoints: auth, novels, scripts, tasks, editor, dashboard
 │   │   ├── __init__.py        # Single router tree → /api/v1/*
 │   │   ├── auth.py            # register, login, logout, me (JWT + argon2)
-│   │   ├── novels.py          # upload (JSON/file, auto-create Task), list, get, update, delete
-│   │   ├── scripts.py         # list, get, update (YAML validate), delete, export
-│   │   ├── tasks.py           # create, list, stream (SSE via AsyncResult), status, update, resume, get
-│   │   └── editor.py          # chat (LLM + GraphRAG context), apply_patch (RFC 6901), undo
+│   │   ├── novels.py          # upload (JSON/file), list, get (w/ chapters), update, delete, KG,
+│   │   │                      #   list_tasks (novel-scoped task management)
+│   │   ├── scripts.py         # list, get, update (YAML validate + Operation), delete, export, fork
+│   │   ├── tasks.py           # create (dispatch Celery/queue), list (filters), stream (SSE),
+│   │   │                      #   status, update (state machine), resume, delete, get
+│   │   ├── dashboard.py       # user-scoped stats + recent tasks/scripts/novels
+│   │   └── editor.py          # chat (LangGraph tool_call + GraphRAG context),
+│   │                          #   apply_patch (RFC 6901), undo
 │   ├── core/
 │   │   ├── config.py          # pydantic-settings — DATABASE_URL, REDIS_URL, API keys, ADMIN_*
 │   │   ├── db.py              # Sync engine (psycopg2), session, get_db(), init_db(),
 │   │   │                      #   dispose_engine(), _seed_admin(), recover_stale_tasks()
-│   │   ├── redis.py           # Redis connection pool (lazy, thread-safe), get_redis() DI
+│   │   ├── redis.py           # Redis connection pool (lazy, thread-safe), get_redis() DI,
+│   │   │                      #   get_redis_sync() for non-request contexts
 │   │   ├── security.py        # argon2 hashing, JWT create/decode (jti claim), configure_jwt()
 │   │   ├── auth_middleware.py # get_current_user (blacklist → cache → DB), require_ownership
 │   │   └── celery_app.py      # Celery singleton (Redis broker + backend, 7 config keys)
 │   ├── tasks/
-│   │   └── pipeline.py        # Celery task: run_pipeline() with self.update_state() for SSE
+│   │   └── pipeline.py        # Celery task: run_pipeline() reads PipelineInput from Redis,
+│   │                          #   writes PipelineOutput to Redis (NO DB access)
 │   ├── models/
 │   │   ├── http.py            # BaseResponse(code, message, data), ErrorResponse
 │   │   ├── sql.py             # 9 SQLModel tables (users…audit_logs), TaskModel.token_usage
@@ -176,9 +186,12 @@ backend/
 │   ├── services/
 │   │   ├── base.py            # BaseCRUD[T] — create/get/list/update/delete
 │   │   ├── progress.py        # ProgressManager no-op compat stub
-│   │   ├── pipeline_executor.py  # Stateless DB helpers for Celery worker: _load_chapters,
-│   │   │                      #   _load_cached_kg, _persist_kg, _persist_embeddings, _persist_chapters
-│   │   ├── sse.py             # push_progress() → ProgressManager (deprecated — use Celery)
+│   │   ├── pipeline_executor.py  # DB persistence: _load_chapters, _load_cached_kg, _persist_*,
+│   │   │                      #   persist_pipeline_output() — called by Main, NOT by Celery
+│   │   ├── pipeline_dto.py    # PipelineInput/PipelineOutput dataclasses + Redis serialize
+│   │   ├── graphrag_service.py  # KG context builder + LangGraph patch workflow (tool_call)
+│   │   ├── simple_queue.py    # Redis LPUSH/BRPOP queue — Celery fallback for single-machine
+│   │   ├── task_lock.py       # Distributed lock (SET NX EX) — prevents double-dispatch
 │   │   ├── token_blacklist.py # JWT revocation — bl:{jti} Redis key with auto-TTL
 │   │   ├── rate_limiter.py    # Fixed-window rate limiter — INCR + SET NX EX
 │   │   └── user_cache.py      # User profile cache — user:{id}, 300s TTL
@@ -213,9 +226,13 @@ backend/
 ```
 
 **Key architectural patterns**:
-- **Celery + Redis**: Pipeline execution delegated to separate worker processes via `run_pipeline.apply_async()`.  No in-process daemon threads.
-- **SSE via AsyncResult**: SSE endpoint polls `AsyncResult(task_id).state/.info` from Redis (every 500ms).  No in-process `queue.Queue`.
+- **Celery + Redis (no DB access)**: Celery worker reads PipelineInput from Redis, writes PipelineOutput to Redis.  Main process persists results to DB via background watcher + SSE handler.
+- **Redis simple queue fallback**: When Celery is unavailable, tasks are queued via Redis LPUSH/BRPOP and processed inline by Main's background worker.
+- **Distributed task lock**: Redis `SET NX EX` prevents double-dispatch when Celery recovers mid-queue. Lock released on terminal state (consumed marker).
+- **SSE via AsyncResult**: SSE endpoint polls `AsyncResult(task_id).state/.info` from Redis (every 500ms).  Dual persistence path: SSE handler (real-time) + background watcher (guaranteed delivery).
+- **Centralized SSE Manager (frontend)**: Singleton maintains ONE EventSource per task_id with reference counting. Multiple components share the same connection.
 - **DB Cache**: Chapter embeddings (1536-dim) + KG nodes/edges persisted to DB after first run.  Subsequent pipeline runs skip API calls.
+- **GraphRAG context**: AI chat prompts enriched with KG entities/relations via key word scoring.  Patch generation uses LangGraph tool_call instead of fragile regex.
 - **Dual-model routing**: `deepseek-v4-pro` for GraphRAG + optimization; `deepseek-v4-flash` for chunking, summarization, conversion, AI chat
 - **All-in-One DB**: PostgreSQL 18, 9 tables, sync psycopg2 (not asyncpg), no separate vector/graph DB
 - **pgvector HNSW** on `chapters.embedding` and `knowledge_nodes.embedding`; pg_trgm GIN on `knowledge_nodes.name`
@@ -223,7 +240,7 @@ backend/
 - **Application-layer retry**: Exponential backoff with jitter for all LLM calls (per-stage config, `LLM_MAX_RETRIES` env var)
 - **UTF-8 everywhere**: stdin/stdout reconfigured on Windows, logging encoding, file upload encoding fallback (GB18030/GBK/GB2312/Big5)
 - **Engine pool disposal**: `atexit` + FastAPI lifespan + test fixture teardown (3-layer guarantee)
-- **Auth middleware**: `get_current_user` enforces Bearer JWT on all write endpoints; `require_ownership()` helper for resource-level access control
+- **Auth middleware**: `get_current_user` enforces Bearer JWT on ALL endpoints (incl. read). `require_ownership()` for resource-level access control. Admins bypass ownership checks.
 - **Redis auth services**: JWT logout via `jti` blacklist (auto-TTL), login rate limiting (5/15min per email+IP), user profile cache (300s TTL), graceful degradation on Redis unreachable
 
 ### Database Tables
