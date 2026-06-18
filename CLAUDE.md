@@ -273,15 +273,6 @@ pending → preprocessing → converting → completed
 - **Model-aware context budgets**: Auto-detected from model name, .env overridable, conservative CJK ratio (0.6 chars/token)
 - **Progressive degradation**: Each pipeline stage has a fallback — KG returns empty, converter returns [], optimizer keeps originals
 
-## Competition Constraints (metadata.md)
-
-This project participates in a judged competition. Important rules:
-- Each PR must do exactly one thing; split large features into multiple small PRs
-- PR descriptions must include: title summary, feature description, implementation approach, and testing method
-- The `main` branch must remain runnable at all times — judges may check at any point
-- All commits must fall within the competition window; no "last-day bulk import"
-- When collaborating, each team member must use their own GitHub account for commits
-
 ## Related Documentation
 
 - `docs/business-logic.md` — Full API reference with activity diagrams, data models, state machines (v2.2.0)
