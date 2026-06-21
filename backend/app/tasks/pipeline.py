@@ -234,12 +234,13 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
             script_json=script.model_dump(mode="json"),
             script_fountain=to_fountain(script),
             characters=[
-                {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties, "node_type": "character"}
+                {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.metadata, "node_type": "character"}
                 for c in (script.characters if hasattr(script, "characters") else [])
             ],
             chapters=pipeline_input.chapters,
             knowledge_graph=kg_output,
             token_usage=script.meta.get("usage", {}) if hasattr(script, "meta") else {},
+            novel_id=novel_id,
         )
 
         # ── Store result in Redis for Main process to consume ────────────
@@ -264,7 +265,7 @@ def run_pipeline(self, task_id: str, novel_id: str, style_direction: str = "") -
                 store_pipeline_result(
                     redis_conn,
                     task_id,
-                    PipelineOutput(status="failed", error_message=msg),
+                    PipelineOutput(status="failed", error_message=msg, novel_id=novel_id),
                 )
         except Exception:
             logger.exception("Failed to persist failure result to Redis.")

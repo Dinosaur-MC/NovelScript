@@ -119,6 +119,7 @@ class PipelineOutput:
     knowledge_graph: KnowledgeGraphData | None = None
     token_usage: dict[str, Any] = field(default_factory=dict)
     error_message: str = ""
+    novel_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)  # asdict() recursively handles nested dataclasses
@@ -144,6 +145,7 @@ class PipelineOutput:
             knowledge_graph=kg,
             token_usage=data.get("token_usage", {}),
             error_message=data.get("error_message", ""),
+            novel_id=data.get("novel_id", ""),
         )
 
 

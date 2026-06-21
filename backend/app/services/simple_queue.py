@@ -133,7 +133,7 @@ async def worker_loop():
                     logger.error("Pipeline input not found for task %s — skipping.", task_id)
                     store_pipeline_result(
                         r, task_id,
-                        PipelineOutput(status="failed", error_message="Pipeline input not found in Redis"),
+                        PipelineOutput(status="failed", error_message="Pipeline input not found in Redis", novel_id=novel_id),
                     )
                     continue
 
@@ -155,7 +155,7 @@ async def worker_loop():
                     if r2:
                         store_pipeline_result(
                             r2, data.get("task_id", "unknown"),
-                            PipelineOutput(status="failed", error_message=str(exc)),
+                            PipelineOutput(status="failed", error_message=str(exc), novel_id=data.get("novel_id", "")),
                         )
                     release_task_lock(data.get("task_id", "unknown"))
                 except Exception:
@@ -183,7 +183,7 @@ async def _run_pipeline_inline(task_id: str, novel_id: str, pipeline_input, styl
 
     source = (pipeline_input.source_text or "").strip()
     if not source:
-        return PipelineOutput(status="pending", error_message="empty source")
+        return PipelineOutput(status="pending", error_message="empty source", novel_id=novel_id)
 
     # Reconstruct CLI objects
     from cli.models import Chapter, KnowledgeGraph, KnowledgeNode as CLINode, KnowledgeEdge as CLIEdge
@@ -264,12 +264,13 @@ async def _run_pipeline_inline(task_id: str, novel_id: str, pipeline_input, styl
         script_json=script.model_dump(mode="json"),
         script_fountain=to_fountain(script),
         characters=[
-            {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.properties, "node_type": "character"}
+            {"id": c.id, "name": c.name, "aliases": c.aliases, "properties": c.metadata, "node_type": "character"}
             for c in (script.characters if hasattr(script, "characters") else [])
         ],
         chapters=pipeline_input.chapters,
         knowledge_graph=kg_output,
         token_usage=script.meta.get("usage", {}) if hasattr(script, "meta") else {},
+        novel_id=novel_id,
     )
 
     return output
