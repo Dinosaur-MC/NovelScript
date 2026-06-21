@@ -100,11 +100,18 @@ def _create_novel_from_text(
     novel_crud.create(db, novel)
     db.commit()
 
-    logger.info("Novel %s created (%d chars).", novel.id, len(stripped))
+    # -- Create chapters immediately (regex split, no LLM) --------------------
+    from app.services.pipeline_executor import _chunk_and_persist_chapters
+    chapter_count = _chunk_and_persist_chapters(db, novel.id, stripped)
+
+    logger.info(
+        "Novel %s created (%d chars, %d chapters).",
+        novel.id, len(stripped), chapter_count,
+    )
 
     return BaseResponse(
         code=200, message="Upload successful",
-        data={"novel_id": str(novel.id), "title": novel.title, "chapters": []},
+        data={"novel_id": str(novel.id), "title": novel.title},
     )
 
 
