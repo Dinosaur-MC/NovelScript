@@ -49,10 +49,10 @@ export interface TaskStatus {
   error_message: string | null;
 }
 
-export function createTask(novelId: string, pipelineConfig = {}) {
+export function createTask(novelId: string, pipelineConfig = {}, styleDirection = "") {
   return request<{ task_id: string; status: string }>("/tasks/", {
     method: "POST",
-    body: JSON.stringify({ novel_id: novelId, pipeline_config: pipelineConfig }),
+    body: JSON.stringify({ novel_id: novelId, pipeline_config: pipelineConfig, style_direction: styleDirection }),
   });
 }
 

@@ -48,12 +48,15 @@ export function ScriptPreview({ traceHook }: Props) {
       <div className="ns-preview-page">
         {scenes.map((scene: Record<string,unknown>, si: number) => {
           const h        = scene.heading;
+          const hText    = (h && typeof h === "object") ? (h as Record<string,string>).text : undefined;
           const loc      = (h && typeof h === "object") ? (h as Record<string,string>).location : undefined;
           const intExt   = (h && typeof h === "object") ? (h as Record<string,string>).int_ext : undefined;
           const tod      = (h && typeof h === "object") ? (h as Record<string,string>).time_of_day : undefined;
-          const hStr     = loc
-            ? `${(intExt ?? "INT.").toUpperCase()} ${loc} — ${tod ?? ""}`
-            : typeof h === "string" && h ? h : `SCENE ${si + 1}`;
+          const hStr     = hText
+            ? hText
+            : loc
+              ? `${intExt ? `${intExt.toUpperCase()} ` : ""}${loc}${tod && tod !== "UNKNOWN" ? ` — ${tod}` : ""}`
+              : typeof h === "string" && h ? h : `SCENE ${si + 1}`;
           const els = scene.elements as Array<Record<string,unknown>> | undefined;
 
           return (
