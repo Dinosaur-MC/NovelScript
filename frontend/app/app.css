@@ -598,12 +598,28 @@ html, body, #root {
 
 /* Task item in recent list */
 .ns-dashboard-task-item {
-  padding: 12px 18px;
+  padding: 12px 18px !important;
   background-color: var(--color-bg-elevated);
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   margin-bottom: 8px;
   transition: border-color 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ns-dashboard-task-item:hover {
+  border-color: var(--color-border-emphasis);
+}
+.ns-dashboard-task-item .ant-list-item-meta {
+  flex: 1;
+  min-width: 0;
+}
+.ns-dashboard-task-item .ant-list-item-meta-title {
+  margin-bottom: 2px !important;
+}
+.ns-dashboard-task-item .ant-list-item-meta-description {
+  font-size: 12px;
 }
 .ns-dashboard-task-item:hover {
   border-color: var(--color-border-emphasis);
