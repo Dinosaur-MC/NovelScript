@@ -181,9 +181,28 @@ def _serialize_scenes(scenes: list[Scene]) -> str:
             d["character_name"] = e.character_name
         return d
 
+    def _heading_dict(h):
+        """Serialize a Heading object to a structured dict for the LLM.
+        Using structured heading prevents the LLM from flattening it to a
+        plain string, which would undo heading normalization.
+        """
+        if not hasattr(h, "text"):
+            return str(h)
+        d: dict = {
+            "text": h.text,
+            "int_ext": h.int_ext.value if h.int_ext else None,
+            "location": h.location,
+            "time_of_day": h.time_of_day.value if hasattr(h.time_of_day, "value") else str(h.time_of_day),
+        }
+        if h.is_forced:
+            d["is_forced"] = True
+        if h.narrative_mode:
+            d["narrative_mode"] = h.narrative_mode.value
+        return d
+
     return json.dumps(
         [{"scene_id": s.scene_id,
-          "heading": s.heading.text if hasattr(s.heading, "text") else str(s.heading),
+          "heading": _heading_dict(s.heading),
           "location": s.heading.location if hasattr(s.heading, "location") else "",
           "time_of_day": (s.heading.time_of_day.value
                           if hasattr(s.heading, "time_of_day") and hasattr(s.heading.time_of_day, "value")

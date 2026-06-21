@@ -357,6 +357,10 @@ async def run_from_chapters(
     logger.info("Optimized %d scene(s).", len(optimized_scenes))
     _call_cb(cb, 90, "optimizing")
 
+    # Re-normalize headings after optimizer (LLM round-trip flattens them)
+    for scene in optimized_scenes:
+        scene.heading = normalize_heading(scene.heading)
+
     # ------------------------------------------------------------------
     # 7. Assemble Script
     # ------------------------------------------------------------------

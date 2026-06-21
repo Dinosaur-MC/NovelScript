@@ -89,11 +89,11 @@ def normalize_heading(heading: str) -> Heading:
     Returns:
         Structured ``Heading`` with parsed sub-fields.
     """
-    # Pass through if already a Heading object
+    # If already a Heading object, extract its text for re-processing
     if isinstance(heading, Heading):
-        return heading
-
-    original = heading.strip()
+        original = heading.text.strip()
+    else:
+        original = heading.strip()
 
     # Step 0: Detect forced heading (Fountain '.' prefix)
     is_forced = False
