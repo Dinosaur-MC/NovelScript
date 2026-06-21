@@ -428,8 +428,8 @@ html, body, #root {
 /* Card grid */
 .ns-workspace-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
   margin-bottom: 28px;
 }
 
@@ -437,21 +437,28 @@ html, body, #root {
 .ns-workspace-card {
   background-color: var(--color-bg-elevated);
   border-color: var(--color-border-subtle);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
-
 .ns-workspace-card .ant-card-head {
   background: transparent;
   border-bottom: 1px solid var(--color-border-subtle);
   min-height: auto;
-  padding: 0 14px;
+  padding: 0 16px;
 }
-
 .ns-workspace-card .ant-card-head-title {
-  padding: 10px 0;
+  padding: 12px 0;
+  overflow: hidden;
 }
-
 .ns-workspace-card .ant-card-body {
-  padding: 10px 14px;
+  padding: 14px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.ns-workspace-card-script .ant-card-body {
+  justify-content: space-between;
 }
 
 .ns-workspace-card-header {
@@ -532,7 +539,7 @@ html, body, #root {
   min-height: 100vh;
   background-color: var(--color-bg-canvas);
   color: var(--color-text-primary);
-  padding: 32px;
+  padding: 32px 40px;
 }
 
 .ns-dashboard-banner {
@@ -591,11 +598,15 @@ html, body, #root {
 
 /* Task item in recent list */
 .ns-dashboard-task-item {
-  padding: 10px 16px;
+  padding: 12px 18px;
   background-color: var(--color-bg-elevated);
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   margin-bottom: 8px;
+  transition: border-color 0.2s;
+}
+.ns-dashboard-task-item:hover {
+  border-color: var(--color-border-emphasis);
 }
 
 .ns-dashboard-task-title {
@@ -622,6 +633,9 @@ html, body, #root {
 .ns-dashboard-stat-card {
   background-color: var(--color-bg-elevated);
   border-color: var(--color-border-subtle);
+}
+.ns-dashboard-stat-card .ant-card-body {
+  padding: 16px 20px !important;
 }
 
 /* ========================================================================
