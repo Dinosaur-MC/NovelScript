@@ -347,6 +347,13 @@ def _fail(session, task_id: uuid.UUID, message: str) -> None:
         session.rollback()
 
 
+def _safe_get(data: object, key: str, default: object = None) -> object:
+    """Get attribute or dict key from *data*, returning *default* on missing."""
+    if isinstance(data, dict):
+        return data.get(key, default)
+    return getattr(data, key, default)
+
+
 def persist_pipeline_output(
     session,
     output,
@@ -379,14 +386,29 @@ def persist_pipeline_output(
             task.status = "completed"
             task.progress = 100
             task.summary = getattr(data, "summary", "")
-            from cli.exporter import to_yaml
-            # Reconstruct script object for YAML/Fountain
-            script_obj = _build_script_obj(data)
-            if script_obj:
-                task.script_yaml = to_yaml(script_obj)
-                task.script_json = script_obj.model_dump(mode="json") if hasattr(script_obj, "model_dump") else getattr(data, "script_json", {})
-                from cli.fountain_exporter import to_fountain
-                task.script_fountain = to_fountain(script_obj)
+            # Prefer PipelineOutput's own script_yaml/script_json (always correct)
+            # Only rebuild via _build_script_obj as a fallback when they're missing
+            pipeline_yaml = _safe_get(data, "script_yaml", "")
+            pipeline_json = _safe_get(data, "script_json", None)
+            pipeline_fountain = _safe_get(data, "script_fountain", "")
+
+            if pipeline_yaml:
+                task.script_yaml = pipeline_yaml
+                task.script_json = pipeline_json or _safe_get(data, "script_json", {})
+                task.script_fountain = pipeline_fountain
+            else:
+                # Legacy: rebuild from PipelineOutput fields
+                from cli.exporter import to_yaml
+                script_obj = _build_script_obj(data)
+                if script_obj:
+                    task.script_yaml = to_yaml(script_obj)
+                    task.script_json = script_obj.model_dump(mode="json") if hasattr(script_obj, "model_dump") else {}
+                    from cli.fountain_exporter import to_fountain
+                    task.script_fountain = to_fountain(script_obj)
+                else:
+                    task.script_yaml = ""
+                    task.script_json = {}
+                    task.script_fountain = ""
             task.characters_json = getattr(data, "characters", [])
             task.token_usage = getattr(data, "token_usage", {})
             task.error_message = None
@@ -416,16 +438,15 @@ def persist_pipeline_output(
                 task.script_id = script_row.id
                 session.add(task)
 
-            if script_obj:
-                script_row.script_yaml = task.script_yaml
-                script_row.script_json = task.script_json
-                script_row.script_fountain = task.script_fountain
-                script_row.characters_json = task.characters_json
-                script_row.summary = task.summary
-                script_row.token_usage = task.token_usage
-                script_row.status = "completed"
-                script_row.updated_at = datetime.now(timezone.utc)
-                session.add(script_row)
+            script_row.script_yaml = task.script_yaml
+            script_row.script_json = task.script_json
+            script_row.script_fountain = task.script_fountain
+            script_row.token_usage = task.token_usage
+            script_row.characters_json = task.characters_json
+            script_row.summary = task.summary
+            script_row.status = "completed"
+            script_row.updated_at = datetime.now(timezone.utc)
+            session.add(script_row)
 
             script_id = str(script_row.id) if script_row else None
 
@@ -493,7 +514,7 @@ def _build_script_obj(data):
             scenes=scenes,
             characters=characters,
             summary=summary,
-            knowledge_graph=kg,
+            knowledge_graph=kg or KnowledgeGraph(),
             meta={"usage": token_usage},
         )
         return cli_script
@@ -517,6 +538,33 @@ def _persist_chapters_from_dto(session, novel_id: uuid.UUID, chapters_data: list
         session.add(row)
 
     logger.info("Persisted %d chapter(s) from pipeline output.", len(chapters_data))
+
+
+def _chunk_and_persist_chapters(session, novel_id: uuid.UUID, source_text: str) -> int:
+    """Split *source_text* into chapters (regex, no LLM) and persist to DB.
+
+    Used during novel upload so the reader always has chapters to display,
+    even before the first pipeline run.  Returns the number of chapters created.
+    """
+    from cli.chunker import split_chapters
+    from app.models.sql import Chapter as ChapterModel
+
+    chunks = split_chapters(source_text)
+    if not chunks:
+        return 0
+
+    session.query(ChapterModel).filter(ChapterModel.novel_id == novel_id).delete()
+    session.flush()
+
+    for ch in chunks:
+        row = ChapterModel(
+            novel_id=novel_id, chapter_index=ch.index,
+            title=ch.title, content=ch.text,
+        )
+        session.add(row)
+    session.commit()
+    logger.info("Chunked and persisted %d chapter(s) for novel %s.", len(chunks), novel_id)
+    return len(chunks)
 
 
 def _persist_embeddings_from_dto(session, novel_id: uuid.UUID, embeddings_map: dict[int, list[float]]) -> None:
