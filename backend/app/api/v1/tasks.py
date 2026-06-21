@@ -42,6 +42,7 @@ from app.core.redis import get_redis
 from app.models.http import BaseResponse
 from app.models.sql import AuditLog, Chapter as ChapterModel, KnowledgeEdge, KnowledgeNode, Novel, Script, Task, User
 from app.services.base import BaseCRUD
+from app.tasks.pipeline import run_pipeline as _celery_run_pipeline
 from app.services.pipeline_dto import (
     ChapterData,
     KnowledgeGraphData,
@@ -165,93 +166,27 @@ def create_task(
     task_id_str = str(task.id)
     logger.info("Task %s created for novel %s", task_id_str, novel_id)
 
-    # ── Load novel data from DB ───────────────────────────────────────
-    source_text = (novel.source_text or "").strip()
-    novel_title = novel.title or ""
-
-    # Load chapters
+    # ── Store PipelineInput in Redis ─────────────────────────────────
+    # Chapters are included (lightweight, needed for novel reader + pipeline).
+    # KG/embeddings are heavy and skipped — Celery worker loads them from DB.
     chapter_rows = (
         db.query(ChapterModel)
         .filter(ChapterModel.novel_id == novel_id)
         .order_by(ChapterModel.chapter_index.asc())
         .all()
     )
-    chapters: list[ChapterData] = []
-    embeddings_map: dict[int, list[float]] = {}
-    for ch in chapter_rows:
-        chapters.append(ChapterData(
-            index=ch.chapter_index,
-            title=ch.title or f"第{ch.chapter_index+1}章",
-            text=ch.content or "",
-        ))
-        if ch.embedding is not None and len(ch.embedding) > 0:
-            embeddings_map[ch.chapter_index] = list(ch.embedding)
-
-    # Load cached KG
-    kg_nodes = (
-        db.query(KnowledgeNode)
-        .filter(KnowledgeNode.novel_id == novel_id)
-        .all()
-    )
-    cached_kg = None
-    if kg_nodes:
-        # Rebuild type prefix map (mirrors pipeline_executor._TYPE_PREFIX)
-        type_prefix: dict[str, str] = {
-            "character": "char", "location": "loc", "item": "item",
-            "event": "event", "organization": "org",
-        }
-        id_map: dict[uuid.UUID, str] = {}
-        cli_nodes: list[KGNodeData] = []
-        counters: dict[str, int] = {}
-        for n in kg_nodes:
-            prefix = type_prefix.get(n.node_type, "node")
-            idx = counters.get(prefix, 0) + 1
-            counters[prefix] = idx
-            cli_id = f"{prefix}_{idx:02d}"
-            id_map[n.id] = cli_id
-            cli_nodes.append(KGNodeData(
-                id=cli_id, label=n.name, type=n.node_type,
-                metadata={
-                    **(n.properties or {}),
-                    "aliases": n.aliases or [],
-                    "description": n.description or "",
-                },
-            ))
-
-        node_uuids = list(id_map.keys())
-        cli_edges: list[KGEdgeData] = []
-        if node_uuids:
-            db_edges = (
-                db.query(KnowledgeEdge)
-                .filter(
-                    KnowledgeEdge.novel_id == novel_id,
-                    KnowledgeEdge.source_node_id.in_(node_uuids),
-                    KnowledgeEdge.target_node_id.in_(node_uuids),
-                )
-                .all()
-            )
-            for e in db_edges:
-                src = id_map.get(e.source_node_id)
-                tgt = id_map.get(e.target_node_id)
-                if src and tgt:
-                    cli_edges.append(KGEdgeData(source=src, target=tgt, relation=e.relation, weight=e.weight or 1.0))
-
-        cached_kg = KnowledgeGraphData(nodes=cli_nodes, edges=cli_edges)
-
-    # ── Build PipelineInput and store in Redis ────────────────────────
+    chapters = [
+        ChapterData(index=ch.chapter_index, title=ch.title or f"第{ch.chapter_index+1}章", text=ch.content or "")
+        for ch in chapter_rows
+    ]
     pipeline_input = PipelineInput(
         task_id=task_id_str,
         novel_id=str(novel_id),
-        source_text=source_text,
-        novel_title=novel_title,
+        source_text=(novel.source_text or "").strip(),
+        novel_title=novel.title or "",
         style_direction=body.style_direction,
         chapters=chapters,
-        embeddings_map=embeddings_map,
-        cached_kg=cached_kg,
     )
-
-    # Graceful degradation: if Redis is down, pipeline input will be read
-    # from DB by the Celery worker (fallback).
     try:
         store_pipeline_input(r, task_id_str, pipeline_input)
         logger.info("Pipeline input stored in Redis for task %s", task_id_str)
@@ -275,13 +210,11 @@ def create_task(
     # Try Celery first; fall back to Redis simple queue on failure.
     try:
         try:
-            from app.tasks.pipeline import run_pipeline
-
             celery_kwargs: dict = {}
             if body.style_direction:
                 celery_kwargs["style_direction"] = body.style_direction
 
-            run_pipeline.apply_async(
+            _celery_run_pipeline.apply_async(
                 args=(task_id_str, str(novel_id)),
                 kwargs=celery_kwargs,
                 task_id=task_id_str,
@@ -415,6 +348,8 @@ async def stream_progress(
 
         last_progress = -1
         last_stage = ""
+        last_heartbeat = 0.0
+        hb_interval = 15.0  # seconds between heartbeats
 
         while True:
             try:
@@ -474,9 +409,30 @@ async def stream_progress(
                 return
             elif state == "FAILURE":
                 err_msg = str(info) if info else "Pipeline failed"
+                # Update DB to failed so task doesn't stay stuck
+                from datetime import datetime as _dt, timezone as _tz
+                from app.services.task_lock import release_task_lock as _release_lock
+                db.query(Task).filter(Task.id == tid).update({
+                    "status": "failed",
+                    "error_message": err_msg[:5000],
+                    "updated_at": _dt.now(_tz.utc),
+                })
+                db.commit()
+                _release_lock(task_id)
                 yield {"event": "error", "data": json.dumps({"error": err_msg}, ensure_ascii=False)}
                 return
             elif state == "REVOKED":
+                # Update DB task to failed (the Celery task was cancelled/restarted
+                # and there's no PipelineOutput in Redis to persist).
+                from datetime import datetime, timezone
+                from app.services.task_lock import release_task_lock
+                db.query(Task).filter(Task.id == tid).update({
+                    "status": "failed",
+                    "error_message": "Task was revoked — the worker may have been restarted.",
+                    "updated_at": datetime.now(timezone.utc),
+                })
+                db.commit()
+                release_task_lock(task_id)
                 yield {"event": "error", "data": json.dumps({"error": "Task was revoked"}, ensure_ascii=False)}
                 return
             else:
@@ -484,7 +440,10 @@ async def stream_progress(
                 pass
 
             await asyncio.sleep(0.5)
-            yield {"event": "heartbeat", "data": ""}
+            now = __import__("time").time()
+            if now - last_heartbeat >= hb_interval:
+                last_heartbeat = now
+                yield {"event": "heartbeat", "data": ""}
 
     return EventSourceResponse(_event_generator())
 
@@ -703,6 +662,15 @@ def resume_task(
 
     # ── re-dispatch pipeline ─────────────────────────────────────────
     # Try Celery first; fall back to Redis simple queue on failure.
+
+    # Clear old Celery result so AsyncResult returns state of the NEW task
+    # instead of the stale REVOKED/PENDING from the previous run.
+    try:
+        from celery.result import AsyncResult as _OldResult
+        _OldResult(task_id_str, app=celery_app).forget()
+    except Exception:
+        pass
+
     stored_style = (task.pipeline_config or {}).get("style_direction", "")
     lock_held = True
     try:
