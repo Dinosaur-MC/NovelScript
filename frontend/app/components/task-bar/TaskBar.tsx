@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router";
 import { Button, Dropdown, Tag, Avatar, Popover, message } from "antd";
-import { ExportOutlined, ForkOutlined, HomeOutlined, UserOutlined, LogoutOutlined } from "@ant-design/icons";
+import { ExportOutlined, ForkOutlined, HomeOutlined, UserOutlined, LogoutOutlined, ArrowLeftOutlined } from "@ant-design/icons";
 import { useTaskStore } from "../../stores/task-store";
 import { useScriptStore } from "../../stores/script-store";
 import { useAuthStore } from "../../stores/auth-store";
@@ -57,6 +57,7 @@ export function TaskBar({ loading: isLoading }: { loading?: boolean }) {
             NovelScript
           </span>
         </Button>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/workspace")}>返回</Button>
         {title && (
           <span className="ns-taskbar-title" title={title}>
             {title.slice(0, 20)}{title.length > 20 ? "…" : ""}

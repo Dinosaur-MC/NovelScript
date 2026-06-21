@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router";
-import { Button, Card, Row, Col, Tag } from "antd";
+import { Button, Card, Row, Col, Tag, Popover, Avatar } from "antd";
 import {
   RocketOutlined,
   ThunderboltOutlined,
@@ -10,7 +10,12 @@ import {
   BookOutlined,
   FileTextOutlined,
   ArrowRightOutlined,
+  LogoutOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
+import { TaskBar } from "../task-bar/TaskBar";
+import { logout } from "~/api/auth";
+import { useAuthStore } from "~/stores/auth-store";
 
 /** Single feature card */
 function FeatureCard({
@@ -53,6 +58,9 @@ function PipelineStage({
 export function Landing() {
   const navigate = useNavigate();
 
+  const user = useAuthStore((s) => s.user);
+  const clearUser = useAuthStore((s) => s.clearUser);
+
   return (
     <div className="nl-page">
 
@@ -62,8 +70,51 @@ export function Landing() {
           <span className="ns-app-header-brand">NovelScript <span className="ns-app-header-sub">析幕</span></span>
         </div>
         <div className="ns-app-header-right">
-          <Button type="text" onClick={() => navigate("/login")}>登录</Button>
-          <Button type="primary" onClick={() => navigate("/workspace")}>开始使用</Button>
+            {user ? (
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            overlayStyle={{ width: 220 }}
+            content={
+              <div className="ns-popover-wrap">
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">用户名</div>
+                  <div className="ns-popover-value ns-popover-value--strong">{user.username}</div>
+                </div>
+                <div className="ns-popover-field">
+                  <div className="ns-popover-label">邮箱</div>
+                  <div className="ns-popover-value">{user.email ?? "—"}</div>
+                </div>
+                <div className="ns-popover-field--last">
+                  <div className="ns-popover-label">角色</div>
+                  <div className="ns-popover-value">{user.role === "admin" ? "管理员" : "用户"}</div>
+                </div>
+                <Button
+                  block
+                  danger
+                  size="small"
+                  icon={<LogoutOutlined />}
+                  onClick={() => { logout().catch(() => {}); clearUser(); navigate("/login"); }}
+                >
+                  退出登录
+                </Button>
+              </div>
+            }
+          >
+            <span className="ns-popover-user-trigger">
+              <Avatar
+                size="small"
+                icon={<UserOutlined />}
+                style={{ backgroundColor: "var(--color-accent-primary)" }}
+              />
+              {user.username}
+            </span>
+          </Popover>
+        ) : (
+          <Button type="link" size="small" onClick={() => navigate("/login")}>
+            登录
+          </Button>
+        )}
         </div>
       </nav>
 
@@ -79,18 +130,19 @@ export function Landing() {
             支持中文长篇，自研确定性管道保证输出质量。
           </p>
           <div className="nl-hero-actions">
+            {user ?
+            <Button type="primary" size="large" onClick={() => navigate("/workspace")}>
+              进入创作空间
+            </Button> :
             <Button type="primary" size="large" icon={<RocketOutlined />} onClick={() => navigate("/login")}>
               立即体验
-            </Button>
-            <Button size="large" onClick={() => navigate("/workspace")}>
-              进入创作空间
-            </Button>
+            </Button>}
           </div>
           <div className="nl-hero-stats">
             <div className="nl-stat"><strong>8</strong> 管道阶段</div>
             <div className="nl-stat"><strong>Fountain 1.1</strong> 格式兼容</div>
             <div className="nl-stat"><strong>20</strong> 节点知识图谱</div>
-            <div className="nl-stat"><strong>384K</strong> 输出令牌</div>
+            <div className="nl-stat"><strong>384K</strong> 输出词元</div>
           </div>
         </div>
       </section>
