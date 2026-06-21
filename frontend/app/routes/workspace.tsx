@@ -123,7 +123,7 @@ export default function Workspace() {
         <TaskBar loading={false} />
         <div className="ns-workspace-error-body">
           <p className="ns-workspace-error-text">{error}</p>
-          <button onClick={() => navigate("/")} className="ns-workspace-error-btn">返回首页</button>
+          <button onClick={() => navigate("/workspace")} className="ns-workspace-error-btn">返回首页</button>
         </div>
         <StatusBar />
       </div>

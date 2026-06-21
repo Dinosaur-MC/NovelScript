@@ -170,7 +170,7 @@ export default function NovelPage() {
     return (
       <div className="ns-workspace-error">
         <AppHeader>
-          <Button icon={<HomeOutlined />} onClick={() => navigate("/")}>返回首页</Button>
+          <Button icon={<HomeOutlined />} onClick={() => navigate("/workspace")}>返回首页</Button>
         </AppHeader>
         <div className="ns-workspace-error-body">
           <p className="ns-workspace-error-text">小说不存在</p>

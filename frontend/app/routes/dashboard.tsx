@@ -100,7 +100,7 @@ export default function Dashboard() {
       <div className="ns-dashboard-guest">
         <p className="ns-dashboard-guest-text">请先登录</p>
         <Button type="primary" size="large" onClick={() => navigate("/login")}>登录</Button>
-        <Button type="link" onClick={() => navigate("/")}>返回首页</Button>
+        <Button type="link" onClick={() => navigate("/workspace")}>返回首页</Button>
       </div>
     );
   }
@@ -166,8 +166,10 @@ export default function Dashboard() {
                 const tagInfo = STATUS_TAG[item.status] ?? { color: "default", label: item.status };
                 return (
                   <List.Item className="ns-dashboard-task-item"
-                    onClick={() => navigate(`/workspace/${item.task_id}`)}
-                    style={{ cursor: "pointer" }}>
+                    onClick={() => {
+                      if (item.script_id) navigate(`/workspace/${item.script_id}`);
+                    }}
+                    style={{ cursor: item.script_id ? "pointer" : "default" }}>
                     <List.Item.Meta
                       title={<span className="ns-dashboard-task-title">《{item.novel_title}》</span>}
                       description={<span className="ns-dashboard-task-time">{item.created_at?.slice(0, 16).replace("T", " ") ?? "—"}</span>} />
